@@ -1,0 +1,337 @@
+{
+  "type": "record",
+  "name": "Some_Custom_Object__ChangeEvent",
+  "namespace": "com.sforce.eventbus",
+  "fields": [
+    {
+      "name": "ChangeEventHeader",
+      "type": {
+        "type": "record",
+        "name": "ChangeEventHeader",
+        "fields": [
+          {
+            "name": "entityName",
+            "type": "string"
+          },
+          {
+            "name": "recordIds",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          },
+          {
+            "name": "changeType",
+            "type": {
+              "type": "enum",
+              "name": "ChangeType",
+              "namespace": "",
+              "symbols": [
+                "CREATE",
+                "UPDATE",
+                "DELETE",
+                "UNDELETE",
+                "GAP_CREATE",
+                "GAP_UPDATE",
+                "GAP_DELETE",
+                "GAP_UNDELETE",
+                "GAP_OVERFLOW"
+              ]
+            }
+          },
+          {
+            "name": "changeOrigin",
+            "type": "string"
+          },
+          {
+            "name": "transactionKey",
+            "type": "string"
+          },
+          {
+            "name": "sequenceNumber",
+            "type": "int"
+          },
+          {
+            "name": "commitTimestamp",
+            "type": "long"
+          },
+          {
+            "name": "commitNumber",
+            "type": "long"
+          },
+          {
+            "name": "commitUser",
+            "type": "string"
+          },
+          {
+            "name": "nulledFields",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          },
+          {
+            "name": "diffFields",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          },
+          {
+            "name": "changedFields",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          }
+        ]
+      },
+      "doc": "Data:ComplexValueType"
+    },
+    {
+      "name": "OwnerId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "ForeignKey:EntityId",
+      "default": null
+    },
+    {
+      "name": "Name",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:Text",
+      "default": null
+    },
+    {
+      "name": "CreatedDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "doc": "CreatedDate:DateTime",
+      "default": null
+    },
+    {
+      "name": "CreatedById",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "ForeignKey:EntityId",
+      "default": null
+    },
+    {
+      "name": "LastModifiedDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "doc": "Data:DateTime",
+      "default": null
+    },
+    {
+      "name": "LastModifiedById",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "ForeignKey:EntityId",
+      "default": null
+    },
+    {
+      "name": "Custom_Checkobx__c",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "doc": "Data:Boolean:00NDp000009Rr9i",
+      "default": null
+    },
+    {
+      "name": "EZ_Money__c",
+      "type": [
+        "null",
+        "double"
+      ],
+      "doc": "Data:Currency:00NDp000009RrEO",
+      "default": null
+    },
+    {
+      "name": "Birthday__c",
+      "type": [
+        "null",
+        "long"
+      ],
+      "doc": "Data:DateOnly:00NDp000009RrET",
+      "default": null
+    },
+    {
+      "name": "Some_DateTime__c",
+      "type": [
+        "null",
+        "long"
+      ],
+      "doc": "Data:DateTime:00NDp000009RrEY",
+      "default": null
+    },
+    {
+      "name": "Email_Wemail__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:Email:00NDp000009RrEd",
+      "default": null
+    },
+    {
+      "name": "LocalDegrees__c",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "Location",
+          "fields": [
+            {
+              "name": "Latitude",
+              "type": [
+                "null",
+                "double"
+              ],
+              "default": null
+            },
+            {
+              "name": "Longitude",
+              "type": [
+                "null",
+                "double"
+              ],
+              "default": null
+            },
+            {
+              "name": "XyzEncoded",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            }
+          ]
+        }
+      ],
+      "doc": "Data:Location:00NDp000009RrEi",
+      "default": null
+    },
+    {
+      "name": "LocalDecimal__c",
+      "type": [
+        "null",
+        "Location"
+      ],
+      "doc": "Data:Location:00NDp000009RrEn",
+      "default": null
+    },
+    {
+      "name": "Numero__c",
+      "type": [
+        "null",
+        "double"
+      ],
+      "doc": "Data:Double:00NDp000009RrEs",
+      "default": null
+    },
+    {
+      "name": "Percento__c",
+      "type": [
+        "null",
+        "double"
+      ],
+      "doc": "Data:Percent:00NDp000009RrEx",
+      "default": null
+    },
+    {
+      "name": "TellyPhone__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:Phone:00NDp000009RrF2",
+      "default": null
+    },
+    {
+      "name": "PickleSingle__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:DynamicEnum:00NDp000009RrF7",
+      "default": null
+    },
+    {
+      "name": "PickleMulit__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:MultiEnum:00NDp000009RrFC",
+      "default": null
+    },
+    {
+      "name": "Texty__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:Text:00NDp000009RrFH",
+      "default": null
+    },
+    {
+      "name": "Rich_Text__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:HtmlStringPlusClob:00NDp000009RrFM",
+      "default": null
+    },
+    {
+      "name": "Encrypt__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:EncryptedText:00NDp000009RrFR",
+      "default": null
+    },
+    {
+      "name": "Timey__c",
+      "type": [
+        "null",
+        "long"
+      ],
+      "doc": "Data:TimeOnly:00NDp000009RrFW",
+      "default": null
+    },
+    {
+      "name": "Linky__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:Url:00NDp000009RrFb",
+      "default": null
+    },
+    {
+      "name": "GUID__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:Text:00NDp000009RrFg",
+      "default": null
+    }
+  ]
+}

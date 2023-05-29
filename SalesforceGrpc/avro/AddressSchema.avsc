@@ -1,0 +1,62 @@
+{
+  "type": "record",
+  "name": "Address",
+  "namespace": "com.sforce.eventbus",
+  "fields": [
+    {
+      "name": "Street",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "City",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "State",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "PostalCode",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "Country",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "StateCode",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "CountryCode",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "Latitude",
+      "default": null,
+      "type": [ "null", "double" ]
+    },
+    {
+      "name": "Longitude",
+      "default": null,
+      "type": [ "null", "double" ]
+    },
+    {
+      "name": "Xyz",
+      "default": null,
+      "type": [ "null", "string" ]
+    },
+    {
+      "name": "GeocodeAccuracy",
+      "default": null,
+      "type": [ "null", "string" ]
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+Generating schema classes from an avro schema file
+avrogen -s ContactChangeEventGRPCSchema.avsc avro
+
+decoding and encoding the latest replay id
+https://trailhead.salesforce.com/de/trailblazer-community/feed/0D54S00000NQufcSAD
+
+possible way to deserialize person name on account
+but this is for deserializing from json, which defeats the purpose of using avro
+public class PersonNameConverter : JsonConverter<PersonName>
+{
+    public override bool CanConvert(Type objectType)
+    {
+        return objectType == typeof(PersonName);
+    }
+
+    public override PersonName Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            return new PersonName { FullName = reader.GetString() };
+        }
+
+        var personName = new PersonName();
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                return personName;
+            }
+
+            if (reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var propertyName = reader.GetString();
+                reader.Read();
+
+                switch (propertyName)
+                {
+                    case "FirstName":
+                        personName.FirstName = reader.GetString();
+                        break;
+                    case "LastName":
+                        personName.LastName = reader.GetString();
+                        break;
+                    case "MiddleName":
+                        personName.MiddleName = reader.GetString();
+                        break;
+                    case "Suffix":
+                        personName.Suffix = reader.GetString();
+                        break;
+                }
+            }
+        }
+
+        throw new JsonException("Unexpected end of JSON.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, PersonName value, JsonSerializerOptions options)
+    {
+        throw new NotImplementedException();
+    }
+}
+
+old way of manually configuring and setting up the grpc client
+var sfChannel = GrpcChannel.ForAddress("https://api.pubsub.salesforce.com:7443");
+var sfPubSubClient = new PubSub.PubSubClient(sfChannel);
+
+
+For sqlkata, we cannot use models when updating entities because they set all
+other properties that were not used to null. This is a problem as we do not want
+to retrieve every single record with all their fields from the database and then
+operate on the object entities. The goal is to have the system create as few queries
+as possible to update as many records as possible.
+
+Since we cannot use models, that means we need some way to connect the salesforce field
+names to postgres names. This can maybe be done with a dictionary like so:
+{"sfname", "postgres name"}. I do not like this solution as it looks dumb.

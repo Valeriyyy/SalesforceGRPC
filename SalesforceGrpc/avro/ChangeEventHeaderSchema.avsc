@@ -1,0 +1,37 @@
+{
+  "type": "record",
+  "name": "ChangeEventHeader",
+  "namespace": "com.sforce.eventbus",
+  "fields": [
+    { "name": "entityName", "type": "string" },
+    { "name": "recordIds", "type": { "type": "array", "items": "string" } },
+    {
+      "name": "changeType",
+      "type": {
+        "type": "enum",
+        "name": "ChangeType",
+        "namespace": "com.sforce.eventbus",
+        "symbols": [
+          "CREATE",
+          "UPDATE",
+          "DELETE",
+          "UNDELETE",
+          "GAP_CREATE",
+          "GAP_UPDATE",
+          "GAP_DELETE",
+          "GAP_UNDELETE",
+          "GAP_OVERFLOW"
+        ]
+      }
+    },
+    { "name": "changeOrigin", "type": "string" },
+    { "name": "transactionKey", "type": "string" },
+    { "name": "sequenceNumber", "type": "int" },
+    { "name": "commitTimestamp", "type": "long" },
+    { "name": "commitNumber", "type": "long" },
+    { "name": "commitUser", "type": "string" },
+    { "name": "nulledFields", "type": { "type": "array", "items": "string" } },
+    { "name": "diffFields", "type": { "type": "array", "items": "string" } },
+    { "name": "changedFields", "type": { "type": "array", "items": "string" } }
+  ]
+}

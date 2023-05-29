@@ -1,0 +1,10 @@
+{
+  "type": "record",
+  "name": "Location",
+  "namespace": "com.sforce.eventbus",
+  "fields": [
+    { "name": "Latitude", "default": null, "type": ["null", "double"] },
+    { "name": "Longitude", "default": null, "type": ["null", "double"] },
+    { "name": "XyzEncoded", "default": null, "type": ["null", "string"] }
+  ]
+}

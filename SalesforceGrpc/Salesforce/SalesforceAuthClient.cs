@@ -1,0 +1,52 @@
+﻿using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+
+namespace SalesforceGrpc.Salesforce;
+
+public class SalesforceAuthClient
+{
+    private readonly HttpClient client;
+    private readonly SalesforceConfig configuration;
+
+    public SalesforceAuthClient(HttpClient httpClient, IOptions<SalesforceConfig> configurationOptions)
+    {
+        client = httpClient;
+        configuration = configurationOptions.Value;
+    }
+
+    public async Task<AuthToken> GetToken()
+    {
+        var nvc = new List<KeyValuePair<string, string>>
+        {
+            new KeyValuePair<string, string>("grant_type", configuration.GrantType),
+            new KeyValuePair<string, string>("client_id", configuration.ClientId),
+            new KeyValuePair<string, string>("client_secret", configuration.ClientSecret),
+            new KeyValuePair<string, string>("username", configuration.Username),
+            new KeyValuePair<string, string>("password", configuration.Password + configuration.UserSecurityToken)
+            //new KeyValuePair<string, string>("password", configuration.Password)
+        };
+        var req = new HttpRequestMessage(HttpMethod.Post, configuration.LoginUrl) { Content = new FormUrlEncodedContent(nvc) };
+        var response = await client.SendAsync(req);
+        var content = await response.Content.ReadAsStringAsync();
+        Console.WriteLine("this is content response " + content);
+        return JsonConvert.DeserializeObject<AuthToken>(content);
+    }
+
+    public class AuthToken
+    {
+        [JsonProperty("access_token")]
+        public string? AccessToken { get; set; }
+        [JsonProperty("signature")]
+        public string? Signature { get; set; }
+        [JsonProperty("instance_url")]
+        public string? InstanceUrl { get; set; }
+        [JsonProperty("scope")]
+        public string? Scope { get; set; }
+        [JsonProperty("token_type")]
+        public string? TokenType { get; set; }
+        [JsonProperty("issued_at")]
+        public string? IssuedAt { get; set; }
+        [JsonProperty("id")]
+        public string? Id { get; set; }
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "name": "PersonName",
+  "namespace": "com.sforce.eventbus",
+  "fields": [
+    { "name": "Salutation", "default": null, "type": ["null", "string"] },
+    { "name": "FirstName", "default": null, "type": ["null", "string"] },
+    { "name": "LastName", "default": null, "type": ["null", "string"] },
+    { "name": "MiddleName", "default": null, "type": ["null", "string"] },
+    { "name": "InformalName", "default": null, "type": ["null", "string"] },
+    { "name": "Suffix", "default": null, "type": ["null", "string"] }
+  ]
+}
