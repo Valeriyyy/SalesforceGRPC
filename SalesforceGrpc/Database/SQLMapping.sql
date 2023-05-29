@@ -4,10 +4,9 @@ CREATE TABLE salesforce.schemas (
 	schema_name VARCHAR(100) NOT NULL
 );
 
-INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('lhKgvxi31DtlAz18-TdwBQ', 'AccountChangeEvent');
-INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('3nHiqTscCiNSzL2YQKsn1Q', 'Vendor_Profile__ChangeEvent');
-INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('q0AIBokzXQNGdVcvyc9w7w', 'ContactChangeEvent');
-INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('wgsgbc0Gz23dv7xN9pSVOA', 'CaseChangeEvent');
+INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('AccountSchemaId', 'AccountChangeEvent');
+INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('ContactSchemaId', 'ContactChangeEvent');
+INSERT INTO salesforce.cdc_schemas (schema_id, schema_name) VALUES ('CaseSchemaId', 'CaseChangeEvent');
 
 CREATE TABLE salesforce.mapped_fields (
 	id serial4 PRIMARY KEY,

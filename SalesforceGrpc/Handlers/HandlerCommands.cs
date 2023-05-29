@@ -63,9 +63,3 @@ public record ContactUpdateCommand() : EventPayload;
 public record ContactDeleteCommand() : EventPayload;
 public record ContactUndeleteCommand() : EventPayload;
 
-// Vendor Profile Events
-public record VendorProfileCDCEventCommand() : CDCEvent;
-public record VendorProfileCreateCommand() : EventPayload;
-public record VendorProfileUpdateCommand() : EventPayload;
-public record VendorProfileDeleteCommand() : EventPayload;
-public record VendorProfileUndeleteCommand() : EventPayload;

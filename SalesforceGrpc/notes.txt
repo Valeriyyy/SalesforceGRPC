@@ -73,4 +73,10 @@ as possible to update as many records as possible.
 
 Since we cannot use models, that means we need some way to connect the salesforce field
 names to postgres names. This can maybe be done with a dictionary like so:
-{"sfname", "postgres name"}. I do not like this solution as it looks dumb.
+{"sfname", "postgres name"}. I do not like this solution as it looks dumb, however it gives
+the ability to have their own mapping settings.
+
+I do not think I want to use deserialized models as that will make this solution hard to
+maintain as the code will have to be updated everytime a schema is updated. Have to figure out a way
+to use the GenericRecord class or something to be able to extract the information without 
+deserializing to concrete classes.
