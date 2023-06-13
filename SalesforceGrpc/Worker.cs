@@ -1,18 +1,10 @@
 using Avro;
-using Avro.Generic;
 using Grpc.Core;
 using GrpcClient;
 using MediatR;
 using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
-using Npgsql;
-using SalesforceGrpc.Extensions;
-using SalesforceGrpc.Handlers;
-using SalesforceGrpc.Handlers.Account;
 using SalesforceGrpc.Salesforce;
-using SqlKata.Compilers;
 using SqlKata.Execution;
-using System.Text.Json;
 
 namespace SalesforceGrpc;
 
@@ -58,14 +50,6 @@ public class Worker : BackgroundService {
     }
 
     private async Task ListenForTruktChannelEvents(CancellationToken stoppingToken) {
-        /*var tokenString = token;
-        var headers = new Metadata
-        {
-            { "accesstoken", $"Bearer {tokenString}" },
-            { "instanceurl", _sfconfig.OrgUrl },
-            { "tenantid", _sfconfig.OrgId }
-        };*/
-
         var fetchRequest = new FetchRequest {
             TopicName = "/data/MyCustomChannel__chn",
             NumRequested = 25
@@ -79,8 +63,7 @@ public class Worker : BackgroundService {
             .GetAsync<CDCSchema>(null, null, stoppingToken))
             .ToDictionary(p => p.SchemaId, p => p.SchemaName);
 
-        while (await stream.ResponseStream.MoveNext(stoppingToken)) {
-            Console.WriteLine("got a new message from grpc");
+        /*while (await stream.ResponseStream.MoveNext(stoppingToken)) {
             var latestReplayId = stream.ResponseStream.Current.LatestReplayId.ToLongBE();
             _logger.LogInformation("latest Replay Id: {replayId}", latestReplayId);
             _logger.LogInformation("Time: {rightNow} RPC ID: {RpcId}", DateTime.Now, stream.ResponseStream.Current.RpcId);
@@ -97,7 +80,9 @@ public class Worker : BackgroundService {
                     Console.WriteLine("event number " + i);
                     var payload = e.Event.Payload;
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
-                    var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
+
+                    eventTasks.Add(_mediator.Send(new EventWithId { Avropayload = payload.ToByteArray(), SchemaId = e.Event.SchemaId }));
+                    *//*var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
                     if (!validSchemaId) {
                         throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
                     }
@@ -108,11 +93,11 @@ public class Worker : BackgroundService {
                         Console.WriteLine("Contact Event");
                         //eventTasks.Add(_processor.DeserializeContactConcrete(payload.ToByteArray()));
                         //eventTasks.Add(_mediator.Send(new ContactCDCEventCommand { Name = "Contact Change Event", AvroPayload = payload.ToByteArray() }, stoppingToken));
-                    }
+                    }*//*
                 }
                 await Task.WhenAll(eventTasks);
             }
-        }
+        }*/
     }
 
     private async Task PublishEvent(CancellationToken stoppingToken) {
@@ -141,13 +126,6 @@ public class Worker : BackgroundService {
     }
 
     public async Task GetAndSaveSchema(string schemaName) {
-        /*var headers = new Metadata
-        {
-            { "accesstoken", $"Bearer {token}" },
-            { "instanceurl", _sfconfig.OrgUrl },
-            { "tenantid", _sfconfig.OrgId }
-        };*/
-
         var topicRequest = new TopicRequest {
             TopicName = $"/data/{schemaName}"
         };

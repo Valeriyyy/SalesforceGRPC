@@ -4,6 +4,13 @@ using MediatR;
 
 namespace SalesforceGrpc.Handlers;
 
+public record EventWithId : IRequest {
+    public string SchemaId { get; set; }
+    public byte[] Avropayload { get; set; }
+    public ByteString? LatestReplayId { get; set; }
+}
+
+
 public abstract record CDCEvent : IRequest {
     public byte[]? AvroPayload { get; set; }
     public ByteString? LatestReplayId { get; set; }
@@ -62,4 +69,5 @@ public record ContactCreateCommand() : EventPayload;
 public record ContactUpdateCommand() : EventPayload;
 public record ContactDeleteCommand() : EventPayload;
 public record ContactUndeleteCommand() : EventPayload;
+
 

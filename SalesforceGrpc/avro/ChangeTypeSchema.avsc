@@ -1,0 +1,19 @@
+{
+  "name": "changeType",
+  "type": {
+    "type": "enum",
+    "name": "ChangeType",
+    "namespace": "",
+    "symbols": [
+      "CREATE",
+      "UPDATE",
+      "DELETE",
+      "UNDELETE",
+      "GAP_CREATE",
+      "GAP_UPDATE",
+      "GAP_DELETE",
+      "GAP_UNDELETE",
+      "GAP_OVERFLOW"
+    ]
+  }
+}

@@ -8,6 +8,7 @@ using com.sforce.eventbus;
 using Avro.File;
 using Newtonsoft.Json;
 using System.Dynamic;
+using SalesforceGrpc.Extensions;
 
 namespace SalesforceGrpc.Handlers.Account;
 public class AccountChangeEventHandler {
@@ -21,23 +22,21 @@ public class AccountChangeEventHandler {
         public async Task Handle(AccountCDCEventCommand request, CancellationToken cancellationToken) {
             Console.WriteLine("Handling Account Change event");
             var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
-            var nameSchema = Schema.Parse(File.ReadAllText("./avro/Switchable_PersonNameSchema.avsc"));
+            /*var nameSchema = Schema.Parse(File.ReadAllText("./avro/Switchable_PersonNameSchema.avsc"));
             var addressSchema = Schema.Parse(File.ReadAllText("./avro/AddressSchema.avsc"));
             var cehSchema = Schema.Parse(File.ReadAllText("./avro/ChangeEventHeaderSchema.avsc"));
-            var customObjectSchema = Schema.Parse(File.ReadAllText("./avro/Some_Custom_Object__ChangeEventGRPCSchema.avsc"));
             var cache = new ClassCache();
             cache.LoadClassCache(typeof(Switchable_PersonName), nameSchema);
             cache.LoadClassCache(typeof(Address), addressSchema);
-            cache.LoadClassCache(typeof(ChangeEventHeader), cehSchema);
-            cache.LoadClassCache(typeof(Some_Custom_Object__ChangeEvent), customObjectSchema);
+            cache.LoadClassCache(typeof(ChangeEventHeader), cehSchema);*/
             using var accStream = new MemoryStream(request.AvroPayload);
             var decoder = new BinaryDecoder(accStream);
             var datumReader = new GenericDatumReader<GenericRecord>(accSchema, accSchema);
             var gr = datumReader.Read(null, decoder);
-            var changeEventHeader = gr.GetValue(0);
-            Console.WriteLine(changeEventHeader is null);
-            Console.WriteLine(changeEventHeader.GetType().Name);
-            Console.WriteLine("Name " + gr.GetValue(1));
+            var changeEventHeaderValid = gr.GetTypedValue<GenericRecord>("ChangeEventHeader", out var genericChangeEventHeader);
+            var changeTypeFound = genericChangeEventHeader.GetTypedValue<dynamic>("changeType", out var changeType);
+            Console.WriteLine(genericChangeEventHeader.GetValue(0).ToString() + " HAS BEEN " + changeType.Value);
+            //Console.WriteLine(genericChangeEventHeader.);
             //var reader = new ReflectReader<GenericRecord>(accSchema, accSchema, cache);
             /*accStream.Seek(0, SeekOrigin.Begin);
             var accDecoder = new BinaryDecoder(accStream);

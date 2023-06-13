@@ -14,6 +14,7 @@ using SqlKata.Execution;
 using System.Collections;
 using System.Text.Json;
 using System.Text;
+using SalesforceGrpc.Extensions;
 
 namespace SalesforceGRPCTest;
 public class UnitTest1 {
@@ -100,7 +101,7 @@ public class UnitTest1 {
     }*/
 
     [Fact(DisplayName = "Deserialize event")]
-    public async void DeserializeEvent() {
+    public void DeserializeEvent() {
         var accSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\AccountChangeEventGRPCSchema.avsc"));
         var nameSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\Switchable_PersonNameSchema.avsc"));
         var addressSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\AddressSchema.avsc"));
@@ -144,9 +145,29 @@ public class UnitTest1 {
         var decoder = new BinaryDecoder(accStream);
         var datumReader = new GenericDatumReader<GenericRecord>(accSchema, accSchema);
         var gr = datumReader.Read(null, decoder);
+
+        var grString = gr.ToString();
+        Assert.NotNull(grString);
         Assert.Equal("Account Name", (string)gr.GetValue(1));
-        changeEventHeader = gr.GetValue(0) as ChangeEventHeader;
-        Assert.NotNull(changeEventHeader);
+        var changeEventHeaderValid = gr.GetTypedValue<GenericRecord>("ChangeEventHeader", out var genericChangeEventHeader);
+        Assert.True(changeEventHeaderValid);
+        Assert.NotNull(genericChangeEventHeader);
+
+        var entityNameFound = genericChangeEventHeader.GetTypedValue<string>("entityName", out var entityName);
+        Assert.True(entityNameFound);
+        Assert.Equal("Account", entityName);
+
+        var changeTypeFound = genericChangeEventHeader.GetTypedValue<dynamic>("changeType", out var changeType);
+        Assert.True(changeTypeFound);
+        Assert.NotNull(changeType);
+        Assert.Equal(ChangeType.UPDATE.ToString(), changeType.Value!);
+
+        /* var recordIdsFound = genericChangeEventHeader.TryGetValue("recordIds", out var recordIdsObject);
+		var recordIds = recordIdsObject as object[];
+		Assert.True(recordIdsFound);
+		Assert.NotNull(recordIds);
+		Assert.Single(recordIds);
+		Assert.Equal("recordIdListToDecompile", recordIds.First().ToString()); */
     }
 }
 
