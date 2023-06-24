@@ -30,6 +30,6 @@ public class SalesforceClient {
         var recordTypesString = await client.GetStringAsync(endpoint);
         var recordTypes = JsonConvert.DeserializeObject<List<RecordType>>(recordTypesString);
         Console.WriteLine("this is record types " + recordTypesString);
-        await Console.Out.WriteLineAsync(recordTypes.Count);
+        //await Console.Out.WriteLineAsync(recordTypes.Count);
     }
 }
