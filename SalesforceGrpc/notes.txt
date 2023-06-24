@@ -80,3 +80,12 @@ I do not think I want to use deserialized models as that will make this solution
 maintain as the code will have to be updated everytime a schema is updated. Have to figure out a way
 to use the GenericRecord class or something to be able to extract the information without 
 deserializing to concrete classes.
+
+
+Need to figure out how to send record and relavent field mappings into handler for
+mapping the avro data into a sql statement.
+Prefer not to have to query for the mapping all the time, but maybe keep the mapping in memory
+while the application is running.
+Will also need to figure out a way to get all the schemas for the event objects and have them be
+easily accessible for decoding messages of the apppropriate type. For example, when a message comes,
+we only have the schema id. A map can be used to pair the schema id to the schema itself for easy access.

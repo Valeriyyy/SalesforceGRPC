@@ -3,19 +3,17 @@ using Newtonsoft.Json;
 
 namespace SalesforceGrpc.Salesforce;
 
-public class SalesforceAuthClient
-{
+public class SalesforceAuthClient {
     private readonly HttpClient client;
     private readonly SalesforceConfig configuration;
+    public static string accessToken = null;
 
-    public SalesforceAuthClient(HttpClient httpClient, IOptions<SalesforceConfig> configurationOptions)
-    {
+    public SalesforceAuthClient(HttpClient httpClient, IOptions<SalesforceConfig> configurationOptions) {
         client = httpClient;
         configuration = configurationOptions.Value;
     }
 
-    public async Task<AuthToken> GetToken()
-    {
+    public async Task<AuthToken> GetToken() {
         var nvc = new List<KeyValuePair<string, string>>
         {
             new KeyValuePair<string, string>("grant_type", configuration.GrantType),
@@ -28,12 +26,15 @@ public class SalesforceAuthClient
         var req = new HttpRequestMessage(HttpMethod.Post, configuration.LoginUrl) { Content = new FormUrlEncodedContent(nvc) };
         var response = await client.SendAsync(req);
         var content = await response.Content.ReadAsStringAsync();
-        Console.WriteLine("this is content response " + content);
-        return JsonConvert.DeserializeObject<AuthToken>(content);
+        await Console.Out.WriteLineAsync("This is contrent " + content);
+        var authToken = JsonConvert.DeserializeObject<AuthToken>(content);
+        accessToken = authToken.AccessToken!;
+        return authToken;
+
+        //return new AuthToken();
     }
 
-    public class AuthToken
-    {
+    public class AuthToken {
         [JsonProperty("access_token")]
         public string? AccessToken { get; set; }
         [JsonProperty("signature")]

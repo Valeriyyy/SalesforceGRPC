@@ -36,6 +36,7 @@ public class AccountChangeEventHandler {
             var changeEventHeaderValid = gr.GetTypedValue<GenericRecord>("ChangeEventHeader", out var genericChangeEventHeader);
             var changeTypeFound = genericChangeEventHeader.GetTypedValue<dynamic>("changeType", out var changeType);
             Console.WriteLine(genericChangeEventHeader.GetValue(0).ToString() + " HAS BEEN " + changeType.Value);
+
             //Console.WriteLine(genericChangeEventHeader.);
             //var reader = new ReflectReader<GenericRecord>(accSchema, accSchema, cache);
             /*accStream.Seek(0, SeekOrigin.Begin);

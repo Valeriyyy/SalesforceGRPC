@@ -1,7 +1,6 @@
 ﻿namespace SalesforceGrpc.Salesforce;
 
-public class SalesforceConfig 
-{
+public class SalesforceConfig {
     public string? Username { get; set; }
     public string? Password { get; set; }
     public string? UserSecurityToken { get; set; }
@@ -13,4 +12,5 @@ public class SalesforceConfig
     public string? StreamEndpoint { get; set; }
     public string? Channel { get; set; }
     public string? OrgId { get; set; }
+    public string? ApiVersion { get; set; }
 }

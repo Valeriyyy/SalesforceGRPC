@@ -1,10 +1,12 @@
 using GrpcClient;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using SalesforceGrpc;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SqlKata.Compilers;
 using SqlKata.Execution;
+using System.Net.Http.Headers;
 
 var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
@@ -32,9 +34,8 @@ IHost host = Host.CreateDefaultBuilder(args)
 
     services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
 
-
     services.AddSingleton<SalesforceAvroDeserializer>();
-    services.AddHttpClient<SalesforceAuthClient>();
+    services.AddHttpClient<SalesforceAuthClient>("SalesforceAuthClient");
     services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
         options.Address = new Uri("https://api.pubsub.salesforce.com:7443");
     }).AddCallCredentials(async (context, metadata, serviceProvider) => {
@@ -43,10 +44,28 @@ IHost host = Host.CreateDefaultBuilder(args)
         metadata.Add("accesstoken", $"Bearer {authResponse.AccessToken}");
         metadata.Add("instanceurl", authResponse.InstanceUrl);
         metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
-    }); ;
-    services.AddHostedService<Worker>();
+    });
+
+    services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
+        /*var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
+        var authResponse = await authClient.GetToken();
+        client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);*/
+        client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
+    });
+
+    /*services.AddHttpClient<SalesforceClient>(client => {
+        client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
+    });*/
+    //services.AddHostedService<Worker>();
 })
 .Build();
 
-await host.RunAsync();
+//await host.RunAsync();
 
+var services = host.Services;
+using IServiceScope serviceScope = services.CreateScope();
+IServiceProvider provider = serviceScope.ServiceProvider;
+var sfClient = provider.GetRequiredService<SalesforceClient>();
+
+await sfClient.GetRecordTypes();
