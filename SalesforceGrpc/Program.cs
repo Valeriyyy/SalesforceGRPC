@@ -1,12 +1,10 @@
 using GrpcClient;
-using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using SalesforceGrpc;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SqlKata.Compilers;
 using SqlKata.Execution;
-using System.Net.Http.Headers;
 
 var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
