@@ -5,6 +5,8 @@ using MediatR;
 using Microsoft.Extensions.Options;
 using SalesforceGrpc.Salesforce;
 using SqlKata.Execution;
+using SalesforceGrpc.Handlers;
+using SalesforceGrpc.Extensions;
 
 namespace SalesforceGrpc;
 
@@ -58,12 +60,12 @@ public class Worker : BackgroundService {
         await stream.RequestStream.WriteAsync(fetchRequest, stoppingToken);
 
         var schemaDict = (await _db
-            .Query("salesforce.schemas")
+            .Query("salesforce.cdc_schemas")
             .Select("id as Id", "schema_id as SchemaId", "schema_name as SchemaName")
             .GetAsync<CDCSchema>(null, null, stoppingToken))
             .ToDictionary(p => p.SchemaId, p => p.SchemaName);
 
-        /*while (await stream.ResponseStream.MoveNext(stoppingToken)) {
+        while (await stream.ResponseStream.MoveNext(stoppingToken)) {
             var latestReplayId = stream.ResponseStream.Current.LatestReplayId.ToLongBE();
             _logger.LogInformation("latest Replay Id: {replayId}", latestReplayId);
             _logger.LogInformation("Time: {rightNow} RPC ID: {RpcId}", DateTime.Now, stream.ResponseStream.Current.RpcId);
@@ -82,7 +84,7 @@ public class Worker : BackgroundService {
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
 
                     eventTasks.Add(_mediator.Send(new EventWithId { Avropayload = payload.ToByteArray(), SchemaId = e.Event.SchemaId }));
-                    *//*var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
+                    var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
                     if (!validSchemaId) {
                         throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
                     }
@@ -93,11 +95,11 @@ public class Worker : BackgroundService {
                         Console.WriteLine("Contact Event");
                         //eventTasks.Add(_processor.DeserializeContactConcrete(payload.ToByteArray()));
                         //eventTasks.Add(_mediator.Send(new ContactCDCEventCommand { Name = "Contact Change Event", AvroPayload = payload.ToByteArray() }, stoppingToken));
-                    }*//*
+                    }
                 }
                 await Task.WhenAll(eventTasks);
             }
-        }*/
+        }
     }
 
     private async Task PublishEvent(CancellationToken stoppingToken) {

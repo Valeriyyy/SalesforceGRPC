@@ -5,6 +5,9 @@ using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SqlKata.Compilers;
 using SqlKata.Execution;
+using System.Net.Http.Headers;
+using static System.Console;
+
 
 var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
@@ -25,7 +28,7 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
 
     services.AddSingleton((e) => {
-        var connection = new NpgsqlConnection(config.GetConnectionString("postgresLocal"));
+        var connection = new NpgsqlConnection(config.GetConnectionString("postgres"));
         var compiler = new PostgresCompiler();
         return new QueryFactory(connection, compiler);
     });
@@ -44,26 +47,30 @@ IHost host = Host.CreateDefaultBuilder(args)
         metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
     });
 
-    services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
-        /*var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
-        var authResponse = await authClient.GetToken();
-        client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);*/
+    // services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
+    //     var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
+    //     var authResponse = await authClient.GetToken();
+    //     WriteLine("This is access token " + authResponse.AccessToken);
+    //     client.DefaultRequestHeaders.Authorization =
+    //             new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
+    //     client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
+    // });
+
+    services.AddHttpClient<SalesforceClient>(client => {
         client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
     });
-
-    /*services.AddHttpClient<SalesforceClient>(client => {
-        client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
-    });*/
-    //services.AddHostedService<Worker>();
+    services.AddHostedService<Worker>();
 })
 .Build();
 
-//await host.RunAsync();
+await host.RunAsync();
 
-var services = host.Services;
-using IServiceScope serviceScope = services.CreateScope();
-IServiceProvider provider = serviceScope.ServiceProvider;
-var sfClient = provider.GetRequiredService<SalesforceClient>();
+// var services = host.Services;
+// using IServiceScope serviceScope = services.CreateScope();
+// IServiceProvider provider = serviceScope.ServiceProvider;
+// var sfClient = provider.GetRequiredService<SalesforceClient>();
+// await sfClient.GetRecordTypes();
 
-await sfClient.GetRecordTypes();
+// var authClient = provider.GetRequiredService<SalesforceAuthClient>();
+// var authResponse = await authClient.GetToken();
+// WriteLine(authResponse.AccessToken);
