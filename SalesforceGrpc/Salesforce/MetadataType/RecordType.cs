@@ -1,6 +1,6 @@
 ﻿namespace SalesforceGrpc.Salesforce.MetadataType;
 internal class RecordType {
-    public int Id { get; set; }
+    public string Id { get; set; }
     public string Name { get; set; }
     public string SObjectType { get; set; }
     public bool IsActive { get; set; }
@@ -8,7 +8,7 @@ internal class RecordType {
 }
 
 internal class RecordTypeQueryResponse {
-    public int Size { get; set; }
+    public int TotalSize { get; set; }
     public bool Done { get; set; }
     public List<RecordType> Records { get; set; }
 }
