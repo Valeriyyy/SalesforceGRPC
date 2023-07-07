@@ -12,6 +12,7 @@ public class SObjectDeleteHandler {
         }
 
         public async Task Handle(DeleteCommand request, CancellationToken cancellationToken) {
+            await Console.Out.WriteLineAsync("Records have been deleted");
             /*var recordIds = request.RecordIds;
             await _db.Query(request.Table)
                 .WhereIn("sf_id", recordIds)

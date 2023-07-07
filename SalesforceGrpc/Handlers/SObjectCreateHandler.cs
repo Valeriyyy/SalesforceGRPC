@@ -11,8 +11,7 @@ public class SObjectCreateHandler {
         }
 
         public async Task Handle(CreateCommand request, CancellationToken cancellationToken) {
-            await Console.Out.WriteLineAsync("Handling record creation");
-
+            await Console.Out.WriteLineAsync("Records have been created");
         }
 
         private static DateTime ConvertEpochToDateTime(long dateTimeNumber) {

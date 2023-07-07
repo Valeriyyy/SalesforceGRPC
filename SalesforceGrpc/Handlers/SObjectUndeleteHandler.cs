@@ -12,6 +12,7 @@ public class SObjectUndeleteHandler {
         }
 
         public async Task Handle(UndeleteCommand request, CancellationToken cancellationToken) {
+            await Console.Out.WriteLineAsync("Records have been undeleted");
             /*var recordIds = request.RecordIds;
             await _db.Query(request.Table)
                 .WhereIn("sf_id", recordIds)
