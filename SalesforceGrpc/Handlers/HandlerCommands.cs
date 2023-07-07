@@ -1,20 +1,18 @@
-﻿using Avro.Specific;
+﻿using Avro;
+using Avro.Generic;
+using Avro.Specific;
+using com.sforce.eventbus;
 using Google.Protobuf;
 using MediatR;
+using System.Collections;
 
 namespace SalesforceGrpc.Handlers;
-
-public record EventWithId : IRequest {
-    public string SchemaId { get; set; }
-    public byte[] Avropayload { get; set; }
-    public ByteString? LatestReplayId { get; set; }
-}
-
 
 public abstract record CDCEvent : IRequest {
     public byte[]? AvroPayload { get; set; }
     public ByteString? LatestReplayId { get; set; }
     public string Name { get; set; }
+    public Schema AvroSchema { get; set; }
 }
 
 public abstract record EventPayload : IRequest {
@@ -26,35 +24,32 @@ public abstract record EventPayload : IRequest {
 
 public record CreateCommand : IRequest {
     /// <summary>
-    /// The avro decoded change event payload
+    /// The avro GenericRecord
     /// </summary>
-    public ISpecificRecord ChangeEvent { get; set; }
-    /// <summary>
-    /// The concrete dotnet 
-    /// </summary>
-    public Type ChangeEventType { get; set; }
+    public GenericRecord ChangeEvent { get; set; }
     /// <summary>
     /// The schema and the table name of the entity
     /// </summary>
-    public string Table { get; set; }
+    public string EntityName { get; set; }
 }
 
 public record UpdateCommand : IRequest {
-    public ISpecificRecord ChangeEvent { get; set; }
-    public Type ChangeEventType { get; set; }
-    public string Table { get; set; }
+    public GenericRecord ChangeEvent { get; set; }
+    public ChangeEventHeader ChangeEventHeader { get; set; }
+    public string EntityName { get; set; }
 }
 
 public record DeleteCommand : IRequest {
-    public List<string> RecordIds { get; set; }
-    public string Table { get; set; }
+    public IList RecordIds { get; set; }
+    public string EntityName { get; set; }
 }
 
 public record UndeleteCommand : IRequest {
-    public List<string> RecordIds { get; set; }
-    public string Table { get; set; }
+    public IList RecordIds { get; set; }
+    public string EntityName { get; set; }
 }
 
+public record GenericCDCEventCommand() : CDCEvent;
 
 // Account Events
 public record AccountCDCEventCommand() : CDCEvent;
