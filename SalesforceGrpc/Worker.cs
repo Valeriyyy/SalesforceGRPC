@@ -83,16 +83,28 @@ public class Worker : BackgroundService {
                     var payload = e.Event.Payload;
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
 
-                    eventTasks.Add(_mediator.Send(new EventWithId { Avropayload = payload.ToByteArray(), SchemaId = e.Event.SchemaId }));
+                    //eventTasks.Add(_mediator.Send(new EventWithId { Avropayload = payload.ToByteArray(), SchemaId = e.Event.SchemaId }));
                     var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
                     if (!validSchemaId) {
                         throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
                     }
                     if (eventType == "AccountChangeEvent") {
                         Console.WriteLine("Account Event");
-                        eventTasks.Add(_mediator.Send(new AccountCDCEventCommand { Name = "Account Change Event", AvroPayload = payload.ToByteArray() }, stoppingToken));
+                        var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
+                        eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
+                            Name = "Account Change Event",
+                            AvroPayload = payload.ToByteArray(),
+                            AvroSchema = accSchema
+                        },
+                            stoppingToken));
                     } else if (eventType == "ContactChangeEvent") {
                         Console.WriteLine("Contact Event");
+                        var contSchema = Schema.Parse(File.ReadAllText("./avro/ContactChangeEventGRPCSchema.avsc"));
+                        eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
+                            Name = "Contact Change Event",
+                            AvroPayload = payload.ToByteArray(),
+                            AvroSchema = contSchema
+                        }));
                         //eventTasks.Add(_processor.DeserializeContactConcrete(payload.ToByteArray()));
                         //eventTasks.Add(_mediator.Send(new ContactCDCEventCommand { Name = "Contact Change Event", AvroPayload = payload.ToByteArray() }, stoppingToken));
                     }
