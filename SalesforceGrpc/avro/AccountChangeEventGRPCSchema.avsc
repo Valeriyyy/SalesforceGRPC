@@ -994,6 +994,15 @@
       "default": null
     },
     {
+      "name": "Some_Check_Box__c",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "doc": "Data:Boolean:00NDp000009Sipx",
+      "default": null
+    },
+    {
       "name": "Level__pc",
       "type": [
         "null",
