@@ -31,7 +31,6 @@ public class SalesforceAuthClient {
         accessToken = authToken.AccessToken!;
         return authToken;
 
-        //return new AuthToken();
     }
 
     public class AuthToken {
