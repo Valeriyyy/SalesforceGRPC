@@ -1,7 +1,6 @@
 ﻿using Avro.Specific;
-//using com.sforce.eventbus;
+using com.sforce.eventbus;
 using MediatR;
-//using Models.PostgresModels;
 using Newtonsoft.Json;
 using SalesforceGrpc.Database;
 using SalesforceGrpc.Extensions;
@@ -30,7 +29,7 @@ public class AccountCreateHandler {
             /*_db.Logger = compiled => {
                 _logger.LogInformation("Query {query}", compiled.ToString());
             };*/
-            /*var accEvent = request.ChangeEvent as AccountChangeEvent;
+            var accEvent = request.ChangeEvent as AccountChangeEvent;
             var eo = new ExpandoObject();
             var eoColl = (ICollection<KeyValuePair<string, object>>)eo;
             var accEventFieldNamesDict = accEvent.GetFieldNamesDict();
@@ -68,7 +67,7 @@ public class AccountCreateHandler {
             }
             var sfId = accEvent.ChangeEventHeader.recordIds[0];
             eoColl.Add(new KeyValuePair<string, object>("sf_id", sfId));
-            await _db.Query("salesforce.accounts").InsertAsync(eoColl, null, null, cancellationToken);*/
+            await _db.Query("salesforce.accounts").InsertAsync(eoColl, null, null, cancellationToken);
             //await SetAccountGUID(new SFAccount { SfId = sfId, Guid = accGuid });
         }
 
@@ -78,7 +77,7 @@ public class AccountCreateHandler {
         }
 
         /*private async Task<SFAccount> SetAccountGUID(SFAccount acc) {
-            var uri = new Uri("https://rcgauto--valeriybox.sandbox.my.salesforce.com");
+            var uri = new Uri("");
             var sfClient = new HttpClient {
                 BaseAddress = uri
             };
