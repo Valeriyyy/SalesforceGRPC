@@ -79,7 +79,7 @@ public class ContactCreateHandler {
         }
 
         /*private async Task<SFContact> SetAccountGUID(SFContact cont) {
-            var uri = new Uri("https://rcgauto--valeriybox.sandbox.my.salesforce.com");
+            var uri = new Uri("");
             var sfClient = new HttpClient {
                 BaseAddress = uri
             };
