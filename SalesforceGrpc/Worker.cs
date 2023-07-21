@@ -7,6 +7,8 @@ using SalesforceGrpc.Salesforce;
 using SqlKata.Execution;
 using SalesforceGrpc.Handlers;
 using SalesforceGrpc.Extensions;
+using Database;
+using Newtonsoft.Json;
 
 namespace SalesforceGrpc;
 
@@ -14,7 +16,7 @@ public class Worker : BackgroundService {
     private readonly ILogger<Worker> _logger;
     private readonly SalesforceConfig _sfconfig;
     private readonly PubSub.PubSubClient _pubsubClient;
-    private readonly SalesforceAvroDeserializer _processor;
+    //private readonly SalesforceAvroDeserializer _processor;
     private readonly IConfiguration _config;
     private readonly QueryFactory _db;
     private readonly IMediator _mediator;
@@ -23,7 +25,7 @@ public class Worker : BackgroundService {
     public Worker(
         ILogger<Worker> logger,
         IOptions<SalesforceConfig> sfconfig,
-        SalesforceAvroDeserializer processor,
+        //SalesforceAvroDeserializer processor,
         IConfiguration config,
         QueryFactory db,
         PubSub.PubSubClient psClient,
@@ -31,7 +33,7 @@ public class Worker : BackgroundService {
         ) {
         _logger = logger;
         _sfconfig = sfconfig.Value;
-        _processor = processor;
+        //_processor = processor;
         _pubsubClient = psClient;
         _config = config;
         _db = db;
@@ -72,6 +74,7 @@ public class Worker : BackgroundService {
 
             var re = stream.ResponseStream.Current;
             Console.WriteLine("number of events in payload " + re.Events.Count);
+            await File.WriteAllTextAsync("Events.json", JsonConvert.SerializeObject(re));
             if (re?.Events is not null) {
                 var eventTasks = new List<Task>();
                 for (int i = 0; i < re.Events.Count; i++) {
@@ -152,6 +155,6 @@ public class Worker : BackgroundService {
         var avroSchema = Schema.Parse(someSchema.SchemaJson);
         var name = $"{avroSchema.Name}GRPCSchema.avsc";
         Console.WriteLine("saving schame as " + name);
-        //File.WriteAllText($"./avro/{name}", someSchema.SchemaJson);
+        File.WriteAllText($"./avro/{name}", someSchema.SchemaJson);
     }
 }
