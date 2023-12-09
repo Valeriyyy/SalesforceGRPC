@@ -1,4 +1,5 @@
 ﻿using Avro.Specific;
+using com.sforce.eventbus;
 //using com.sforce.eventbus;
 using MediatR;
 using SalesforceGrpc.Database;
@@ -20,7 +21,7 @@ public class AccountUpdateHandler {
 
         public async Task Handle(AccountUpdateCommand request, CancellationToken cancellationToken) {
             WriteLine("Handling Account Update");
-            /*var updateEvent = request.ChangeEvent as AccountChangeEvent;
+            var updateEvent = request.ChangeEvent as AccountChangeEvent;
             var eo = new ExpandoObject();
             var eoColl = (ICollection<KeyValuePair<string, object>>)eo;
             var accEventFieldNamesDict = updateEvent.GetFieldNamesDict();
@@ -75,7 +76,7 @@ public class AccountUpdateHandler {
             }
             if (eo is not null) {
                 await _db.Query("salesforce.accounts").WhereIn("sf_id", updateEvent.ChangeEventHeader.recordIds).UpdateAsync(eo, null, null, cancellationToken);
-            }*/
+            }
         }
 
         private static BitArray GetReveresedBitArray(string byteString) {

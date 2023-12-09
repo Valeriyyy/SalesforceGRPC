@@ -1,16 +1,18 @@
 ﻿using Avro.Generic;
-using Database;
+using com.sforce.eventbus;
 using MediatR;
-using Newtonsoft.Json;
-using SqlKata.Execution;
-using System.Reflection;
+using SalesforceGrpc.Database;
+using SalesforceGrpc.Extensions;
+using System.Dynamic;
+using System.Xml.Linq;
 
 namespace SalesforceGrpc.Handlers;
 public class SObjectCreateHandler {
 
     public class Handler : IRequestHandler<CreateCommand> {
-        private readonly QueryFactory _db;
-        public Handler(QueryFactory db) {
+        private readonly IPGRepository _db;
+
+        public Handler(IPGRepository db) {
             _db = db;
         }
 
@@ -18,20 +20,15 @@ public class SObjectCreateHandler {
         public async Task Handle(CreateCommand request, CancellationToken cancellationToken) {
             await Console.Out.WriteLineAsync("Records have been created");
             var sfRecord = request.ChangeEvent;
-            var mappedFields = await _db
-                .Query("salesforce.mapped_fields")
-                .Select(
-                    "id as Id",
-                    "schema_id as SchemaId",
-                    "salesforce_field_name as SalesforceFieldName",
-                    "postgres_field_name as PostgresFieldName")
-                .GetAsync<MappedField>(null, null, cancellationToken);
+            // Should be the mapped fields for the current relevant entity
+            var mappedFields = await _db.GetAllMappedFieldsAsync(request.EntityName, cancellationToken);
             foreach (var field in mappedFields) {
-                await Console.Out.WriteLineAsync(field.ToString());
+                Console.WriteLine(field.ToString());
             }
-            await Console.Out.WriteLineAsync("creating record with name " + sfRecord.GetValue(1).ToString());
+            sfRecord.GetTypedValue<GenericRecord>("ChangeEventHeader", out var changeEventHeader);
+            Console.WriteLine("creating record with name " + sfRecord.GetValue(1).ToString());
             var fields = sfRecord.Schema.Fields;
-            for (int i = 1; i < fields.Count; i++) {
+            /*for (int i = 1; i < fields.Count; i++) {
                 var field = fields[i];
                 var val = sfRecord.GetValue(i);
                 await Console.Out.WriteLineAsync(field.Name + " " + val?.ToString());
@@ -46,7 +43,27 @@ public class SObjectCreateHandler {
                         await Console.Out.WriteLineAsync(nestedField.Name + " " + nestedValue?.ToString());
                     }
                 }
+            }*/
+            var eo = new ExpandoObject();
+            var eoColl = (ICollection<KeyValuePair<string, object>>)eo;
+
+            foreach (var field in mappedFields) {
+                Console.WriteLine(field.SalesforceFieldName + " -> " + field.PostgresFieldName);
+                var isValid = sfRecord.TryGetValue(field.SalesforceFieldName, out var val);
+                if (isValid && val is not null) {
+                    Console.WriteLine(val.ToString());
+                    var kvp = new KeyValuePair<string, object>(field.PostgresFieldName, val);
+                    eoColl.Add(kvp);
+                }
             }
+            changeEventHeader.GetTypedValue<object[]>("recordIds", out var recordIds);
+            foreach (var recordId in recordIds) {
+                Console.WriteLine(recordId);
+            }
+            eoColl.Add(new KeyValuePair<string, object>("sf_id", recordIds[0]));
+            eoColl.Add(new KeyValuePair<string, object>("guid", Guid.NewGuid()));
+            eoColl.Add(new KeyValuePair<string, object>("created_date", DateTime.UtcNow));
+            await _db.InsertNewRecord(eoColl, cancellationToken);
         }
 
         private static DateTime ConvertEpochToDateTime(long dateTimeNumber) {

@@ -12,6 +12,7 @@ using Database;
 using static System.Console;
 using Polly.Extensions.Http;
 using Polly;
+using SalesforceGrpc.Database;
 
 var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
@@ -31,11 +32,13 @@ IHost host = Host.CreateDefaultBuilder(args)
     var config = context.Configuration;
     services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
 
-    services.AddSingleton((e) => {
+    services.AddTransient((e) => {
         var connection = new NpgsqlConnection(config.GetConnectionString("postgres"));
         var compiler = new PostgresCompiler();
         return new QueryFactory(connection, compiler);
     });
+
+    services.AddTransient<IPGRepository, PGRepository>();
 
     services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
 

@@ -89,3 +89,27 @@ while the application is running.
 Will also need to figure out a way to get all the schemas for the event objects and have them be
 easily accessible for decoding messages of the apppropriate type. For example, when a message comes,
 we only have the schema id. A map can be used to pair the schema id to the schema itself for easy access.
+
+
+List<Account> accs = new List<Account> {
+    new Account(Name = 'Bulk Acc1', Phone = '9283921923', Some_Email__c = 'asdkjansd@asd.com', Active__c = 'Yes'),
+    new Account(Name = 'Bulk Acc2', Phone = '9851457458', Some_Email__c = 'g4345@adsd.com', Active__c = 'No'),
+    new Account(Name = 'Bulk Acc3', Phone = '4512361522', Some_Email__c = '2133445ds@sd.com', Active__c = 'No')
+};
+insert accs;
+
+List<Account> accsToDelete = [Select Id FROM Account where Name = 'Bulk Acc1' OR Name = 'Bulk Acc2' OR Name = 'Bulk Acc3'];
+delete accsToDelete;
+
+List<Account> accs = new List<Account> {
+    new Account(Id = '001Dp00000JIiHWIA1', Some_Email__c = 'asdasd@asdasd.com'),
+    new Account(Id = '001Dp00000JIhN5IAL', Some_Email__c = 'a345@mgmf.com')
+};
+update accs;
+
+List<Some_Custom_Object__c> objs = new List<Some_Custom_Object__c> {
+    new Some_Custom_Object__c(Id = 'a00Dp00000CsByOIAV', Numero__c = 34),
+    new Some_Custom_Object__c(Id = 'a00Dp00000CsrOjIAJ', Numero__c = 932)
+};
+
+update objs;

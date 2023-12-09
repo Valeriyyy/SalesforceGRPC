@@ -8,7 +8,11 @@ using SqlKata.Execution;
 using SalesforceGrpc.Handlers;
 using SalesforceGrpc.Extensions;
 using Database;
-using Newtonsoft.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Google.Protobuf;
+using Humanizer.Bytes;
+//using Newtonsoft.Json;
 
 namespace SalesforceGrpc;
 
@@ -42,7 +46,7 @@ public class Worker : BackgroundService {
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
         try {
-            //await PublishEvent(stoppingToken);
+            //await TestMethod();
             await ListenForTruktChannelEvents(stoppingToken);
             /*await GetAndSaveSchema("AccountChangeEvent");
             await GetAndSaveSchema("ContactChangeEvent");
@@ -74,7 +78,7 @@ public class Worker : BackgroundService {
 
             var re = stream.ResponseStream.Current;
             Console.WriteLine("number of events in payload " + re.Events.Count);
-            await File.WriteAllTextAsync("Events.json", JsonConvert.SerializeObject(re));
+            //await File.WriteAllTextAsync("Events.json", JsonConvert.SerializeObject(re));
             if (re?.Events is not null) {
                 var eventTasks = new List<Task>();
                 for (int i = 0; i < re.Events.Count; i++) {
@@ -85,8 +89,6 @@ public class Worker : BackgroundService {
                     Console.WriteLine("event number " + i);
                     var payload = e.Event.Payload;
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
-
-                    //eventTasks.Add(_mediator.Send(new EventWithId { Avropayload = payload.ToByteArray(), SchemaId = e.Event.SchemaId }));
                     var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
                     if (!validSchemaId) {
                         throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
@@ -98,8 +100,7 @@ public class Worker : BackgroundService {
                             Name = "Account Change Event",
                             AvroPayload = payload.ToByteArray(),
                             AvroSchema = accSchema
-                        },
-                            stoppingToken));
+                        }, stoppingToken));
                     } else if (eventType == "ContactChangeEvent") {
                         Console.WriteLine("Contact Event");
                         var contSchema = Schema.Parse(File.ReadAllText("./avro/ContactChangeEventGRPCSchema.avsc"));
@@ -107,9 +108,7 @@ public class Worker : BackgroundService {
                             Name = "Contact Change Event",
                             AvroPayload = payload.ToByteArray(),
                             AvroSchema = contSchema
-                        }));
-                        //eventTasks.Add(_processor.DeserializeContactConcrete(payload.ToByteArray()));
-                        //eventTasks.Add(_mediator.Send(new ContactCDCEventCommand { Name = "Contact Change Event", AvroPayload = payload.ToByteArray() }, stoppingToken));
+                        }, stoppingToken));
                     }
                 }
                 await Task.WhenAll(eventTasks);
@@ -156,5 +155,45 @@ public class Worker : BackgroundService {
         var name = $"{avroSchema.Name}GRPCSchema.avsc";
         Console.WriteLine("saving schame as " + name);
         File.WriteAllText($"./avro/{name}", someSchema.SchemaJson);
+    }
+
+
+    public async Task TestMethod() {
+        var eventsJson = File.ReadAllText("./AccountUpdateEvents.json");
+        var events = JsonSerializer.Deserialize<List<EventWrapper>>(eventsJson) ?? throw new NullReferenceException("Eventrs are null");
+        Console.WriteLine("Number of events " + events.Count);
+        var eventTasks = new List<Task>();
+        var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
+        foreach (var eve in events) {
+            Console.WriteLine("event " + eve.ReplayId);
+            // Console.WriteLine(eve.Event.Payload);
+            var byteString = ByteString.CopyFromUtf8(eve.Event.Payload);
+            var replayId = (ByteString.CopyFromUtf8(eve.ReplayId)).ToLongBE();
+            Console.WriteLine(replayId);
+            Console.WriteLine(byteString.Length);
+            eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
+                Name = "Account Change Event",
+                AvroPayload = byteString.ToByteArray(),
+                AvroSchema = accSchema
+            }));
+        }
+
+        await Task.WhenAll(eventTasks);
+    }
+
+    public class EventWrapper {
+        [JsonPropertyName("event")]
+        public CDCEvent Event { get; set; }
+        [JsonPropertyName("replayId")]
+        public string ReplayId { get; set; }
+    }
+
+    public class CDCEvent {
+        [JsonPropertyName("id")]
+        public string Id { get; set; }
+        [JsonPropertyName("schemaId")]
+        public string SchemaId { get; set; }
+        [JsonPropertyName("payload")]
+        public string Payload { get; set; }
     }
 }
