@@ -47,7 +47,7 @@ public class Worker : BackgroundService {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
         try {
             //await TestMethod();
-            await ListenForTruktChannelEvents(stoppingToken);
+            await ListenForChannelEvents(stoppingToken);
             /*await GetAndSaveSchema("AccountChangeEvent");
             await GetAndSaveSchema("ContactChangeEvent");
             await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");*/
@@ -57,7 +57,7 @@ public class Worker : BackgroundService {
         }
     }
 
-    private async Task ListenForTruktChannelEvents(CancellationToken stoppingToken) {
+    private async Task ListenForChannelEvents(CancellationToken stoppingToken) {
         var fetchRequest = new FetchRequest {
             TopicName = "/data/MyCustomChannel__chn",
             NumRequested = 25

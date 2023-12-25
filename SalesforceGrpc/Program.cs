@@ -49,7 +49,7 @@ IHost host = Host.CreateDefaultBuilder(args)
         var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
         var authResponse = await authClient.GetToken();
         metadata.Add("accesstoken", $"Bearer {authResponse.AccessToken}");
-        metadata.Add("instanceurl", authResponse.InstanceUrl);
+        metadata.Add("instanceurl", authResponse.InstanceUrl!);
         metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
     });
 
