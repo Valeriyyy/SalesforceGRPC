@@ -1,0 +1,7 @@
+﻿services:
+  salesforcegrpc:
+    image: salesforcegrpc
+    build:
+      context: .
+      dockerfile: SalesforceGrpc/Dockerfile
+
