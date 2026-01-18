@@ -26,7 +26,6 @@ public class Worker : BackgroundService {
     private readonly QueryFactory _db;
     private readonly IMediator _mediator;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
-    //public static string gabagool = "man idk what it wants from me";
 
     public Worker(
         ILogger<Worker> logger,
