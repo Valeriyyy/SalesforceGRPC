@@ -26,7 +26,7 @@ public class Worker : BackgroundService {
     private readonly QueryFactory _db;
     private readonly IMediator _mediator;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
-    //public static string token = "debug token goes here";
+    //public static string gabagool = "debug token goes here";
 
     public Worker(
         ILogger<Worker> logger,
