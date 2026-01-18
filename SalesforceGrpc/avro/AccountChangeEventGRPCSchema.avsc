@@ -25,7 +25,6 @@
             "type": {
               "type": "enum",
               "name": "ChangeType",
-              "namespace": "",
               "symbols": [
                 "CREATE",
                 "UPDATE",
@@ -35,7 +34,8 @@
                 "GAP_UPDATE",
                 "GAP_DELETE",
                 "GAP_UNDELETE",
-                "GAP_OVERFLOW"
+                "GAP_OVERFLOW",
+                "SNAPSHOT"
               ]
             }
           },
@@ -115,30 +115,6 @@
             },
             {
               "name": "LastName",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
-              "name": "MiddleName",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
-              "name": "InformalName",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
-              "name": "Suffix",
               "type": [
                 "null",
                 "string"
@@ -259,14 +235,6 @@
               "default": null
             },
             {
-              "name": "Xyz",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
               "name": "GeocodeAccuracy",
               "type": [
                 "null",
@@ -304,7 +272,7 @@
         "null",
         "string"
       ],
-      "doc": "Data:Fax",
+      "doc": "Data:Phone",
       "default": null
     },
     {
@@ -376,7 +344,7 @@
         "null",
         "string"
       ],
-      "doc": "Data:Content",
+      "doc": "Data:Text",
       "default": null
     },
     {
@@ -565,7 +533,7 @@
         "null",
         "long"
       ],
-      "doc": "Data:Birthday",
+      "doc": "Data:DateOnly",
       "default": null
     },
     {
@@ -895,14 +863,6 @@
               "type": [
                 "null",
                 "double"
-              ],
-              "default": null
-            },
-            {
-              "name": "XyzEncoded",
-              "type": [
-                "null",
-                "string"
               ],
               "default": null
             }

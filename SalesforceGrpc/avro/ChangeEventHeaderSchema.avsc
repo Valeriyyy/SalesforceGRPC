@@ -3,8 +3,17 @@
   "name": "ChangeEventHeader",
   "namespace": "com.sforce.eventbus",
   "fields": [
-    { "name": "entityName", "type": "string" },
-    { "name": "recordIds", "type": { "type": "array", "items": "string" } },
+    {
+      "name": "entityName",
+      "type": "string"
+    },
+    {
+      "name": "recordIds",
+      "type": {
+        "type": "array",
+        "items": "string"
+      }
+    },
     {
       "name": "changeType",
       "type": {
@@ -24,14 +33,50 @@
         ]
       }
     },
-    { "name": "changeOrigin", "type": "string" },
-    { "name": "transactionKey", "type": "string" },
-    { "name": "sequenceNumber", "type": "int" },
-    { "name": "commitTimestamp", "type": "long" },
-    { "name": "commitNumber", "type": "long" },
-    { "name": "commitUser", "type": "string" },
-    { "name": "nulledFields", "type": { "type": "array", "items": "string" } },
-    { "name": "diffFields", "type": { "type": "array", "items": "string" } },
-    { "name": "changedFields", "type": { "type": "array", "items": "string" } }
+    {
+      "name": "changeOrigin",
+      "type": "string"
+    },
+    {
+      "name": "transactionKey",
+      "type": "string"
+    },
+    {
+      "name": "sequenceNumber",
+      "type": "int"
+    },
+    {
+      "name": "commitTimestamp",
+      "type": "long"
+    },
+    {
+      "name": "commitNumber",
+      "type": "long"
+    },
+    {
+      "name": "commitUser",
+      "type": "string"
+    },
+    {
+      "name": "nulledFields",
+      "type": {
+        "type": "array",
+        "items": "string"
+      }
+    },
+    {
+      "name": "diffFields",
+      "type": {
+        "type": "array",
+        "items": "string"
+      }
+    },
+    {
+      "name": "changedFields",
+      "type": {
+        "type": "array",
+        "items": "string"
+      }
+    }
   ]
 }

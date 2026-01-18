@@ -25,7 +25,6 @@
             "type": {
               "type": "enum",
               "name": "ChangeType",
-              "namespace": "",
               "symbols": [
                 "CREATE",
                 "UPDATE",
@@ -35,7 +34,8 @@
                 "GAP_UPDATE",
                 "GAP_DELETE",
                 "GAP_UNDELETE",
-                "GAP_OVERFLOW"
+                "GAP_OVERFLOW",
+                "SNAPSHOT"
               ]
             }
           },
@@ -208,14 +208,6 @@
               "type": [
                 "null",
                 "double"
-              ],
-              "default": null
-            },
-            {
-              "name": "XyzEncoded",
-              "type": [
-                "null",
-                "string"
               ],
               "default": null
             }

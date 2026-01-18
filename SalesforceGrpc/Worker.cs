@@ -20,10 +20,12 @@ public class Worker : BackgroundService {
     private readonly ILogger<Worker> _logger;
     private readonly SalesforceConfig _sfconfig;
     private readonly PubSub.PubSubClient _pubsubClient;
+    private readonly SalesforceClient _client;
     //private readonly SalesforceAvroDeserializer _processor;
     private readonly IConfiguration _config;
     private readonly QueryFactory _db;
     private readonly IMediator _mediator;
+    private readonly IHostApplicationLifetime _hostApplicationLifetime;
     //public static string token = "00D2F000000F5Dn!AQkAQH8rkJV3nKzxr2IBTafD11srDTHWfCa9SfcBMgBvyyQX4rP8d7UL4Yjinpenbe7hdae40OlcW6sAMuJYPO18hX2XHOMO";
 
     public Worker(
@@ -33,8 +35,8 @@ public class Worker : BackgroundService {
         IConfiguration config,
         QueryFactory db,
         PubSub.PubSubClient psClient,
-        IMediator mediator
-        ) {
+        IMediator mediator,
+        IHostApplicationLifetime hostApplicationLifetime, SalesforceClient client) {
         _logger = logger;
         _sfconfig = sfconfig.Value;
         //_processor = processor;
@@ -42,18 +44,23 @@ public class Worker : BackgroundService {
         _config = config;
         _db = db;
         _mediator = mediator;
+        _hostApplicationLifetime = hostApplicationLifetime;
+        _client = client;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
         try {
-            //await TestMethod();
-            await ListenForChannelEvents(stoppingToken);
+            // await TestMethod(stoppingToken);
+            await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");
+            // await ListenForChannelEvents(stoppingToken);
             /*await GetAndSaveSchema("AccountChangeEvent");
-            await GetAndSaveSchema("ContactChangeEvent");
-            await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");*/
+            await GetAndSaveSchema("AccountChangeEvent");*/
         } catch (RpcException exc) {
-            _logger.LogCritical("RCPException thrown with message: {message}", exc.Message);
+            _logger.LogCritical("RPCException thrown with message: {message}", exc.Message);
             _logger.LogCritical("Status: {status}", exc.StatusCode);
+            _logger.LogCritical("Shutting down application gracefully");
+        } finally {
+            _hostApplicationLifetime.StopApplication();
         }
     }
 
@@ -158,27 +165,30 @@ public class Worker : BackgroundService {
     }
 
 
-    public async Task TestMethod() {
-        var eventsJson = File.ReadAllText("./AccountUpdateEvents.json");
-        var events = JsonSerializer.Deserialize<List<EventWrapper>>(eventsJson) ?? throw new NullReferenceException("Eventrs are null");
-        Console.WriteLine("Number of events " + events.Count);
-        var eventTasks = new List<Task>();
-        var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
-        foreach (var eve in events) {
-            Console.WriteLine("event " + eve.ReplayId);
-            // Console.WriteLine(eve.Event.Payload);
-            var byteString = ByteString.CopyFromUtf8(eve.Event.Payload);
-            var replayId = (ByteString.CopyFromUtf8(eve.ReplayId)).ToLongBE();
-            Console.WriteLine(replayId);
-            Console.WriteLine(byteString.Length);
-            eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
-                Name = "Account Change Event",
-                AvroPayload = byteString.ToByteArray(),
-                AvroSchema = accSchema
-            }));
-        }
+    public async Task TestMethod(CancellationToken cancellationToken = default) {
+        // var eventsJson = File.ReadAllText("./AccountUpdateEvents.json");
+        // var events = JsonSerializer.Deserialize<List<EventWrapper>>(eventsJson) ?? throw new NullReferenceException("Eventrs are null");
+        // Console.WriteLine("Number of events " + events.Count);
+        // var eventTasks = new List<Task>();
+        // var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
+        // foreach (var eve in events) {
+        //     Console.WriteLine("event " + eve.ReplayId);
+        //     // Console.WriteLine(eve.Event.Payload);
+        //     var byteString = ByteString.CopyFromUtf8(eve.Event.Payload);
+        //     var replayId = (ByteString.CopyFromUtf8(eve.ReplayId)).ToLongBE();
+        //     Console.WriteLine(replayId);
+        //     Console.WriteLine(byteString.Length);
+        //     eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
+        //         Name = "Account Change Event",
+        //         AvroPayload = byteString.ToByteArray(),
+        //         AvroSchema = accSchema
+        //     }));
+        // }
+        //
+        // await Task.WhenAll(eventTasks);
 
-        await Task.WhenAll(eventTasks);
+
+        await _client.GetRecordTypes(cancellationToken);
     }
 
     public class EventWrapper {

@@ -1,7 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using SalesforceGrpc.Salesforce.MetadataType;
-using System.Net.Http.Headers;
 
 namespace SalesforceGrpc.Salesforce;
 
@@ -11,8 +10,8 @@ public class SalesforceClient {
 
     public SalesforceClient(HttpClient httpClient, IOptions<SalesforceConfig> configurationOptions) {
         client = httpClient;
-        client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", "00DDp000001y5Hb!ARMAQJDINYLfXu5fDoKFg2RP420ppcN9c1IqI3O6_bRsDV3O0KH903sXQYjXpH8wA8UDReKrcJducs0vPYBkF2vH0irauKbr");
+        // client.DefaultRequestHeaders.Authorization =
+        //         new AuthenticationHeaderValue("Bearer", "00DDp000001y5Hb!ARMAQJDINYLfXu5fDoKFg2RP420ppcN9c1IqI3O6_bRsDV3O0KH903sXQYjXpH8wA8UDReKrcJducs0vPYBkF2vH0irauKbr");
         configuration = configurationOptions.Value;
 
         /*if (SalesforceAuthClient.accessToken is not null) {
@@ -24,10 +23,10 @@ public class SalesforceClient {
         }*/
     }
 
-    public async Task GetRecordTypes() {
-        var query = "select Id, Name, DeveloperName, IsActive, IsPersonType, SObjectType from RecordType where sObjectType IN ('Account', 'Contact', 'Some_Custom_Object__c')";
+    public async Task GetRecordTypes(CancellationToken cancellationToken = default) {
+        var query = "select Id, Name, DeveloperName, IsActive, IsPersonType, SObjectType from RecordType where sObjectType IN (\'Account\', \'Contact\', \'Some_Custom_Object__c\')";
         var endpoint = $"services/data/v{configuration.ApiVersion}/query/?q={query}";
-        var recordTypesString = await client.GetStringAsync(endpoint);
+        var recordTypesString = await client.GetStringAsync(endpoint, cancellationToken);
         Console.WriteLine("Record Types response " + recordTypesString);
         var recordTypes = JsonConvert.DeserializeObject<RecordTypeQueryResponse>(recordTypesString);
         Console.WriteLine("this is record types " + recordTypesString);

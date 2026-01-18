@@ -25,7 +25,6 @@
             "type": {
               "type": "enum",
               "name": "ChangeType",
-              "namespace": "",
               "symbols": [
                 "CREATE",
                 "UPDATE",
@@ -35,7 +34,8 @@
                 "GAP_UPDATE",
                 "GAP_DELETE",
                 "GAP_UNDELETE",
-                "GAP_OVERFLOW"
+                "GAP_OVERFLOW",
+                "SNAPSHOT"
               ]
             }
           },
@@ -137,30 +137,6 @@
                 "string"
               ],
               "default": null
-            },
-            {
-              "name": "MiddleName",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
-              "name": "InformalName",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
-              "name": "Suffix",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
             }
           ]
         }
@@ -249,14 +225,6 @@
               "default": null
             },
             {
-              "name": "Xyz",
-              "type": [
-                "null",
-                "string"
-              ],
-              "default": null
-            },
-            {
               "name": "GeocodeAccuracy",
               "type": [
                 "null",
@@ -294,7 +262,7 @@
         "null",
         "string"
       ],
-      "doc": "Data:Fax",
+      "doc": "Data:Phone",
       "default": null
     },
     {
@@ -393,7 +361,7 @@
         "null",
         "long"
       ],
-      "doc": "Data:Birthday",
+      "doc": "Data:DateOnly",
       "default": null
     },
     {
@@ -565,6 +533,24 @@
         "string"
       ],
       "doc": "Data:DynamicEnum",
+      "default": null
+    },
+    {
+      "name": "ContactSource",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:StaticEnum",
+      "default": null
+    },
+    {
+      "name": "BuyerAttributes",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Data:MultiEnum",
       "default": null
     },
     {

@@ -9,6 +9,7 @@ using SqlKata.Execution;
 using System.Net.Http.Headers;
 using System.Reflection;
 using Database;
+using Microsoft.Extensions.Options;
 using static System.Console;
 using Polly.Extensions.Http;
 using Polly;
@@ -31,7 +32,7 @@ IHost host = Host.CreateDefaultBuilder(args)
     // another way to bind settings
     var config = context.Configuration;
     services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
-
+    services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
     services.AddTransient((e) => {
         var connection = new NpgsqlConnection(config.GetConnectionString("postgres"));
         var compiler = new PostgresCompiler();
@@ -43,33 +44,30 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
 
     services.AddHttpClient<SalesforceAuthClient>("SalesforceAuthClient");
+    services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
+    services.AddTransient<SalesforceAuthHandler>();
     services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
         options.Address = new Uri("https://api.pubsub.salesforce.com:7443");
-    }).AddCallCredentials(async (context, metadata, serviceProvider) => {
-        var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
-        var authResponse = await authClient.GetToken();
-        metadata.Add("accesstoken", $"Bearer {authResponse.AccessToken}");
+    }).AddCallCredentials(async (_, metadata, serviceProvider) => {
+        // var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
+        // var authResponse = await authClient.GetToken();
+        var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
+        var authResponse = await tokenProvider.GetAuthToken();
+        metadata.Add("accesstoken", authResponse.AccessToken!);
         metadata.Add("instanceurl", authResponse.InstanceUrl!);
         metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
     });
 
     services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
-        var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
-        var authResponse = await authClient.GetToken();
+        var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
+        client.BaseAddress = new Uri(sfConfig.OrgUrl!);
+        var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
+        var authResponse = await tokenProvider.GetAuthToken();
         WriteLine("This is access token " + authResponse.AccessToken);
         client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
-        client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
-    });
-
-    /*var retryPolicy = HttpPolicyExtensions
-        .HandleTransientHttpError()
-        .OrResult(msg => msg.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
-
-    services.AddHttpClient<SalesforceClient>(client => {
-        client.BaseAddress = new Uri(config.GetValue<string>("SalesforceConfig:OrgUrl")!);
-    }).SetHandlerLifetime(TimeSpan.FromMinutes(5)).AddPolicyHandler(retryPolicy);*/
+            new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
+    }).AddHttpMessageHandler<SalesforceAuthHandler>()
+    .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
 
 
     services.AddHostedService<Worker>();
