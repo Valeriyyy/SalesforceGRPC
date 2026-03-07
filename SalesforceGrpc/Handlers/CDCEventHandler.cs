@@ -6,15 +6,20 @@ using SalesforceGrpc.Extensions;
 using System.Collections;
 
 namespace SalesforceGrpc.Handlers;
-public class CDCEventHandler {
-    public class Handler : IRequestHandler<GenericCDCEventCommand> {
+
+public class CDCEventHandler
+{
+    public class Handler : IRequestHandler<GenericCDCEventCommand>
+    {
         private readonly IMediator _mediator;
 
-        public Handler(IMediator mediator) {
+        public Handler(IMediator mediator)
+        {
             _mediator = mediator;
         }
 
-        public async Task Handle(GenericCDCEventCommand request, CancellationToken cancellationToken) {
+        public async Task Handle(GenericCDCEventCommand request, CancellationToken cancellationToken)
+        {
             using var accStream = new MemoryStream(request.AvroPayload);
             var decoder = new BinaryDecoder(accStream);
             var datumReader = new GenericDatumReader<GenericRecord>(request.AvroSchema, request.AvroSchema);
@@ -25,17 +30,35 @@ public class CDCEventHandler {
             Console.WriteLine(entityName + " HAS BEEN " + changeType.Value);
 
             Enum.TryParse<ChangeType>(changeType.Value, out ChangeType changeTypeEnum);
-            if (changeTypeEnum is ChangeType.CREATE) {
-                await _mediator.Send(new CreateCommand { ChangeEvent = gr, EntityName = entityName }, cancellationToken);
-            } else if (changeTypeEnum is ChangeType.UPDATE) {
-                await _mediator.Send(new UpdateCommand { ChangeEvent = gr, EntityName = entityName }, cancellationToken);
-            } else if (changeTypeEnum is ChangeType.DELETE) {
-                var changedFields = genericChangeEventHeader.GetValue(11) as IList;
-                await _mediator.Send(new DeleteCommand { RecordIds = changedFields, EntityName = entityName }, cancellationToken);
-            } else if (changeTypeEnum is ChangeType.UNDELETE) {
-                var changedFields = genericChangeEventHeader.GetValue(11) as IList;
-                await _mediator.Send(new UndeleteCommand { RecordIds = changedFields, EntityName = entityName }, cancellationToken);
-            }
+            // if (changeTypeEnum is ChangeType.CREATE)
+            // {
+            //     await _mediator.Send(new CreateCommand { ChangeEvent = gr, EntityName = entityName }, cancellationToken);
+            // }
+            // else if (changeTypeEnum is ChangeType.UPDATE)
+            // {
+            //     await _mediator.Send(new UpdateCommand { ChangeEvent = gr, EntityName = entityName }, cancellationToken);
+            // }
+            // else if (changeTypeEnum is ChangeType.DELETE)
+            // {
+            //     var changedFields = genericChangeEventHeader.GetValue(11) as IList;
+            //     await _mediator.Send(new DeleteCommand { RecordIds = changedFields, EntityName = entityName }, cancellationToken);
+            // }
+            // else if (changeTypeEnum is ChangeType.UNDELETE)
+            // {
+            //     var changedFields = genericChangeEventHeader.GetValue(11) as IList;
+            //     await _mediator.Send(new UndeleteCommand { RecordIds = changedFields, EntityName = entityName }, cancellationToken);
+            // }
+
+            IRequest commandObj = changeTypeEnum switch
+            {
+                ChangeType.CREATE => new CreateCommand { ChangeEvent = gr, EntityName = entityName },
+                ChangeType.UPDATE => new UpdateCommand { ChangeEvent = gr, EntityName = entityName },
+                ChangeType.DELETE => new DeleteCommand { ChangeEvent = gr, EntityName = entityName },
+                ChangeType.UNDELETE => new UndeleteCommand { ChangeEvent = gr, EntityName = entityName },
+                _ => throw new NotImplementedException(),
+            };
+
+            await _mediator.Send(commandObj, cancellationToken);
         }
     }
 }

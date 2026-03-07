@@ -8,7 +8,7 @@ public class MappedField {
     public string EntityName { get; set; }
     [Column("salesforce_field_name")]
     public string SalesforceFieldName { get; set; }
-    [Column("psotgres_field_name")]
+    [Column("postgres_field_name")]
     public string PostgresFieldName { get; set; }
 
     public override string ToString() {

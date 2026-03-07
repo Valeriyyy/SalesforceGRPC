@@ -49,11 +49,16 @@ public class Worker : BackgroundService {
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
         try {
+            // while (!stoppingToken.IsCancellationRequested)
+            // {
+            //     _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+            //     await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+            // }
             // await TestMethod(stoppingToken);
-            await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");
-            // await ListenForChannelEvents(stoppingToken);
-            /*await GetAndSaveSchema("AccountChangeEvent");
-            await GetAndSaveSchema("AccountChangeEvent");*/
+            // await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");
+            await ListenForChannelEvents(stoppingToken);
+            // await GetAndSaveSchema("AccountChangeEvent");
+            /*await GetAndSaveSchema("AccountChangeEvent");*/
         } catch (RpcException exc) {
             _logger.LogCritical("RPCException thrown with message: {message}", exc.Message);
             _logger.LogCritical("Status: {status}", exc.StatusCode);

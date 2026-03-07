@@ -5,8 +5,12 @@ public class CDCSchema {
     public int Id { get; set; }
     [Column("schema_id")]
     public string SchemaId { get; set; } = null!;
+    [Column("entity_name")]
+    public string EntityName { get; set; }
     [Column("schema_name")]
     public string SchemaName { get; set; } = null!;
+    [Column("db_schema_full_name")]
+    public string DbSchemaFullName { get; set; }
 
     public override string ToString() {
         return $"{Id} {SchemaId} {SchemaName}";
