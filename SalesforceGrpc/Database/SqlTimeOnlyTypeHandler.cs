@@ -11,6 +11,7 @@ public class SqlTimeOnlyTypeHandler : SqlMapper.TypeHandler<TimeOnly> {
         parameter.Value = time.ToTimeSpan(); 
         
         // Alternatively, for some providers, converting to a string might be necessary
+        // keeping this here for when support for other dbs is added
         // parameter.Value = time.ToString(); 
     }
 

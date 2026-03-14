@@ -15,6 +15,7 @@ using static System.Console;
 using Polly.Extensions.Http;
 using Polly;
 using SalesforceGrpc.Database;
+using SalesforceGrpc.Strategies;
 
 var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
@@ -44,6 +45,12 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.AddSingleton<IMetaRepository, MetaRepository>();
 
     services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+    
+    services.AddTransient<IEventStrategy, InsertStrategy>();
+    services.AddTransient<IEventStrategy, UpdateStrategy>();
+    services.AddTransient<IEventStrategy, DeleteStrategy>();
+    services.AddTransient<EventResolver>();
+    
 
     services.AddHttpClient<SalesforceAuthClient>("SalesforceAuthClient");
     services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();

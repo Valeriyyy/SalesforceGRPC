@@ -1,4 +1,7 @@
 using Avro;
+using Avro.Generic;
+using Avro.IO;
+using com.sforce.eventbus;
 using Grpc.Core;
 using GrpcClient;
 using MediatR;
@@ -13,6 +16,7 @@ using System.Text.Json.Serialization;
 using Google.Protobuf;
 using Humanizer.Bytes;
 using SalesforceGrpc.Database;
+using SalesforceGrpc.Strategies;
 
 //using Newtonsoft.Json;
 
@@ -25,6 +29,7 @@ public class Worker : BackgroundService {
     private readonly SalesforceClient _client;
     //private readonly SalesforceAvroDeserializer _processor;
     private readonly IConfiguration _config;
+    private readonly EventResolver _eventResolver;
     
     private readonly IMetaRepository _metaRepo;
     private readonly IMediator _mediator;
@@ -39,7 +44,8 @@ public class Worker : BackgroundService {
         IMediator mediator,
         IHostApplicationLifetime hostApplicationLifetime, 
         SalesforceClient client, 
-        IMetaRepository metaRepo) {
+        IMetaRepository metaRepo,
+        EventResolver eventResolver) {
         _logger = logger;
         _sfconfig = sfconfig.Value;
         //_processor = processor;
@@ -49,6 +55,7 @@ public class Worker : BackgroundService {
         _hostApplicationLifetime = hostApplicationLifetime;
         _client = client;
         _metaRepo = metaRepo;
+        _eventResolver = eventResolver;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -60,7 +67,7 @@ public class Worker : BackgroundService {
             // }
             // await TestMethod(stoppingToken);
             // await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");
-            await ListenForChannelEvents(stoppingToken);
+            await ListenForChannelEventsStrategy(stoppingToken);
             // await GetAndSaveSchema("AccountChangeEvent");
             /*await GetAndSaveSchema("AccountChangeEvent");*/
         } catch (RpcException exc) {
@@ -112,6 +119,65 @@ public class Worker : BackgroundService {
                     };
                     
                     eventTasks.Add(_mediator.Send(genericEvent, stoppingToken));
+                }
+                await Task.WhenAll(eventTasks);
+            }
+        }
+    }
+
+    private async Task ListenForChannelEventsStrategy(CancellationToken stoppingToken) {
+        var fetchRequest = new FetchRequest {
+            TopicName = "/data/MyCustomChannel__chn",
+            NumRequested = 25
+        };
+        using var stream = _pubsubClient.Subscribe(null, null, stoppingToken);
+        await stream.RequestStream.WriteAsync(fetchRequest, stoppingToken);
+
+        var schemaDict = (await _metaRepo.GetCachedSchemas(stoppingToken))
+            .ToDictionary(p => p.SchemaId, p => p);
+
+        while (await stream.ResponseStream.MoveNext(stoppingToken)) {
+            var latestReplayId = stream.ResponseStream.Current.LatestReplayId.ToLongBE();
+            _logger.LogInformation("latest Replay Id: {replayId}", latestReplayId);
+            _logger.LogInformation("Time: {rightNow} RPC ID: {RpcId}", DateTime.Now, stream.ResponseStream.Current.RpcId);
+
+            var re = stream.ResponseStream.Current;
+            Console.WriteLine("number of events in payload " + re.Events.Count);
+            if (re?.Events is not null) {
+                var eventTasks = new List<Task>();
+                for (int i = 0; i < re.Events.Count; i++) {
+                    var e = re.Events[i];
+                    var eventReplayId = e.ReplayId;
+                    var replayId = eventReplayId.ToLongBE();
+                    _logger.LogInformation("Event Replay Id: {replayId}", replayId);
+                    Console.WriteLine("event number " + i);
+                    var payload = e.Event.Payload;
+                    _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
+                    var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var dbSchema);
+                    if (!validSchemaId || dbSchema is null) {
+                        throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
+                    }
+                    _logger.LogInformation("Processing: {schemaName} event", dbSchema.SchemaName);
+                    
+                    var schema = Schema.Parse(await File.ReadAllTextAsync($"./avro/{dbSchema.SchemaName}.avsc", stoppingToken));
+                    // var genericEvent = new GenericCDCEventCommand {
+                    //     Name = dbSchema.EntityName, AvroPayload = payload.ToByteArray(), AvroSchema = schema, SchemaId = dbSchema.Id
+                    // };
+                    
+                    using var memStream = new MemoryStream(payload.ToByteArray());
+                    var decoder = new BinaryDecoder(memStream);
+                    var datumReader = new GenericDatumReader<GenericRecord>(schema, schema);
+                    var gr = datumReader.Read(null, decoder);
+                    var changeEventHeaderValid = gr.GetTypedValue<GenericRecord>("ChangeEventHeader", out var genericChangeEventHeader);
+                    var changeTypeFound = genericChangeEventHeader.GetTypedValue<dynamic>("changeType", out var changeType);
+                    var entityName = genericChangeEventHeader.GetValue(0).ToString();
+                    Console.WriteLine(entityName + " HAS BEEN " + changeType.Value);
+
+                    Enum.TryParse<ChangeType>(changeType.Value, out ChangeType changeTypeEnum);
+
+                    var processEvent = _eventResolver.Resolve(changeTypeEnum);
+                    
+                    eventTasks.Add(processEvent.ProcessEvent(gr, schema, dbSchema, stoppingToken));
                 }
                 await Task.WhenAll(eventTasks);
             }
@@ -184,21 +250,5 @@ public class Worker : BackgroundService {
 
 
         await _client.GetRecordTypes(cancellationToken);
-    }
-
-    public class EventWrapper {
-        [JsonPropertyName("event")]
-        public CDCEvent Event { get; set; }
-        [JsonPropertyName("replayId")]
-        public string ReplayId { get; set; }
-    }
-
-    public class CDCEvent {
-        [JsonPropertyName("id")]
-        public string Id { get; set; }
-        [JsonPropertyName("schemaId")]
-        public string SchemaId { get; set; }
-        [JsonPropertyName("payload")]
-        public string Payload { get; set; }
     }
 }
