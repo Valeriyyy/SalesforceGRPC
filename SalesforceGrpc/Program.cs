@@ -1,3 +1,4 @@
+using Dapper;
 using Database;
 using GrpcClient;
 using Npgsql;
@@ -35,11 +36,12 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
     services.AddTransient((e) => {
         var connection = new NpgsqlConnection(config.GetConnectionString("postgres"));
-        var compiler = new PostgresCompiler();
-        return new QueryFactory(connection, compiler);
+        return new QueryFactory(connection, new PostgresCompiler());
     });
 
-    services.AddTransient<IPGRepository, PGRepository>();
+    services.AddMemoryCache();
+    SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
+    services.AddSingleton<IMetaRepository, MetaRepository>();
 
     services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
 
@@ -68,7 +70,12 @@ IHost host = Host.CreateDefaultBuilder(args)
             new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
     }).AddHttpMessageHandler<SalesforceAuthHandler>()
     .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
-
+    
+    //create the directory to save avro files
+    var schemaSaveDir = config.GetValue<string>("AvroSchemaSaveDirectory");
+    if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
+        Directory.CreateDirectory(schemaSaveDir);
+    }
 
     services.AddHostedService<Worker>();
 })

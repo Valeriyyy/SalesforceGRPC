@@ -12,6 +12,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Google.Protobuf;
 using Humanizer.Bytes;
+using SalesforceGrpc.Database;
+
 //using Newtonsoft.Json;
 
 namespace SalesforceGrpc;
@@ -23,7 +25,8 @@ public class Worker : BackgroundService {
     private readonly SalesforceClient _client;
     //private readonly SalesforceAvroDeserializer _processor;
     private readonly IConfiguration _config;
-    private readonly QueryFactory _db;
+    
+    private readonly IMetaRepository _metaRepo;
     private readonly IMediator _mediator;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
 
@@ -32,19 +35,20 @@ public class Worker : BackgroundService {
         IOptions<SalesforceConfig> sfconfig,
         //SalesforceAvroDeserializer processor,
         IConfiguration config,
-        QueryFactory db,
         PubSub.PubSubClient psClient,
         IMediator mediator,
-        IHostApplicationLifetime hostApplicationLifetime, SalesforceClient client) {
+        IHostApplicationLifetime hostApplicationLifetime, 
+        SalesforceClient client, 
+        IMetaRepository metaRepo) {
         _logger = logger;
         _sfconfig = sfconfig.Value;
         //_processor = processor;
         _pubsubClient = psClient;
         _config = config;
-        _db = db;
         _mediator = mediator;
         _hostApplicationLifetime = hostApplicationLifetime;
         _client = client;
+        _metaRepo = metaRepo;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -76,11 +80,8 @@ public class Worker : BackgroundService {
         using var stream = _pubsubClient.Subscribe(null, null, stoppingToken);
         await stream.RequestStream.WriteAsync(fetchRequest, stoppingToken);
 
-        var schemaDict = (await _db
-            .Query("salesforce.cdc_schemas")
-            .Select("id as Id", "schema_id as SchemaId", "schema_name as SchemaName")
-            .GetAsync<CDCSchema>(null, null, stoppingToken))
-            .ToDictionary(p => p.SchemaId, p => p.SchemaName);
+        var schemaDict = (await _metaRepo.GetCachedSchemas(stoppingToken))
+            .ToDictionary(p => p.SchemaId, p => p);
 
         while (await stream.ResponseStream.MoveNext(stoppingToken)) {
             var latestReplayId = stream.ResponseStream.Current.LatestReplayId.ToLongBE();
@@ -89,7 +90,6 @@ public class Worker : BackgroundService {
 
             var re = stream.ResponseStream.Current;
             Console.WriteLine("number of events in payload " + re.Events.Count);
-            //await File.WriteAllTextAsync("Events.json", JsonConvert.SerializeObject(re));
             if (re?.Events is not null) {
                 var eventTasks = new List<Task>();
                 for (int i = 0; i < re.Events.Count; i++) {
@@ -100,27 +100,18 @@ public class Worker : BackgroundService {
                     Console.WriteLine("event number " + i);
                     var payload = e.Event.Payload;
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
-                    var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var eventType);
-                    if (!validSchemaId) {
+                    var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var dbSchema);
+                    if (!validSchemaId || dbSchema is null) {
                         throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
                     }
-                    if (eventType == "AccountChangeEvent") {
-                        Console.WriteLine("Account Event");
-                        var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
-                        eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
-                            Name = "Account Change Event",
-                            AvroPayload = payload.ToByteArray(),
-                            AvroSchema = accSchema
-                        }, stoppingToken));
-                    } else if (eventType == "ContactChangeEvent") {
-                        Console.WriteLine("Contact Event");
-                        var contSchema = Schema.Parse(File.ReadAllText("./avro/ContactChangeEventGRPCSchema.avsc"));
-                        eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
-                            Name = "Contact Change Event",
-                            AvroPayload = payload.ToByteArray(),
-                            AvroSchema = contSchema
-                        }, stoppingToken));
-                    }
+                    _logger.LogInformation("Processing: {schemaName} event", dbSchema.SchemaName);
+                    
+                    var schema = Schema.Parse(await File.ReadAllTextAsync($"./avro/{dbSchema.SchemaName}.avsc", stoppingToken));
+                    var genericEvent = new GenericCDCEventCommand {
+                        Name = dbSchema.EntityName, AvroPayload = payload.ToByteArray(), AvroSchema = schema, SchemaId = dbSchema.Id
+                    };
+                    
+                    eventTasks.Add(_mediator.Send(genericEvent, stoppingToken));
                 }
                 await Task.WhenAll(eventTasks);
             }
@@ -163,9 +154,9 @@ public class Worker : BackgroundService {
         };
         var someSchema = await _pubsubClient.GetSchemaAsync(schemaRequest);
         var avroSchema = Schema.Parse(someSchema.SchemaJson);
-        var name = $"{avroSchema.Name}GRPCSchema.avsc";
+        var name = $"{avroSchema.Name}.avsc";
         Console.WriteLine("saving schame as " + name);
-        File.WriteAllText($"./avro/{name}", someSchema.SchemaJson);
+        await File.WriteAllTextAsync($"./avro/{name}", someSchema.SchemaJson);
     }
 
 

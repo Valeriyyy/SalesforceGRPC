@@ -11,12 +11,14 @@ namespace SalesforceGrpc.Handlers;
 public class SObjectUpdateHandler {
     public class Handler : IRequestHandler<UpdateCommand> {
         private readonly ILogger<Handler> _logger;
-        private readonly IPGRepository _db;
+        private readonly IMetaRepository _db;
+        private readonly IConfiguration _config;
         private static readonly Dictionary<string, Schema> _schemaCache = new();
 
-        public Handler(IPGRepository db, ILogger<Handler> logger) {
+        public Handler(IMetaRepository db, ILogger<Handler> logger, IConfiguration config) {
             _db = db;
             _logger = logger;
+            _config = config;
         }
 
         public async Task Handle(UpdateCommand request, CancellationToken cancellationToken) {
@@ -46,7 +48,7 @@ public class SObjectUpdateHandler {
 
             // Get cached field mappings (Salesforce -> PostgreSQL)
             // var pgFieldMappings = FieldMappingCache.GetOrCreateMapping(request.EntityName, fieldMappings);
-            var pgFieldMappings = await _db.GetCachedMapping(request.EntityName, cancellationToken).ConfigureAwait(false);
+            var pgFieldMappings = await _db.GetCachedMapping(request.SchemaId, cancellationToken).ConfigureAwait(false);
 
             // Process changed fields if present
             var changedFieldsList = new List<ChangedField>();
@@ -67,6 +69,7 @@ public class SObjectUpdateHandler {
             var data = changeSet.ToDataObject();
             _logger.LogInformation(sqlStatement);
             _logger.LogDebug(sqlStatement);
+            if(data.Count == 0) return;
             await _db.ExecuteQuery(schemas[request.EntityName], recordIdStrings, data, cancellationToken);
         }
 
@@ -147,7 +150,7 @@ public class SObjectUpdateHandler {
 
                 // Try to map to PostgreSQL field name
                 if (pgFieldMappings.TryGetValue(sfNestedFieldKey, out var pgFieldName)) {
-                    var avroType = nestedFieldTypeMapping.TryGetValue(decodedField, out var type) ? type : "string";
+                    var avroType = nestedFieldTypeMapping.GetValueOrDefault(decodedField, "string");
                     var fieldDoc = GetNestedFieldDocumentation(nestedRecordSchema, decodedField);
                     var convertedValue = FieldTypeConverter.ConvertValue(fieldValue, avroType, fieldDoc);
                     
@@ -179,24 +182,25 @@ public class SObjectUpdateHandler {
 
                 // Try to map to PostgreSQL field name
                 if (pgFieldMappings.TryGetValue(fieldName, out var pgFieldName)) {
-                    var avroType = fieldTypeMapping.TryGetValue(fieldName, out var type) ? type : "string";
+                    var avroType = fieldTypeMapping.GetValueOrDefault(fieldName, "string");
                     var fieldDoc = GetFieldDocumentation(recSchema, fieldName);
                     var convertedValue = FieldTypeConverter.ConvertValue(fieldValue, avroType, fieldDoc);
                     
                     changedFields.Add(new ChangedField(pgFieldName, convertedValue, avroType));
                     WriteLine($"      Mapped to: {pgFieldName} = {convertedValue} ({avroType})");
                 } else {
-                    _logger.LogWarning($"No mapping found for Salesforce field '{fieldName}'");
+                    _logger.LogWarning("No mapping found for Salesforce field '{FieldName}'", fieldName);
                 }
             }
 
             return changedFields;
         }
 
-        private static Schema GetCachedSchema(string entityName) {
+        private Schema GetCachedSchema(string entityName) {
             lock (_schemaCache) {
                 if (!_schemaCache.TryGetValue(entityName, out var schema)) {
-                    var filePath = GetSchemaFilePath(entityName);
+                    // var filePath = GetSchemaFilePath(entityName);
+                    var filePath = $"{_config.GetValue<string>("AvroSchemaSaveDirectory")}/{entityName}ChangeEvent.avsc";
                     schema = Schema.Parse(File.ReadAllText(filePath));
                     _schemaCache[entityName] = schema;
                 }
@@ -205,7 +209,7 @@ public class SObjectUpdateHandler {
         }
         
         private static string GetSchemaFilePath(string entityName) {
-            return $"/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/{entityName}ChangeEventGRPCSchema.avsc";
+            return $"/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/{entityName}ChangeEvent.avsc";
         }
         
         private List<string> DecodeChangedFieldsBitmap(string hexBitmap, Schema schema, int nestedFieldIndex) {

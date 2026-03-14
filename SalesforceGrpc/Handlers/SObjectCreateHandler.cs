@@ -10,9 +10,9 @@ namespace SalesforceGrpc.Handlers;
 public class SObjectCreateHandler {
 
     public class Handler : IRequestHandler<CreateCommand> {
-        private readonly IPGRepository _db;
+        private readonly IMetaRepository _db;
 
-        public Handler(IPGRepository db) {
+        public Handler(IMetaRepository db) {
             _db = db;
         }
 
@@ -21,7 +21,7 @@ public class SObjectCreateHandler {
             await Console.Out.WriteLineAsync("Records have been created");
             var sfRecord = request.ChangeEvent;
             // Should be the mapped fields for the current relevant entity
-            var mappedFields = await _db.GetAllMappedFieldsAsync(request.EntityName, cancellationToken);
+            var mappedFields = await _db.GetAllMappedFieldsAsync(request.SchemaId, cancellationToken);
             foreach (var field in mappedFields) {
                 Console.WriteLine(field.ToString());
             }

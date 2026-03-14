@@ -38,7 +38,7 @@ public static class FieldTypeConverter {
             "int" => Convert.ToInt32(value),
             "double" => Convert.ToDouble(value),
             "float" => Convert.ToSingle(value),
-            "boolean" => Convert.ToBoolean(value) ? 1 : 0,
+            "boolean" => Convert.ToBoolean(value),
             _ => $"{EscapeSqlString(value.ToString() ?? "")}"
         };
     }
@@ -77,12 +77,16 @@ public static class FieldTypeConverter {
     /// Converts epoch milliseconds to SQL-compatible time string
     /// Format: '10:30:45.000'
     /// </summary>
-    private static string ConvertEpochToTime(long epochMilliseconds) {
+    public static TimeOnly? ConvertEpochToTime(long epochMilliseconds) {
         try {
-            var dateTime = UnixEpoch.AddMilliseconds(epochMilliseconds);
-            return $"'{dateTime:HH:mm:ss.fff}'";
+            
+            // var timeOnly = new TimeOnly(epochMilliseconds);
+            // var dateTime = UnixEpoch.AddMilliseconds(epochMilliseconds);
+            // return $"'{dateTime:HH:mm:ss.fff}'";
+            var fromDateTime = TimeOnly.FromTimeSpan(TimeSpan.FromMilliseconds(epochMilliseconds));
+            return fromDateTime;
         } catch {
-            return "NULL";
+            return null;
         }
     }
 

@@ -9,18 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="CDCSchema.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Remove="avro\AddressSchema.avsc" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Content Include="..\.dockerignore">
       <Link>.dockerignore</Link>
     </Content>
-    <Content Include="avro\AddressSchema.avsc" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +24,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="MediatR" Version="14.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="11.0.0-preview.1.26104.118" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.2" />
     <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="10.0.2" />

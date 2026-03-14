@@ -52,7 +52,7 @@ public class CDCEventHandler
             IRequest commandObj = changeTypeEnum switch
             {
                 ChangeType.CREATE => new CreateCommand { ChangeEvent = gr, EntityName = entityName },
-                ChangeType.UPDATE => new UpdateCommand { ChangeEvent = gr, EntityName = entityName },
+                ChangeType.UPDATE => new UpdateCommand { ChangeEvent = gr, EntityName = entityName, SchemaId = request.SchemaId },
                 ChangeType.DELETE => new DeleteCommand { ChangeEvent = gr, EntityName = entityName },
                 ChangeType.UNDELETE => new UndeleteCommand { ChangeEvent = gr, EntityName = entityName },
                 _ => throw new NotImplementedException(),

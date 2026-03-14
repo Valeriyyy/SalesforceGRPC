@@ -14,6 +14,7 @@ public abstract record CDCEvent : IRequest
     public ByteString? LatestReplayId { get; set; }
     public string Name { get; set; }
     public Schema AvroSchema { get; set; }
+    public int SchemaId { get; set; }
 }
 
 public abstract record EventPayload : IRequest
@@ -34,6 +35,8 @@ public record CreateCommand : IRequest
     /// The schema and the table name of the entity
     /// </summary>
     public string EntityName { get; set; }
+
+    public int SchemaId { get; set; }
 }
 
 public record UpdateCommand : IRequest
@@ -41,6 +44,7 @@ public record UpdateCommand : IRequest
     public GenericRecord ChangeEvent { get; set; }
     public ChangeEventHeader ChangeEventHeader { get; set; }
     public string EntityName { get; set; }
+    public int SchemaId { get; set; }
 }
 
 public record DeleteCommand : IRequest
@@ -48,6 +52,7 @@ public record DeleteCommand : IRequest
     public IList<string> RecordIds { get; set; }
     public GenericRecord ChangeEvent { get; set; }
     public string EntityName { get; set; }
+    public int SchemaId { get; set; }
 }
 
 public record UndeleteCommand : IRequest
@@ -55,6 +60,7 @@ public record UndeleteCommand : IRequest
     public IList<string> RecordIds { get; set; }
     public GenericRecord ChangeEvent { get; set; }
     public string EntityName { get; set; }
+    public int SchemaId { get; set; }
 }
 
 public record GenericCDCEventCommand() : CDCEvent;

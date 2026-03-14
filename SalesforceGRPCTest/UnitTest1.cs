@@ -157,17 +157,17 @@ public class UnitTest1 {
     public async Task Should_Process_Account_Creation_As_Generic_Record() {
         var accSchema = Schema.Parse(File.ReadAllText("/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/AccountChangeEventGRPCSchema.avsc"));
         var cancellationToken = new CancellationToken();
-        var mockDb = new Mock<IPGRepository>();
+        var mockDb = new Mock<IMetaRepository>();
         var mappedFields = new List<MappedField>
         {
-            new MappedField { Id = 1, EntityName = "Account", SalesforceFieldName = "Name", PostgresFieldName = "name" },
-            new MappedField { Id = 2, EntityName = "Account", SalesforceFieldName = "Id", PostgresFieldName = "sf_id" },
-            new MappedField { Id = 3, EntityName = "Account", SalesforceFieldName = "RecordTypeId", PostgresFieldName = "record_type_sf_id" },
-            new MappedField { Id = 4, EntityName = "Account", SalesforceFieldName = "Phone", PostgresFieldName = "phone" }
+            new MappedField { Id = 1, SalesforceFieldName = "Name", PostgresFieldName = "name" },
+            new MappedField { Id = 2, SalesforceFieldName = "Id", PostgresFieldName = "sf_id" },
+            new MappedField { Id = 3, SalesforceFieldName = "RecordTypeId", PostgresFieldName = "record_type_sf_id" },
+            new MappedField { Id = 4, SalesforceFieldName = "Phone", PostgresFieldName = "phone" }
         };
         IEnumerable<MappedField> realMappedFields = mappedFields;
         mockDb
-            .Setup(q => q.GetAllMappedFieldsAsync("Account", cancellationToken))
+            .Setup(q => q.GetAllMappedFieldsAsync(1, cancellationToken))
             .ReturnsAsync(realMappedFields);
 
         var gr = new GenericRecord(accSchema as RecordSchema);
