@@ -46,9 +46,10 @@ IHost host = Host.CreateDefaultBuilder(args)
 
     services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
     
-    services.AddTransient<IEventStrategy, InsertStrategy>();
+    services.AddTransient<IEventStrategy, CreateStrategy>();
     services.AddTransient<IEventStrategy, UpdateStrategy>();
     services.AddTransient<IEventStrategy, DeleteStrategy>();
+    services.AddTransient<IEventStrategy, UndeleteStrategy>();
     services.AddTransient<EventResolver>();
     
 

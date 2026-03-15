@@ -55,7 +55,7 @@ public class UpdateStrategy : IEventStrategy {
             
         // Create RecordChangeSet with all record IDs
         var recordIdStrings = recordIds.Select(id => id.ToString() ?? string.Empty).ToList();
-        var changeSet = new RecordChangeSet(schemas[dbSchema.EntityName], recordIdStrings, "UPDATE");
+        var changeSet = new RecordChangeSet(schemas[dbSchema.EntityName], recordIdStrings, ChangeType.UPDATE);
         foreach (var field in changedFieldsList) {
             changeSet.ChangedFields.Add(field);
         }
@@ -66,7 +66,12 @@ public class UpdateStrategy : IEventStrategy {
         _logger.LogInformation(sqlStatement);
         _logger.LogDebug(sqlStatement);
         if(data.Count == 0) return;
-        await _db.ExecuteQuery(schemas[dbSchema.EntityName], recordIdStrings, data, cancellationToken);
+
+        try {
+            await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data, cancellationToken);
+        } catch (Exception e) {
+            _logger.LogCritical(e, "Failed to update record {Data}", data.ToJson());
+        }
     }
     
     private List<ChangedField> ProcessChangedFields(GenericRecord sfRecord, object[] changedFields, 
@@ -98,7 +103,7 @@ public class UpdateStrategy : IEventStrategy {
                 changedFieldsList.AddRange(nestedChangedFields);
             } else {
                 // Top-level field changed
-                WriteLine($"  Top-level field change");
+                WriteLine("  Top-level field change");
                 WriteLine($"  Hex bitmap: {changedFieldStr}");
 
                 var decodedFields = DecodeChangedFieldsBitmap(changedFieldStr, recSchema, -1);

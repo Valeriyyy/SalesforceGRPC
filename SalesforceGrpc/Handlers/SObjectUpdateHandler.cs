@@ -1,6 +1,7 @@
 ﻿using Avro;
 using static System.Console;
 using Avro.Generic;
+using com.sforce.eventbus;
 using MediatR;
 using SalesforceGrpc.Database;
 using SalesforceGrpc.Models;
@@ -59,7 +60,7 @@ public class SObjectUpdateHandler {
             
             // Create RecordChangeSet with all record IDs
             var recordIdStrings = recordIds.Select(id => id.ToString() ?? string.Empty).ToList();
-            var changeSet = new RecordChangeSet(schemas[request.EntityName], recordIdStrings, "UPDATE");
+            var changeSet = new RecordChangeSet(schemas[request.EntityName], recordIdStrings, ChangeType.UPDATE);
             foreach (var field in changedFieldsList) {
                 changeSet.ChangedFields.Add(field);
             }
@@ -70,7 +71,7 @@ public class SObjectUpdateHandler {
             _logger.LogInformation(sqlStatement);
             _logger.LogDebug(sqlStatement);
             if(data.Count == 0) return;
-            await _db.ExecuteQuery(schemas[request.EntityName], recordIdStrings, data, cancellationToken);
+            await _db.Update(schemas[request.EntityName], recordIdStrings, data, cancellationToken);
         }
 
         private List<ChangedField> ProcessChangedFields(GenericRecord sfRecord, object[] changedFields, 

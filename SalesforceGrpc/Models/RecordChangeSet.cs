@@ -1,15 +1,18 @@
+using com.sforce.eventbus;
+
 namespace SalesforceGrpc.Models;
 
 public record RecordChangeSet {
     public string EntityName { get; set; }
     public List<string> RecordIds { get; set; } = new();
-    public string ChangeType { get; set; }
+    // public string ChangeType { get; set; }
+    public ChangeType ChangeType { get; set; }
     public List<ChangedField> ChangedFields { get; set; } = new();
 
     /// <summary>
     /// Constructor for single record ID (backward compatibility)
     /// </summary>
-    public RecordChangeSet(string entityName, string recordId, string changeType) {
+    public RecordChangeSet(string entityName, string recordId, ChangeType changeType) {
         EntityName = entityName;
         RecordIds.Add(recordId);
         ChangeType = changeType;
@@ -18,7 +21,7 @@ public record RecordChangeSet {
     /// <summary>
     /// Constructor for multiple record IDs
     /// </summary>
-    public RecordChangeSet(string entityName, List<string> recordIds, string changeType) {
+    public RecordChangeSet(string entityName, List<string> recordIds, ChangeType changeType) {
         EntityName = entityName;
         RecordIds = recordIds;
         ChangeType = changeType;
@@ -52,19 +55,22 @@ public record RecordChangeSet {
             return string.Empty;
         }
 
-        if (ChangeType.Equals("UPDATE", StringComparison.OrdinalIgnoreCase)) {
+        // if (ChangeType.Equals("UPDATE", StringComparison.OrdinalIgnoreCase)) {
+        if (ChangeType == ChangeType.UPDATE) {
             var setClauses = ChangedFields.Select(f => $"{f.FieldName} = {FormatSqlValue(f.Value, f.AvroTypeName)}");
             var setClausesStr = string.Join(", ", setClauses);
             
             if (RecordIds.Count == 1) {
                 // Single record: use simple WHERE
                 return "UPDATE " + EntityName + " SET " + setClausesStr + " WHERE sf_id = '" + RecordIds[0] + "';";
-            } else {
-                // Multiple records: use WHERE IN
-                var inClause = string.Join("', '", RecordIds);
-                return "UPDATE " + EntityName + " SET " + setClausesStr + " WHERE sf_id IN ('" + inClause + "');";
             }
-        } else if (ChangeType.Equals("CREATE", StringComparison.OrdinalIgnoreCase)) {
+
+            // Multiple records: use WHERE IN
+            var inClause = string.Join("', '", RecordIds);
+            return "UPDATE " + EntityName + " SET " + setClausesStr + " WHERE sf_id IN ('" + inClause + "');";
+        }
+
+        if (ChangeType == ChangeType.CREATE) {
             // INSERT statements must be individual - one per record
             var statements = new List<string>();
             var columns = string.Join(", ", ChangedFields.Select(f => f.FieldName));
@@ -76,7 +82,17 @@ public record RecordChangeSet {
             
             return string.Join("\n", statements);
         }
-        
+
+        if (ChangeType == ChangeType.DELETE) {
+            // update the deleted flag to true for the given record ids
+            return string.Empty;
+        }
+
+        if (ChangeType == ChangeType.UNDELETE) {
+            // update the deleted flag to false for the given record ids
+            return string.Empty;
+        }
+
         return string.Empty;
     }
 

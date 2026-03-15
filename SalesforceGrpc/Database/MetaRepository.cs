@@ -1,21 +1,36 @@
-﻿using Database;
+﻿using Dapper;
+using Database;
 using Microsoft.Extensions.Caching.Memory;
+using Npgsql;
 using SqlKata.Execution;
-using System.Threading;
 
 namespace SalesforceGrpc.Database;
 public class MetaRepository : IMetaRepository {
     private readonly QueryFactory _db;
     private readonly IMemoryCache _cache;
+    private readonly string _connectionString;
     private const string MappingCacheKeyPrefix = "mapping_";
     private const string SchemaCacheKeyPrefix = "schemas";
 
-    public MetaRepository(QueryFactory db, IMemoryCache cache) {
+    public MetaRepository(QueryFactory db, IMemoryCache cache, IConfiguration configuration) {
         _db = db;
         _cache = cache;
+        if(configuration.GetConnectionString("postgres") is null) {
+            throw new InvalidOperationException("Postgres connection string is not configured.");
+        }
+        _connectionString = configuration.GetConnectionString("postgres")!;
+    }
+    
+    public async Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+        var columns = string.Join(", ", data.Keys);
+        var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
+        var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
     }
 
-    public async Task ExecuteQuery(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    public async Task Update(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         await _db.Query(table).WhereIn("sf_id", recordIds)
             .UpdateAsync(data, cancellationToken: cancellationToken);
     }

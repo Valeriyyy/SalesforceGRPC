@@ -6,11 +6,11 @@ using Avro.Specific;
 using com.sforce.eventbus;
 using Database;
 using GrpcClient;
-using Moq;
 using Newtonsoft.Json;
 using SalesforceGrpc.Database;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Handlers;
+using SalesforceGrpc.Strategies;
 using SqlKata.Execution;
 using System;
 using System.Collections;
@@ -22,43 +22,6 @@ public class UnitTest1 {
     private static string GetSchemaFilePath(string entityName) {
         // /Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/AccountChangeEventGRPCSchema.avsc
         return $"/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/{entityName}ChangeEventGRPCSchema.avsc";
-    }
-
-    [Fact]
-    public async void TestAccountCreation() {
-        //var med = new Mock<IMediator>();
-        var db = new Mock<QueryFactory>();
-
-        var dummyEvent = new AccountChangeEvent {
-            ChangeEventHeader = new ChangeEventHeader {
-                recordIds = new[] { "id 1" },
-                changeType = ChangeType.CREATE
-            },
-            Name = new Switchable_PersonName {
-                FirstName = "john",
-                LastName = "jasbnkdanskdnakj"
-            },
-            CreatedDate = 1683583759,
-            LastModifiedDate = 1683583759
-        };
-    }
-
-    [Fact]
-    public async void TestContactCreation() {
-        var db = new Mock<QueryFactory>();
-
-        var dummyEvent = new ContactChangeEvent {
-            ChangeEventHeader = new ChangeEventHeader {
-                recordIds = new[] { "id 1" },
-                changeType = ChangeType.CREATE
-            },
-            Name = new PersonName {
-                FirstName = "john",
-                LastName = "jasbnkdanskdnakj"
-            },
-            CreatedDate = 1683583759,
-            LastModifiedDate = 1683583759
-        };
     }
 
     /*[Fact(DisplayName = "Test Generic Command Creation")]
@@ -155,26 +118,26 @@ public class UnitTest1 {
 
     [Fact(DisplayName = "Process Account Creation as Generic Record")]
     public async Task Should_Process_Account_Creation_As_Generic_Record() {
-        var accSchema = Schema.Parse(File.ReadAllText("/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/AccountChangeEventGRPCSchema.avsc"));
-        var cancellationToken = new CancellationToken();
-        var mockDb = new Mock<IMetaRepository>();
-        var mappedFields = new List<MappedField>
-        {
-            new MappedField { Id = 1, SalesforceFieldName = "Name", PostgresFieldName = "name" },
-            new MappedField { Id = 2, SalesforceFieldName = "Id", PostgresFieldName = "sf_id" },
-            new MappedField { Id = 3, SalesforceFieldName = "RecordTypeId", PostgresFieldName = "record_type_sf_id" },
-            new MappedField { Id = 4, SalesforceFieldName = "Phone", PostgresFieldName = "phone" }
-        };
-        IEnumerable<MappedField> realMappedFields = mappedFields;
-        mockDb
-            .Setup(q => q.GetAllMappedFieldsAsync(1, cancellationToken))
-            .ReturnsAsync(realMappedFields);
+        var accSchema = Schema.Parse(File.ReadAllText("/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/AccountChangeEvent.avsc"));
+        
+        // var mockDb = new Mock<IMetaRepository>();
+        // var mappedFields = new List<MappedField>
+        // {
+        //     new MappedField { Id = 1, SalesforceFieldName = "Name", PostgresFieldName = "name" },
+        //     new MappedField { Id = 2, SalesforceFieldName = "Id", PostgresFieldName = "sf_id" },
+        //     new MappedField { Id = 3, SalesforceFieldName = "RecordTypeId", PostgresFieldName = "record_type_sf_id" },
+        //     new MappedField { Id = 4, SalesforceFieldName = "Phone", PostgresFieldName = "phone" }
+        // };
+        // IEnumerable<MappedField> realMappedFields = mappedFields;
+        // mockDb
+        //     .Setup(q => q.GetAllMappedFieldsAsync(1, cancellationToken))
+        //     .ReturnsAsync(realMappedFields);
 
         var gr = new GenericRecord(accSchema as RecordSchema);
         var ceh = ConstructChangeEventHeader("Account", ChangeType.CREATE);
         gr.Add("ChangeEventHeader", ceh);
-        var grName = ConstructPersonName();
-        gr.Add("Name", grName);
+        // var grName = ConstructPersonName();
+        gr.Add("Name", "Steven");
         gr.Add("RecordTypeId", "Tu Madre");
         gr.Add("Phone", "wing wing herro");
 
@@ -201,13 +164,16 @@ public class UnitTest1 {
         Assert.True(hasFirstName);
         Assert.NotNull(firstName);
         Assert.Equal("Steven", firstName.ToString());*/
+        
+        Assert.NotNull(command);
+        await CreateStrategy.StaticProcessEvent(gr, accSchema, new CDCSchema { Id = 1 }, CancellationToken.None);
 
-        var handler = new SObjectCreateHandler.Handler(mockDb.Object);
-        await handler.Handle(command, cancellationToken);
+        // var handler = new SObjectCreateHandler.Handler(mockDb.Object);
+        // await handler.Handle(command, cancellationToken);
     }
 
     private static GenericRecord ConstructPersonName() {
-        var nameSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\Switchable_PersonNameSchema.avsc"));
+        var nameSchema = Schema.Parse(File.ReadAllText("/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/AccountChangeEvent.avsc"));
         var grName = new GenericRecord(nameSchema as RecordSchema);
         grName.Add("Salutation", "Mr");
         grName.Add("FirstName", "Steven");
@@ -220,10 +186,10 @@ public class UnitTest1 {
     }
 
     private static GenericRecord ConstructChangeEventHeader(string entity, ChangeType changeType) {
-        var cehSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\ChangeEventHeaderSchema.avsc"));
+        var cehSchema = Schema.Parse(File.ReadAllText("/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/ChangeEventHeaderSchema.avsc"));
         var ceh = new GenericRecord(cehSchema as RecordSchema);
         ceh.Add("entityName", entity);
-        ceh.Add("recordIds", new List<string> { "recordIdsthatAreEncodedSomehowIForgotHow" });
+        ceh.Add("recordIds", new object[] { "recordIds" });
         ceh.Add("changeType", changeType);
         ceh.Add("changeOrigin", "API");
         ceh.Add("transactionKey", "Don\'t know what this is");
@@ -239,7 +205,7 @@ public class UnitTest1 {
     }
 
     private static GenericRecord ConstructAddress() {
-        var addressSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\AddressSchema.avsc"));
+        var addressSchema = Schema.Parse(File.ReadAllText("/Users/valeriykutsar/Documents/programming/dotnet/SalesforceGRPC/SalesforceGrpc/avro/AccountChangeEvent.avsc"));
         var addy = new GenericRecord(addressSchema as RecordSchema);
         addy.Add("Street", "3331 Kimberly Rd");
         addy.Add("City", "Cameron Park");
@@ -485,6 +451,12 @@ public class UnitTest1 {
         }
         
         return fieldNames;
+    }
+    
+    [Fact]
+    public async Task TestCreateStrategy() {
+        var schema = Schema.Parse(await File.ReadAllTextAsync($"./avro/AccountChangeEvent.avsc"));
+        // GenericRecord record = new GenericRecord(schema);
     }
 }
 

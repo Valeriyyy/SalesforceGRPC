@@ -1,4 +1,5 @@
 ﻿using Google.Protobuf;
+using Newtonsoft.Json;
 using System.Buffers.Binary;
 
 namespace SalesforceGrpc.Extensions;
@@ -13,5 +14,9 @@ public static class ConversionExtensions {
     public static long ToLongBE(this ByteString byteString) {
         if(byteString is null) throw new ArgumentNullException(nameof(byteString));
         return BinaryPrimitives.ReadInt64BigEndian(byteString.ToByteArray());
+    }
+
+    public static string ToJson(this object obj) {
+        return JsonConvert.SerializeObject(obj, Formatting.Indented);
     }
 }
