@@ -2,20 +2,12 @@ using Avro;
 using Avro.Generic;
 using Avro.IO;
 using com.sforce.eventbus;
+using Database.Repositories;
 using Grpc.Core;
 using GrpcClient;
-using MediatR;
 using Microsoft.Extensions.Options;
-using SalesforceGrpc.Salesforce;
-using SqlKata.Execution;
-using SalesforceGrpc.Handlers;
 using SalesforceGrpc.Extensions;
-using Database;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using Google.Protobuf;
-using Humanizer.Bytes;
-using SalesforceGrpc.Database;
+using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
 
 //using Newtonsoft.Json;
@@ -27,31 +19,25 @@ public class Worker : BackgroundService {
     private readonly SalesforceConfig _sfconfig;
     private readonly PubSub.PubSubClient _pubsubClient;
     private readonly SalesforceClient _client;
-    //private readonly SalesforceAvroDeserializer _processor;
     private readonly IConfiguration _config;
     private readonly EventResolver _eventResolver;
     
     private readonly IMetaRepository _metaRepo;
-    private readonly IMediator _mediator;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
 
     public Worker(
         ILogger<Worker> logger,
         IOptions<SalesforceConfig> sfconfig,
-        //SalesforceAvroDeserializer processor,
         IConfiguration config,
         PubSub.PubSubClient psClient,
-        IMediator mediator,
         IHostApplicationLifetime hostApplicationLifetime, 
         SalesforceClient client, 
         IMetaRepository metaRepo,
         EventResolver eventResolver) {
         _logger = logger;
         _sfconfig = sfconfig.Value;
-        //_processor = processor;
         _pubsubClient = psClient;
         _config = config;
-        _mediator = mediator;
         _hostApplicationLifetime = hostApplicationLifetime;
         _client = client;
         _metaRepo = metaRepo;
@@ -78,52 +64,6 @@ public class Worker : BackgroundService {
             _hostApplicationLifetime.StopApplication();
         }
     }
-
-    // private async Task ListenForChannelEvents(CancellationToken stoppingToken) {
-    //     var fetchRequest = new FetchRequest {
-    //         TopicName = "/data/MyCustomChannel__chn",
-    //         NumRequested = 25
-    //     };
-    //     using var stream = _pubsubClient.Subscribe(null, null, stoppingToken);
-    //     await stream.RequestStream.WriteAsync(fetchRequest, stoppingToken);
-    //
-    //     var schemaDict = (await _metaRepo.GetCachedSchemas(stoppingToken))
-    //         .ToDictionary(p => p.SchemaId, p => p);
-    //
-    //     while (await stream.ResponseStream.MoveNext(stoppingToken)) {
-    //         var latestReplayId = stream.ResponseStream.Current.LatestReplayId.ToLongBE();
-    //         _logger.LogInformation("latest Replay Id: {replayId}", latestReplayId);
-    //         _logger.LogInformation("Time: {rightNow} RPC ID: {RpcId}", DateTime.Now, stream.ResponseStream.Current.RpcId);
-    //
-    //         var re = stream.ResponseStream.Current;
-    //         Console.WriteLine("number of events in payload " + re.Events.Count);
-    //         if (re?.Events is not null) {
-    //             var eventTasks = new List<Task>();
-    //             for (int i = 0; i < re.Events.Count; i++) {
-    //                 var e = re.Events[i];
-    //                 var eventReplayId = e.ReplayId;
-    //                 var replayId = eventReplayId.ToLongBE();
-    //                 _logger.LogInformation("Event Replay Id: {replayId}", replayId);
-    //                 Console.WriteLine("event number " + i);
-    //                 var payload = e.Event.Payload;
-    //                 _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
-    //                 var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var dbSchema);
-    //                 if (!validSchemaId || dbSchema is null) {
-    //                     throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
-    //                 }
-    //                 _logger.LogInformation("Processing: {schemaName} event", dbSchema.SchemaName);
-    //                 
-    //                 var schema = Schema.Parse(await File.ReadAllTextAsync($"./avro/{dbSchema.SchemaName}.avsc", stoppingToken));
-    //                 var genericEvent = new GenericCDCEventCommand {
-    //                     Name = dbSchema.EntityName, AvroPayload = payload.ToByteArray(), AvroSchema = schema, SchemaId = dbSchema.Id
-    //                 };
-    //                 
-    //                 eventTasks.Add(_mediator.Send(genericEvent, stoppingToken));
-    //             }
-    //             await Task.WhenAll(eventTasks);
-    //         }
-    //     }
-    // }
 
     private async Task ListenForChannelEventsStrategy(CancellationToken stoppingToken) {
         var fetchRequest = new FetchRequest {

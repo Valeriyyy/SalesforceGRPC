@@ -1,7 +1,7 @@
 using Dapper;
 using System.Data;
 
-namespace SalesforceGrpc.Database;
+namespace Database.Utilities;
 
 public class SqlTimeOnlyTypeHandler : SqlMapper.TypeHandler<TimeOnly> {
     // How to set the parameter value when sending to the database

@@ -1,6 +1,7 @@
 ﻿using Database;
+using Database.Models;
 
-namespace SalesforceGrpc.Database;
+namespace Database.Repositories;
 public interface IMetaRepository {
     Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default);
     Task Update(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken);

@@ -2,7 +2,8 @@ using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
 using Database;
-using SalesforceGrpc.Database;
+using Database.Models;
+using Database.Repositories;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Models;
 

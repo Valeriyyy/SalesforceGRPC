@@ -2,7 +2,8 @@ using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
 using Database;
-using SalesforceGrpc.Database;
+using Database.Models;
+using Database.Repositories;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Models;
 using System.Collections;
@@ -196,6 +197,7 @@ public class UpdateStrategy : IEventStrategy {
 
         return changedFields;
     }
+
     private List<string> DecodeChangedFieldsBitmap(string hexBitmap, Schema schema, int nestedFieldIndex) {
         var fieldNames = new List<string>();
         

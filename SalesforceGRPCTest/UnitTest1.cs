@@ -1,20 +1,15 @@
+// using SalesforceGrpc.Database;
 using Avro;
 using Avro.Generic;
 using Avro.IO;
 using Avro.Reflect;
 using Avro.Specific;
 using com.sforce.eventbus;
-using Database;
-using GrpcClient;
+using Database.Models;
 using Newtonsoft.Json;
-using SalesforceGrpc.Database;
 using SalesforceGrpc.Extensions;
-using SalesforceGrpc.Handlers;
 using SalesforceGrpc.Strategies;
-using SqlKata.Execution;
-using System;
 using System.Collections;
-using System.Linq;
 using static System.Console;
 
 namespace SalesforceGRPCTest;
@@ -141,11 +136,11 @@ public class UnitTest1 {
         gr.Add("RecordTypeId", "Tu Madre");
         gr.Add("Phone", "wing wing herro");
 
-        var command = new CreateCommand {
-            ChangeEvent = gr,
-            EntityName = "Account"
-        };
-        var sfRecord = command.ChangeEvent;
+        // var command = new CreateCommand {
+        //     ChangeEvent = gr,
+        //     EntityName = "Account"
+        // };
+        // var sfRecord = command.ChangeEvent;
 
         // Test Change Event Header
         /*sfRecord.TryGetValue("ChangeEventHeader", out var changeEventHeader);
@@ -165,8 +160,14 @@ public class UnitTest1 {
         Assert.NotNull(firstName);
         Assert.Equal("Steven", firstName.ToString());*/
         
-        Assert.NotNull(command);
-        await CreateStrategy.StaticProcessEvent(gr, accSchema, new CDCSchema { Id = 1 }, CancellationToken.None);
+        // Assert.NotNull(command);
+        await CreateStrategy.StaticProcessEvent(gr, accSchema, new CDCSchema {
+            Id = 1, 
+            EntityName = "Account", 
+            DbSchemaFullName = "salesforce.accounts", 
+            SchemaId = "420blazeit", 
+            SchemaName = "man idc"
+        }, CancellationToken.None);
 
         // var handler = new SObjectCreateHandler.Handler(mockDb.Object);
         // await handler.Handle(command, cancellationToken);

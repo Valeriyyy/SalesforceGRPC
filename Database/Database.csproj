@@ -1,9 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net7.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+    <ItemGroup>
+        <PackageReference Include="Dapper" Version="2.1.72" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.2" />
+        <PackageReference Include="Npgsql" Version="10.0.1" />
+        <PackageReference Include="SqlKata" Version="4.0.1" />
+        <PackageReference Include="SqlKata.Execution" Version="4.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="11.0.0-preview.1.26104.118" />
+        
+    </ItemGroup>
 </Project>

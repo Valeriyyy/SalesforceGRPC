@@ -1,10 +1,12 @@
 ﻿using Dapper;
 using Database;
+using Database.Models;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Npgsql;
 using SqlKata.Execution;
 
-namespace SalesforceGrpc.Database;
+namespace Database.Repositories;
 public class MetaRepository : IMetaRepository {
     private readonly QueryFactory _db;
     private readonly IMemoryCache _cache;
@@ -28,6 +30,17 @@ public class MetaRepository : IMetaRepository {
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
+    }
+    
+    public async Task UpdateDapper(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+        var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
+        var sql = $"UPDATE {table} SET {setClause} WHERE sf_id = ANY(@RecordIds)";
+
+        var parameters = new DynamicParameters(data);
+        parameters.Add("RecordIds", recordIds.ToArray());
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
 
     public async Task Update(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken = default) {

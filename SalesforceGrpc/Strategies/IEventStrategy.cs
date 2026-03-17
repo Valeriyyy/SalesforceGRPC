@@ -2,6 +2,7 @@ using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
 using Database;
+using Database.Models;
 
 namespace SalesforceGrpc.Strategies;
 

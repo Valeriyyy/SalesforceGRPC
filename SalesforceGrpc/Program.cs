@@ -1,21 +1,17 @@
 using Dapper;
-using Database;
+using Database.Repositories;
+using Database.Utilities;
 using GrpcClient;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using SalesforceGrpc;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
+using SalesforceGrpc.Strategies;
 using SqlKata.Compilers;
 using SqlKata.Execution;
 using System.Net.Http.Headers;
-using System.Reflection;
-using Database;
-using Microsoft.Extensions.Options;
 using static System.Console;
-using Polly.Extensions.Http;
-using Polly;
-using SalesforceGrpc.Database;
-using SalesforceGrpc.Strategies;
 
 var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
@@ -43,8 +39,6 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.AddMemoryCache();
     SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
     services.AddSingleton<IMetaRepository, MetaRepository>();
-
-    services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
     
     services.AddTransient<IEventStrategy, CreateStrategy>();
     services.AddTransient<IEventStrategy, UpdateStrategy>();

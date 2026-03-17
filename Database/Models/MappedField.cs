@@ -1,5 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
-namespace Database;
+namespace Database.Models;
 public class MappedField {
     public int Id { get; set; }
     /// <summary>
@@ -9,9 +9,9 @@ public class MappedField {
     [Column("schema_id")]
     public int SchemaId { get; set; }
     [Column("salesforce_field_name")]
-    public string SalesforceFieldName { get; set; }
+    public required string SalesforceFieldName { get; set; }
     [Column("postgres_field_name")]
-    public string PostgresFieldName { get; set; }
+    public required string PostgresFieldName { get; set; }
 
     // public override string ToString() {
     //     return $"{SchemaId} {SalesforceFieldName} => {PostgresFieldName}";
