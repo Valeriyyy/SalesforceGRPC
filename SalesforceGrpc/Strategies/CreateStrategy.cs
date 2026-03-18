@@ -13,12 +13,13 @@ public class CreateStrategy : IEventStrategy {
     public ChangeType ChangeType => ChangeType.CREATE;
 
     private readonly ILogger<CreateStrategy> _logger;
-
+    private readonly IConfiguration _config;
     private readonly IMetaRepository _db;
 
-    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db) {
+    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db, IConfiguration config) {
         _logger = logger;
         _db = db;
+        _config = config;
     }
     
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema, CancellationToken cancellationToken) {

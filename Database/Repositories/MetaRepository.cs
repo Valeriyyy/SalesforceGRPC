@@ -1,51 +1,54 @@
 ﻿using Dapper;
-using Database;
 using Database.Models;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
-using SqlKata.Execution;
 
 namespace Database.Repositories;
 public class MetaRepository : IMetaRepository {
-    private readonly QueryFactory _db;
     private readonly IMemoryCache _cache;
+    private readonly ILogger<MetaRepository> _logger;
     private readonly string _connectionString;
+    private readonly bool _debugQuery = false;
     private const string MappingCacheKeyPrefix = "mapping_";
     private const string SchemaCacheKeyPrefix = "schemas";
 
-    public MetaRepository(QueryFactory db, IMemoryCache cache, IConfiguration configuration) {
-        _db = db;
+    public MetaRepository(IMemoryCache cache, IConfiguration configuration, ILogger<MetaRepository> logger) {
         _cache = cache;
+        _logger = logger;
         if(configuration.GetConnectionString("postgres") is null) {
-            throw new InvalidOperationException("Postgres connection string is not configured.");
+            throw new InvalidOperationException("Db connection string is not configured.");
         }
         _connectionString = configuration.GetConnectionString("postgres")!;
+        _debugQuery = configuration.GetValue<bool>("DebugQuery");
     }
     
     public async Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
         var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
         var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "CREATE", sql, data);
+        }
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
     }
     
-    public async Task UpdateDapper(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    public async Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
         var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
         var sql = $"UPDATE {table} SET {setClause} WHERE sf_id = ANY(@RecordIds)";
+        
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}, RecordIds: {@RecordIds}", "UPDATE", sql, data, recordIds);
+        }
 
         var parameters = new DynamicParameters(data);
         parameters.Add("RecordIds", recordIds.ToArray());
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
-    }
-
-    public async Task Update(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
-        await _db.Query(table).WhereIn("sf_id", recordIds)
-            .UpdateAsync(data, cancellationToken: cancellationToken);
     }
 
     public async Task<Dictionary<string, string>> GetCachedMapping(int? schemaId, CancellationToken cancellationToken) {
@@ -61,7 +64,7 @@ public class MetaRepository : IMetaRepository {
         }
         
         // Fetch mappings if not in cache
-        var mappings = await GetAllMappedFieldsAsync(schemaId, cancellationToken);
+        var mappings = await GetEntityMappedFieldsBySchemaId(schemaId).ConfigureAwait(false);
 
         // Build the mapping dictionary from the provided mappings
         var mapping = mappings
@@ -77,16 +80,16 @@ public class MetaRepository : IMetaRepository {
         return mapping;
     }
 
-    public Task<IEnumerable<MappedField>> GetAllMappedFieldsAsync(int? schemaId, CancellationToken cancellationToken) {
-        return _db
-                .Query("salesforce.mapped_fields")
-                .Select(
-                    "id as Id",
-                    "schema_id as SchemaId",
-                    "salesforce_field_name as SalesforceFieldName",
-                    "postgres_field_name as PostgresFieldName")
-                .Where("schema_id", schemaId)
-                .GetAsync<MappedField>(null, null, cancellationToken);
+    public async Task<IEnumerable<MappedField>> GetEntityMappedFieldsBySchemaId(int? schemaId) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        
+        return await connection.QueryAsync<MappedField>(
+            @"SELECT id as ID, 
+            schema_id as SchemaId, 
+            salesforce_field_name as SalesforceFieldName, 
+            postgres_field_name as PostgresFieldName
+            FROM salesforce.mapped_fields WHERE schema_id = @SchemaId",
+            new { SchemaId = schemaId }).ConfigureAwait(false);
     }
 
     public async Task<List<CDCSchema>> GetCachedSchemas(CancellationToken cancellationToken) {
@@ -95,7 +98,7 @@ public class MetaRepository : IMetaRepository {
             return cachedSchemas!;
         }
         
-        var schemas = (await GetCDCSchemas(cancellationToken)).ToList();
+        var schemas = (await GetAllSchemas(cancellationToken)).ToList();
 
         // Store in cache with a 1-hour sliding expiration
         var cacheOptions = new MemoryCacheEntryOptions()
@@ -104,15 +107,15 @@ public class MetaRepository : IMetaRepository {
         
         return schemas.ToList();
     }
+    
+    public async Task<IEnumerable<CDCSchema>> GetAllSchemas(CancellationToken cancellationToken) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        
+        var res = await connection.QueryAsync<CDCSchema>(
+            "SELECT id as Id, entity_name as EntityName, schema_id as SchemaId, schema_name as SchemaName, db_schema_full_name as DbSchemaFullName " +
+            "FROM salesforce.cdc_schemas"
+        , cancellationToken).ConfigureAwait(false);
 
-    public async Task<IEnumerable<CDCSchema>> GetCDCSchemas(CancellationToken cancellationToken = default) {
-        return await _db.Query("salesforce.cdc_schemas")
-            .Select("id as Id", "entity_name as EntityName", "schema_id as SchemaId", 
-                "schema_name as SchemaName", "db_schema_full_name as DbSchemaFullName")
-            .GetAsync<CDCSchema>(cancellationToken: cancellationToken);
-    }
-
-    public Task InsertNewRecord(ICollection<KeyValuePair<string, object>> recordToInsert, CancellationToken cancellationToken) {
-        return _db.Query("salesforce.accounts").InsertAsync(recordToInsert, null, null, cancellationToken);
+        return res;
     }
 }

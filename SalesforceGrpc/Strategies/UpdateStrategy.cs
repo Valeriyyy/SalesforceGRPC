@@ -22,7 +22,7 @@ public class UpdateStrategy : IEventStrategy {
     }
     
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema, CancellationToken cancellationToken) {
-        var schemas = (await _db.GetCDCSchemas(cancellationToken).ConfigureAwait(false)).ToDictionary(s => s.EntityName, s => s.DbSchemaFullName);
+        var schemas = (await _db.GetCachedSchemas(cancellationToken).ConfigureAwait(false)).ToDictionary(s => s.EntityName, s => s.DbSchemaFullName);
         
         // Extract change event header efficiently
         if (!record.TryGetValue("ChangeEventHeader", out var changeEventHeaderObj) || 
@@ -69,7 +69,8 @@ public class UpdateStrategy : IEventStrategy {
         if(data.Count == 0) return;
 
         try {
-            await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data, cancellationToken);
+            // await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data, cancellationToken);
+            await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to update record {Data}", data.ToJson());
         }

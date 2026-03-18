@@ -8,8 +8,6 @@ using SalesforceGrpc;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
-using SqlKata.Compilers;
-using SqlKata.Execution;
 using System.Net.Http.Headers;
 using static System.Console;
 
@@ -31,10 +29,6 @@ IHost host = Host.CreateDefaultBuilder(args)
     var config = context.Configuration;
     services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
     services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
-    services.AddTransient((e) => {
-        var connection = new NpgsqlConnection(config.GetConnectionString("postgres"));
-        return new QueryFactory(connection, new PostgresCompiler());
-    });
 
     services.AddMemoryCache();
     SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
@@ -46,8 +40,6 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.AddTransient<IEventStrategy, UndeleteStrategy>();
     services.AddTransient<EventResolver>();
     
-
-    services.AddHttpClient<SalesforceAuthClient>("SalesforceAuthClient");
     services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
     services.AddTransient<SalesforceAuthHandler>();
     services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
