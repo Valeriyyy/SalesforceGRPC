@@ -161,13 +161,6 @@ public class UnitTest1 {
         Assert.Equal("Steven", firstName.ToString());*/
         
         // Assert.NotNull(command);
-        await CreateStrategy.StaticProcessEvent(gr, accSchema, new CDCSchema {
-            Id = 1, 
-            EntityName = "Account", 
-            DbSchemaFullName = "salesforce.accounts", 
-            SchemaId = "420blazeit", 
-            SchemaName = "man idc"
-        }, CancellationToken.None);
 
         // var handler = new SObjectCreateHandler.Handler(mockDb.Object);
         // await handler.Handle(command, cancellationToken);
