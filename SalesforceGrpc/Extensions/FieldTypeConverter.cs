@@ -11,9 +11,9 @@ public static class FieldTypeConverter {
     /// Converts a value based on its Avro type and field documentation
     /// The doc property from the schema is more reliable than the type for identifying datetime fields
     /// </summary>
-    public static object ConvertValue(object? value, string avroType, string? fieldDoc = null) {
+    public static object? ConvertValue(object? value, string avroType, string? fieldDoc = null) {
         if (value == null) {
-            return "NULL";
+            return null;
         }
 
         // Check doc property first for accurate type identification
@@ -22,9 +22,11 @@ public static class FieldTypeConverter {
             if (IsDateTimeField(fieldDoc)) {
                 return ConvertEpochToDateTime(Convert.ToInt64(value));
             }
+
             if (IsDateOnlyField(fieldDoc)) {
                 return ConvertEpochToDate(Convert.ToInt64(value));
             }
+
             if (IsTimeOnlyField(fieldDoc)) {
                 return ConvertEpochToTime(Convert.ToInt64(value));
             }
@@ -79,7 +81,6 @@ public static class FieldTypeConverter {
     /// </summary>
     public static TimeOnly? ConvertEpochToTime(long epochMilliseconds) {
         try {
-            
             // var timeOnly = new TimeOnly(epochMilliseconds);
             // var dateTime = UnixEpoch.AddMilliseconds(epochMilliseconds);
             // return $"'{dateTime:HH:mm:ss.fff}'";
@@ -103,7 +104,7 @@ public static class FieldTypeConverter {
     /// Examples: "Data:Date", "BirthDate:Date"
     /// </summary>
     private static bool IsDateOnlyField(string fieldDoc) {
-        return fieldDoc.Contains(":Date", StringComparison.OrdinalIgnoreCase) && 
+        return fieldDoc.Contains(":Date", StringComparison.OrdinalIgnoreCase) &&
                !fieldDoc.Contains("DateTime", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -112,7 +113,7 @@ public static class FieldTypeConverter {
     /// Examples: "Data:Time", "BusinessHours:Time"
     /// </summary>
     private static bool IsTimeOnlyField(string fieldDoc) {
-        return fieldDoc.Contains(":Time", StringComparison.OrdinalIgnoreCase) && 
+        return fieldDoc.Contains(":Time", StringComparison.OrdinalIgnoreCase) &&
                !fieldDoc.Contains("DateTime", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -124,5 +125,3 @@ public static class FieldTypeConverter {
         return value.Replace("'", "''");
     }
 }
-
-
