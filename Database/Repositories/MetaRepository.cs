@@ -56,6 +56,8 @@ public class MetaRepository : IMetaRepository {
             return new Dictionary<string, string>();
         }
         
+        cancellationToken.ThrowIfCancellationRequested();
+        
         string cacheKey = $"{MappingCacheKeyPrefix}{schemaId}";
         
         // Try to get from cache
@@ -107,7 +109,27 @@ public class MetaRepository : IMetaRepository {
         
         return schemas.ToList();
     }
-    
+
+    public async Task<CDCSchema> CreateNewSchema(CDCSchema dbSchema) {
+        // Invalidate cache
+        _cache.Remove(SchemaCacheKeyPrefix);
+        
+        await using var connection = new NpgsqlConnection(_connectionString);
+        
+        var insertedRecord = await connection.QuerySingleAsync<CDCSchema>(
+            @"INSERT INTO salesforce.cdc_schemas (entity_name, schema_id, schema_name, db_schema_full_name) 
+              VALUES (@EntityName, @SchemaId, @SchemaName, @DbSchemaFullName)
+                RETURNING *;",
+            new {
+                dbSchema.EntityName,
+                dbSchema.SchemaId,
+                dbSchema.SchemaName,
+                dbSchema.DbSchemaFullName
+            }).ConfigureAwait(false);
+        
+        return insertedRecord;
+    }
+
     public async Task<IEnumerable<CDCSchema>> GetAllSchemas(CancellationToken cancellationToken) {
         await using var connection = new NpgsqlConnection(_connectionString);
         

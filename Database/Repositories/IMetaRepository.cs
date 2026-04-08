@@ -10,4 +10,5 @@ public interface IMetaRepository {
     Task<IEnumerable<MappedField>> GetEntityMappedFieldsBySchemaId(int? schemaId);
     Task<List<CDCSchema>> GetCachedSchemas(CancellationToken cancellationToken);
     // Task<IEnumerable<CDCSchema>> GetCDCSchemas(CancellationToken cancellationToken);
+    Task<CDCSchema> CreateNewSchema(CDCSchema dbSchema);
 }
