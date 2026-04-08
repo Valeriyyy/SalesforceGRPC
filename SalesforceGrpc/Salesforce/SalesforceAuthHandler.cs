@@ -38,7 +38,7 @@ public class SalesforceAuthHandler : DelegatingHandler {
             request.Headers.Authorization =
                 new AuthenticationHeaderValue(
                     "Bearer",
-                    (await _tokenProvider.GetAuthToken()).AccessToken);
+                    (await _tokenProvider.GetAuthToken(cancellationToken)).AccessToken);
 
             return await base.SendAsync(request, cancellationToken);
         }
