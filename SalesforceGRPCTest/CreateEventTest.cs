@@ -3,6 +3,7 @@ using Avro.Generic;
 using com.sforce.eventbus;
 using Database.Models;
 using Database.Repositories;
+using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NSubstitute;

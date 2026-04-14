@@ -3,6 +3,7 @@ using Avro.Generic;
 using com.sforce.eventbus;
 using Database.Models;
 using Database.Repositories;
+using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -24,6 +25,7 @@ public class UpdateEventTest {
         // var processor = new EventProcessor(mockMetaRepo.Object, new List<IEventStrategy> { mockStrategy.Object });
         
         var mockMetaRepo = Substitute.For<IMetaRepository>();
+        var mockDataRepo = Substitute.For<IDataRepository>();
         var mockLogger = Substitute.For<ILogger<UpdateStrategy>>();
         var inMemorySettings = new Dictionary<string, string> { { "Salesforce:ClientId", "testClientId" }, { "Salesforce:ClientSecret", "testClientSecret" } };
         var dbSchema = new CDCSchema { Id = 1, SchemaId = "SomeSchemaId", SchemaName = "ContactSchema", EntityName = "Contact", DbSchemaFullName = "salesforce.contacts" };
@@ -34,7 +36,7 @@ public class UpdateEventTest {
             // { "Name", "name" },
             { "Phone", "phone"}
         });
-        var updateStrategy = new UpdateStrategy(mockLogger, mockMetaRepo);
+        var updateStrategy = new UpdateStrategy(mockLogger, mockMetaRepo, mockDataRepo);
         
         var changeEventHeaderSchema = (RecordSchema)Schema.Parse(await File.ReadAllTextAsync(ChangeEventHeaderPath, TestContext.Current.CancellationToken));
         var changeEventHeader = new GenericRecord(changeEventHeaderSchema);

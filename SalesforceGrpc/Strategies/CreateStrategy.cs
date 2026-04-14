@@ -3,6 +3,7 @@ using Avro.Generic;
 using com.sforce.eventbus;
 using Database.Models;
 using Database.Repositories;
+using Database.Repositories.Interfaces;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Models;
 using static System.Console;
@@ -14,6 +15,7 @@ public class CreateStrategy : IEventStrategy {
 
     private readonly ILogger<CreateStrategy> _logger;
     private readonly IMetaRepository _db;
+    private readonly IDataRepository _dataRepo;
 
     public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db) {
         _logger = logger;
@@ -62,7 +64,7 @@ public class CreateStrategy : IEventStrategy {
         var data = changeSet.ToDataObject();
 
         try {
-            await _db.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
+            await _dataRepo.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to insert record {Data}", data.ToJson());
         }

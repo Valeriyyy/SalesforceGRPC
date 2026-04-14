@@ -4,6 +4,7 @@ using com.sforce.eventbus;
 using Database;
 using Database.Models;
 using Database.Repositories;
+using Database.Repositories.Interfaces;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Models;
 using System.Collections;
@@ -15,10 +16,12 @@ public class UpdateStrategy : IEventStrategy {
     public ChangeType ChangeType => ChangeType.UPDATE;
     private readonly ILogger<UpdateStrategy> _logger;
     private readonly IMetaRepository _db;
+    private readonly IDataRepository _dataRepo;
 
-    public UpdateStrategy(ILogger<UpdateStrategy> logger, IMetaRepository db) {
+    public UpdateStrategy(ILogger<UpdateStrategy> logger, IMetaRepository db, IDataRepository dataRepo) {
         _logger = logger;
         _db = db;
+        _dataRepo = dataRepo;
     }
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema,
@@ -72,7 +75,7 @@ public class UpdateStrategy : IEventStrategy {
 
         try {
             // await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data, cancellationToken);
-            await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data);
+            await _dataRepo.Update(schemas[dbSchema.EntityName], recordIdStrings, data);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to update record {Data}", data.ToJson());
         }

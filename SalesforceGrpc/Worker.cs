@@ -4,6 +4,7 @@ using Avro.IO;
 using com.sforce.eventbus;
 using Database.Models;
 using Database.Repositories;
+using Database.Repositories.Interfaces;
 using Grpc.Core;
 using GrpcClient;
 using Microsoft.Extensions.Options;

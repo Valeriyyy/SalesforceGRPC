@@ -1,5 +1,7 @@
 using Dapper;
 using Database.Repositories;
+using Database.Repositories.DbDataRepositories;
+using Database.Repositories.Interfaces;
 using Database.Utilities;
 using GrpcClient;
 using Microsoft.Extensions.Options;
@@ -33,6 +35,13 @@ IHost host = Host.CreateDefaultBuilder(args)
     services.AddMemoryCache();
     SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
     services.AddSingleton<IMetaRepository, MetaRepository>();
+    
+    // Register data repository based on configuration
+    services.AddSingleton<IDataRepository>(sp => {
+        var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
+            ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
+        return DataRepositoryFactory.Create(targetingDbType, sp);
+    });
     
     services.AddTransient<IEventStrategy, CreateStrategy>();
     services.AddTransient<IEventStrategy, UpdateStrategy>();
