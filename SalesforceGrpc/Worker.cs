@@ -2,6 +2,7 @@ using Avro;
 using Avro.Generic;
 using Avro.IO;
 using com.sforce.eventbus;
+using Database.Models;
 using Database.Repositories;
 using Grpc.Core;
 using GrpcClient;
@@ -56,8 +57,10 @@ public class Worker : BackgroundService {
             await ListenForChannelEventsStrategy(stoppingToken);
             // await GetAndSaveSchema("AccountChangeEvent");
             /*await GetAndSaveSchema("AccountChangeEvent");*/
+            // await GetAndSaveSchemaById("YHKH1xWTqwF24lvYNGguGA");
+            // await GetTopic(stoppingToken);
         } catch (RpcException exc) {
-            _logger.LogCritical("RPCException thrown with message: {message}", exc.Message);
+            _logger.LogCritical(exc, "RPCException thrown with message: {message}", exc.Message);
             _logger.LogCritical("Status: {status}", exc.StatusCode);
             _logger.LogCritical("Shutting down application gracefully");
         } finally {
@@ -94,8 +97,20 @@ public class Worker : BackgroundService {
                     var payload = e.Event.Payload;
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
                     var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var dbSchema);
+                    
+                    // if an unhandeled schema id is encountered, log it and move on
                     if (!validSchemaId || dbSchema is null) {
-                        throw new Exception("Unrecognized Schema Id: " + e.Event.SchemaId);
+                        _logger.LogWarning("Unrecognized Schema Id: {schemaId}", e.Event.SchemaId);
+                        var schemaInfo = await GetAndSaveSchemaById(e.Event.SchemaId).ConfigureAwait(false);
+                        // var avroSchema = Schema.Parse(schemaInfo.SchemaJson);
+                        // var dbSchemaToInsert = new CDCSchema { 
+                        //     EntityName = avroSchema.Name.Replace("ChangeEvent", ""), 
+                        //     DbSchemaFullName = "salesforce.contacts", 
+                        //     SchemaId = e.Event.SchemaId, 
+                        //     SchemaName = avroSchema.Name
+                        // };
+                        // dbSchema = await _metaRepo.CreateNewSchema(dbSchemaToInsert).ConfigureAwait(false);
+                        // schemaDict.Add(e.Event.SchemaId, dbSchema);
                     }
                     _logger.LogInformation("Processing: {schemaName} event", dbSchema.SchemaName);
                     
@@ -136,11 +151,12 @@ public class Worker : BackgroundService {
         };
         var events = new ProducerEvent[] {
             new ProducerEvent {
-                Id = "123123", SchemaId = "lhKgvxi31DtlAz18-TdwBQ", Payload = null
+                Id = "123123", SchemaId = "i8wgJwwM-AVcDbFkbRl5Nw", Payload = null
             }
         };
         var request = new PublishRequest {
-            TopicName = "/data/AccountChangeEvent"
+            TopicName = "/data/AccountChangeEvent",
+            Events = { events }
         };
         var res = await _pubsubClient.PublishAsync(request, null, null, stoppingToken);
         _logger.LogInformation(res.ToString());
@@ -160,6 +176,25 @@ public class Worker : BackgroundService {
         var name = $"{avroSchema.Name}.avsc";
         Console.WriteLine("saving schame as " + name);
         await File.WriteAllTextAsync($"./avro/{name}", someSchema.SchemaJson);
+    }
+
+    public async Task<SchemaInfo> GetAndSaveSchemaById(string schemaId) {
+        var schemaRequest = new SchemaRequest {
+            SchemaId = schemaId
+        };
+        var schemaInfo = await _pubsubClient.GetSchemaAsync(schemaRequest);
+        var avroSchema = Schema.Parse(schemaInfo.SchemaJson);
+        var name = $"{avroSchema.Name}.avsc";
+        
+        await File.WriteAllTextAsync($"./avro/{name}", schemaInfo.SchemaJson);
+
+        return schemaInfo;
+    }
+
+    public async Task GetTopic(CancellationToken cancellationToken) {
+        var topicRequest = new TopicRequest { TopicName = "/data/MyCustomChannel__chn" };
+        var res = await _pubsubClient.GetTopicAsync(topicRequest, cancellationToken: cancellationToken);
+        Console.WriteLine("Topic response " + res.ToJson());
     }
 
 

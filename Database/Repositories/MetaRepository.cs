@@ -51,6 +51,21 @@ public class MetaRepository : IMetaRepository {
         await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
 
+    public async Task<int> Delete(string table, List<string> recordIds) {
+        var sql = $"DELETE FROM {table} WHERE sf_id = ANY(@RecordIds)";
+        // var sql = $"UPDATE {table} SET is_deleted = true WHERE sf_id = ANY(@RecordIds)";
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, RecordIds: {@RecordIds}", "DELETE", sql, recordIds);
+        }
+
+        var parameters = new DynamicParameters();
+        parameters.Add("RecordIds", recordIds.ToArray());
+
+        using var result = new NpgsqlConnection(_connectionString)
+            .ExecuteAsync(sql, parameters);
+        return result.Result;
+    }
+
     public async Task<Dictionary<string, string>> GetCachedMapping(int? schemaId, CancellationToken cancellationToken) {
         if (schemaId is null) {
             return new Dictionary<string, string>();
