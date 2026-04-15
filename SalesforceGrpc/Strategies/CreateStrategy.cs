@@ -17,9 +17,10 @@ public class CreateStrategy : IEventStrategy {
     private readonly IMetaRepository _db;
     private readonly IDataRepository _dataRepo;
 
-    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db) {
+    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db, IDataRepository dataRepo) {
         _logger = logger;
         _db = db;
+        _dataRepo = dataRepo;
     }
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema,

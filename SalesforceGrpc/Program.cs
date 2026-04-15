@@ -5,15 +5,12 @@ using Database.Repositories.Interfaces;
 using Database.Utilities;
 using GrpcClient;
 using Microsoft.Extensions.Options;
-using Npgsql;
 using SalesforceGrpc;
-using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
 using System.Net.Http.Headers;
 using static System.Console;
 
-var config = new ConfigurationBuilder().AddConfiguration().Build();
 IHost host = Host.CreateDefaultBuilder(args)
 .ConfigureServices((context, services) => {
     // one way to bind settings
@@ -21,7 +18,7 @@ IHost host = Host.CreateDefaultBuilder(args)
     //context.Configuration.GetSection("Salesforce").Bind(settings);
     //services.AddSingleton(settings);
 
-    // another another way to bind settings
+    // another way to bind settings
     //services.Configure<SalesforceConfig>(options => context.Configuration.GetSection("Salesforce").Bind(options));
     //services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
 
@@ -85,13 +82,3 @@ IHost host = Host.CreateDefaultBuilder(args)
 .Build();
 
 await host.RunAsync();
-
-/*var services = host.Services;
-using IServiceScope serviceScope = services.CreateScope();
-IServiceProvider provider = serviceScope.ServiceProvider;
-var sfClient = provider.GetRequiredService<SalesforceClient>();
-await sfClient.GetRecordTypes();
-
-var authClient = provider.GetRequiredService<SalesforceAuthClient>();
-var authResponse = await authClient.GetToken();
-WriteLine(authResponse.AccessToken);*/

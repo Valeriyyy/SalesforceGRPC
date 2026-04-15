@@ -8,7 +8,7 @@ namespace Database.Repositories.DbDataRepositories;
 /// <summary>
 /// Factory for creating the appropriate data repository based on the configured database type.
 /// </summary>
-public class DataRepositoryFactory {
+public static class DataRepositoryFactory {
     public static IDataRepository Create(string databaseType, IServiceProvider serviceProvider) {
         if (!Enum.TryParse<DbType>(databaseType, true, out var dbType)) {
             throw new InvalidOperationException(

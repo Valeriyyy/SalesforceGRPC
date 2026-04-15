@@ -25,6 +25,7 @@ public class CreateEventTest {
         
         var mockMetaRepo = Substitute.For<IMetaRepository>();
         var mockLogger = Substitute.For<ILogger<CreateStrategy>>();
+        var mockDataRepo = Substitute.For<IDataRepository>();
         var inMemorySettings = new Dictionary<string, string> { { "Salesforce:ClientId", "testClientId" }, { "Salesforce:ClientSecret", "testClientSecret" } };
         var dbSchema = new CDCSchema { Id = 1, SchemaId = "SomeSchemaId", SchemaName = "ContactSchema", EntityName = "Contact", DbSchemaFullName = "salesforce.contacts" };
         mockMetaRepo.GetCachedMapping(dbSchema.Id, CancellationToken.None).Returns(new Dictionary<string, string> {
@@ -33,7 +34,7 @@ public class CreateEventTest {
             // { "Name", "name" },
             { "Phone", "phone"}
         });
-        var createStrategy = new CreateStrategy(mockLogger, mockMetaRepo);
+        var createStrategy = new CreateStrategy(mockLogger, mockMetaRepo, mockDataRepo);
         
         var changeEventHeaderSchema = (RecordSchema)Schema.Parse(await File.ReadAllTextAsync(ChangeEventHeaderPath, TestContext.Current.CancellationToken));
         var changeEventHeader = new GenericRecord(changeEventHeaderSchema);
