@@ -24,4 +24,6 @@ public abstract class DataRepositoryBase : IDataRepository {
     public abstract Task Update(string table, List<string> recordIds, Dictionary<string, object> data);
 
     public abstract Task<int> Delete(string table, List<string> recordIds);
+    
+    public abstract Task<int> UnDelete(string table, List<string> recordIds);
 }

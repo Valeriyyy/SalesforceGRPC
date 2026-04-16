@@ -6,21 +6,10 @@ using Npgsql;
 
 namespace Database.Repositories.DbDataRepositories;
 
-public class PostgresDataRepository : IDataRepository {
-    private readonly ILogger<PostgresDataRepository> _logger;
-    private readonly string _connectionString;
-    private readonly bool _debugQuery = false;
+public class PostgresDataRepository : DataRepositoryBase {
+    public PostgresDataRepository(ILogger<DataRepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
-    public PostgresDataRepository(ILogger<PostgresDataRepository> logger, IConfiguration configuration) {
-        _logger = logger;
-        if(configuration.GetConnectionString("targetingDatabase") is null) {
-            throw new InvalidOperationException("Db connection string is not configured.");
-        }
-        _connectionString = configuration.GetConnectionString("targetingDatabase")!;
-        _debugQuery = configuration.GetValue<bool>("DebugQuery");
-    }
-
-    public async Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    public override async Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
         var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
         var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
@@ -32,7 +21,7 @@ public class PostgresDataRepository : IDataRepository {
         await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
     }
     
-    public async Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
+    public override async Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
         var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
         var sql = $"UPDATE {table} SET {setClause} WHERE sf_id = ANY(@RecordIds)";
         
@@ -47,7 +36,7 @@ public class PostgresDataRepository : IDataRepository {
         await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
 
-    public async Task<int> Delete(string table, List<string> recordIds) {
+    public override async Task<int> Delete(string table, List<string> recordIds) {
         var sql = $"DELETE FROM {table} WHERE sf_id = ANY(@RecordIds)";
         // var sql = $"UPDATE {table} SET is_deleted = true WHERE sf_id = ANY(@RecordIds)";
         if (_debugQuery) {
@@ -60,5 +49,9 @@ public class PostgresDataRepository : IDataRepository {
         using var result = new NpgsqlConnection(_connectionString)
             .ExecuteAsync(sql, parameters);
         return result.Result;
+    }
+
+    public override Task<int> UnDelete(string table, List<string> recordIds) {
+        throw new NotImplementedException();
     }
 }

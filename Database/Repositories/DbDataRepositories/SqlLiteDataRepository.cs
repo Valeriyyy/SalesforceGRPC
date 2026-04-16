@@ -7,9 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace Database.Repositories.DbDataRepositories;
 
 public class SqlLiteDataRepository : DataRepositoryBase {
-    public SqlLiteDataRepository(ILogger<DataRepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) {
-        
-    }
+    public SqlLiteDataRepository(ILogger<DataRepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
     public override async Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
@@ -23,11 +21,24 @@ public class SqlLiteDataRepository : DataRepositoryBase {
         await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
     }
 
-    public override Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
-        throw new NotImplementedException();
+    public override async Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
+        var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
+        var sql = $"UPDATE {table} SET {setClause} WHERE sf_id in ({recordIds})";
+        
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}, RecordIds: {@RecordIds}", "UPDATE", sql, data, recordIds);
+        }
+        
+        var parameters = new DynamicParameters(data);
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.ExecuteAsync(sql, parameters);
     }
 
     public override Task<int> Delete(string table, List<string> recordIds) {
+        throw new NotImplementedException();
+    }
+
+    public override Task<int> UnDelete(string table, List<string> recordIds) {
         throw new NotImplementedException();
     }
 }
