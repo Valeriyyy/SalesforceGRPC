@@ -21,9 +21,9 @@ public class PostgresDataRepository : DataRepositoryBase {
         await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
     }
     
-    public override async Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
+    public override async Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {
         var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
-        var sql = $"UPDATE {table} SET {setClause} WHERE sf_id = ANY(@RecordIds)";
+        var sql = $"UPDATE {table} SET {setClause} WHERE {sfFieldMapping} = ANY(@RecordIds)";
         
         if (_debugQuery) {
             _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}, RecordIds: {@RecordIds}", "UPDATE", sql, data, recordIds);

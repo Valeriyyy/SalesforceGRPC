@@ -21,7 +21,7 @@ public abstract class DataRepositoryBase : IDataRepository {
     public abstract Task Create(string table, Dictionary<string, object> data,
         CancellationToken cancellationToken = default);
 
-    public abstract Task Update(string table, List<string> recordIds, Dictionary<string, object> data);
+    public abstract Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data);
 
     public abstract Task<int> Delete(string table, List<string> recordIds);
     

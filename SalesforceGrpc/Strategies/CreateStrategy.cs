@@ -49,13 +49,17 @@ public class CreateStrategy : IEventStrategy {
 
         // Get cached field mappings (Salesforce -> PostgreSQL)
         var pgFieldMappings = await _db.GetCachedMapping(dbSchema.Id, cancellationToken).ConfigureAwait(false);
+        var sfMappedKey = pgFieldMappings.GetValueOrDefault("MappedSFKey");
+        if (sfMappedKey == null) {
+            throw new Exception($"Failed to find salesforce id mapping fieldname for {dbSchema.Id}");
+        }
 
         // For CREATE events, process ALL mapped fields (not just changed ones)
         var allChangedFields = ProcessAllFieldValues(record, recSchema, pgFieldMappings);
 
         // Create RecordChangeSet with all record IDs
         var changeSet = new RecordChangeSet(dbSchema.EntityName, recordIdStrings, ChangeType.CREATE);
-        changeSet.ChangedFields.Add(new ChangedField("sf_id", recordIds[0].ToString() ?? string.Empty, "string"));
+        changeSet.ChangedFields.Add(new ChangedField(sfMappedKey, recordIds[0].ToString() ?? string.Empty, "string"));
 
         foreach (var field in allChangedFields) {
             changeSet.ChangedFields.Add(field);

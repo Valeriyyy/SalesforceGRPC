@@ -51,6 +51,10 @@ public class UpdateStrategy : IEventStrategy {
 
         // Get cached field mappings (Salesforce -> PostgreSQL)
         var pgFieldMappings = await _db.GetCachedMapping(dbSchema.Id, cancellationToken).ConfigureAwait(false);
+        var sfMappedKey = pgFieldMappings.GetValueOrDefault("MappedSFKey");
+        if (sfMappedKey == null) {
+            throw new Exception($"Failed to find salesforce id mapping fieldname for {dbSchema.Id}");
+        }
 
         // Process changed fields if present
         var changedFieldsList = new List<ChangedField>();
@@ -65,17 +69,12 @@ public class UpdateStrategy : IEventStrategy {
         foreach (var field in changedFieldsList) {
             changeSet.ChangedFields.Add(field);
         }
-
-        // Generate and log SQL statement (single statement for all records)
-        var sqlStatement = changeSet.ToSqlUpdateStatement();
+        
         var data = changeSet.ToDataObject();
-        _logger.LogInformation(sqlStatement);
-        _logger.LogDebug(sqlStatement);
         if (data.Count == 0) return;
 
         try {
-            // await _db.Update(schemas[dbSchema.EntityName], recordIdStrings, data, cancellationToken);
-            await _dataRepo.Update(schemas[dbSchema.EntityName], recordIdStrings, data);
+            await _dataRepo.Update(schemas[dbSchema.EntityName], sfMappedKey, recordIdStrings, data);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to update record {Data}", data.ToJson());
         }

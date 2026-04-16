@@ -20,7 +20,7 @@ public class MySqlDataRepository : IDataRepository {
         throw new NotImplementedException();
     }
 
-    public Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
+    public Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {
         throw new NotImplementedException();
     }
 

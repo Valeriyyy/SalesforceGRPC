@@ -21,15 +21,17 @@ public class SqlLiteDataRepository : DataRepositoryBase {
         await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
     }
 
-    public override async Task Update(string table, List<string> recordIds, Dictionary<string, object> data) {
+    public override async Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {
         var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
-        var sql = $"UPDATE {table} SET {setClause} WHERE sf_id in ({recordIds})";
+        var sql = $"UPDATE {table} SET {setClause} WHERE {sfFieldMapping} in (@RecordIds)";
         
         if (_debugQuery) {
             _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}, RecordIds: {@RecordIds}", "UPDATE", sql, data, recordIds);
         }
         
         var parameters = new DynamicParameters(data);
+        parameters.Add("RecordIds", recordIds.ToArray());
+        
         await using var connection = new SqliteConnection(_connectionString);
         await connection.ExecuteAsync(sql, parameters);
     }
