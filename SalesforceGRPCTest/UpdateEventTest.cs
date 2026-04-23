@@ -34,7 +34,8 @@ public class UpdateEventTest {
             { "NameFirstName", "first_name" },
             { "NameLastName", "last_name" },
             // { "Name", "name" },
-            { "Phone", "phone"}
+            { "Phone", "phone"},
+            { "MappedSFKey", "sf_id" }
         });
         var updateStrategy = new UpdateStrategy(mockLogger, mockMetaRepo, mockDataRepo);
         

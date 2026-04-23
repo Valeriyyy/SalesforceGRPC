@@ -32,7 +32,9 @@ public class CreateEventTest {
             { "NameFirstName", "first_name" },
             { "NameLastName", "last_name" },
             // { "Name", "name" },
-            { "Phone", "phone"}
+            { "Phone", "phone"},
+            { "MappedSFKey", "sf_id" },
+            { "MobilePhone", "mobile_phone" }
         });
         var createStrategy = new CreateStrategy(mockLogger, mockMetaRepo, mockDataRepo);
         

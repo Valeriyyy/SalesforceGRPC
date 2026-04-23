@@ -23,7 +23,7 @@ public class SqlLiteDataRepository : DataRepositoryBase {
 
     public override async Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {
         var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
-        var sql = $"UPDATE {table} SET {setClause} WHERE {sfFieldMapping} in (@RecordIds)";
+        var sql = $"UPDATE {table} SET {setClause} WHERE {sfFieldMapping} in @RecordIds";
         
         if (_debugQuery) {
             _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}, RecordIds: {@RecordIds}", "UPDATE", sql, data, recordIds);

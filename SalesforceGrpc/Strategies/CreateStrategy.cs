@@ -48,14 +48,14 @@ public class CreateStrategy : IEventStrategy {
         _logger.LogInformation("Processing created records: {records}", string.Join(",", recordIdStrings));
 
         // Get cached field mappings (Salesforce -> PostgreSQL)
-        var pgFieldMappings = await _db.GetCachedMapping(dbSchema.Id, cancellationToken).ConfigureAwait(false);
-        var sfMappedKey = pgFieldMappings.GetValueOrDefault("MappedSFKey");
+        var fieldMappings = await _db.GetCachedMapping(dbSchema.Id, cancellationToken).ConfigureAwait(false);
+        var sfMappedKey = fieldMappings.GetValueOrDefault("MappedSFKey");
         if (sfMappedKey == null) {
             throw new Exception($"Failed to find salesforce id mapping fieldname for {dbSchema.Id}");
         }
 
         // For CREATE events, process ALL mapped fields (not just changed ones)
-        var allChangedFields = ProcessAllFieldValues(record, recSchema, pgFieldMappings);
+        var allChangedFields = ProcessAllFieldValues(record, recSchema, fieldMappings);
 
         // Create RecordChangeSet with all record IDs
         var changeSet = new RecordChangeSet(dbSchema.EntityName, recordIdStrings, ChangeType.CREATE);
@@ -81,6 +81,13 @@ public class CreateStrategy : IEventStrategy {
 
         // Get field type mapping for all fields
         var fieldTypeMapping = recSchema.GetFieldTypeMapping();
+
+        foreach (var (key, value) in pgFieldMappings) {
+            var r = recSchema[key];
+            if (r != null) {
+                Console.WriteLine("this is the field: " + r.Name + " and it came from the schema: " + recSchema.Name);
+            }
+        }
 
         WriteLine($"\n=== Processing All Fields for CREATE Event ===");
         foreach (var field in recSchema.Fields) {
