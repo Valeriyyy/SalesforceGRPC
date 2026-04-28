@@ -69,7 +69,8 @@ public class CreateStrategy : IEventStrategy {
         var data = changeSet.ToDataObject();
 
         try {
-            await _dataRepo.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
+            var createdCount = await _dataRepo.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to insert record {Data}", data.ToJson());
         }

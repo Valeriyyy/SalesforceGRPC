@@ -74,7 +74,8 @@ public class UpdateStrategy : IEventStrategy {
         if (data.Count == 0) return;
 
         try {
-            await _dataRepo.Update(schemas[dbSchema.EntityName], sfMappedKey, recordIdStrings, data);
+            var updatedCount = await _dataRepo.Update(schemas[dbSchema.EntityName], sfMappedKey, recordIdStrings, data);
+            _logger.LogInformation("Updated {UpdatedCount} records from {ObjectType}", updatedCount, dbSchema.EntityName);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to update record {Data}", data.ToJson());
         }
