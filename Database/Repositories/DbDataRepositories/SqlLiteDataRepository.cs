@@ -1,5 +1,4 @@
 using Dapper;
-using Database.Repositories.Interfaces;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;

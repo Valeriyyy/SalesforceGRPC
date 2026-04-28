@@ -1,5 +1,4 @@
 using Dapper;
-using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
