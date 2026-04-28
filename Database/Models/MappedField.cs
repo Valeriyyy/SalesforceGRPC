@@ -10,8 +10,8 @@ public class MappedField {
     public int SchemaId { get; set; }
     [Column("salesforce_field_name")]
     public required string SalesforceFieldName { get; set; }
-    [Column("postgres_field_name")]
-    public required string PostgresFieldName { get; set; }
+    [Column("target_field_name")]
+    public required string TargetFieldName { get; set; }
 
     // public override string ToString() {
     //     return $"{SchemaId} {SalesforceFieldName} => {PostgresFieldName}";

@@ -47,7 +47,7 @@ public class MetaRepository : IMetaRepository {
         // Build the mapping dictionary from the provided mappings
         var mapping = mappings
             .Where(m => m.SchemaId == schemaId)
-            .ToDictionary(m => m.SalesforceFieldName, m => m.PostgresFieldName);
+            .ToDictionary(m => m.SalesforceFieldName, m => m.TargetFieldName);
 
         // Store in cache with a 1-hour sliding expiration
         var cacheOptions = new MemoryCacheEntryOptions()
@@ -65,7 +65,7 @@ public class MetaRepository : IMetaRepository {
             @"SELECT id as ID, 
             schema_id as SchemaId, 
             salesforce_field_name as SalesforceFieldName, 
-            postgres_field_name as PostgresFieldName
+            target_field_name as TargetFieldName
             FROM salesforce.mapped_fields WHERE schema_id = @SchemaId",
             new { SchemaId = schemaId }).ConfigureAwait(false);
     }
