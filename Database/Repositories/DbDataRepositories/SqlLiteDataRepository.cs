@@ -9,7 +9,7 @@ namespace Database.Repositories.DbDataRepositories;
 public class SqlLiteDataRepository : DataRepositoryBase {
     public SqlLiteDataRepository(ILogger<DataRepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
-    public override async Task Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
         var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
         var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
@@ -18,10 +18,12 @@ public class SqlLiteDataRepository : DataRepositoryBase {
         }
 
         await using var connection = new SqliteConnection(_connectionString);
-        await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
+        var resultCount = await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
+        
+        return resultCount;       
     }
 
-    public override async Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {
+    public override async Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {
         var setClause = string.Join(", ", data.Keys.Select(k => $"{k} = @{k}"));
         var sql = $"UPDATE {table} SET {setClause} WHERE {sfFieldMapping} in @RecordIds";
         
@@ -33,11 +35,23 @@ public class SqlLiteDataRepository : DataRepositoryBase {
         parameters.Add("RecordIds", recordIds.ToArray());
         
         await using var connection = new SqliteConnection(_connectionString);
-        await connection.ExecuteAsync(sql, parameters);
+        var resultCount = await connection.ExecuteAsync(sql, parameters);
+
+        return resultCount;
     }
 
-    public override Task<int> Delete(string table, List<string> recordIds) {
-        throw new NotImplementedException();
+    public override Task<int> Delete(string table, string sfIdColumnName, List<string> recordIds) {
+        var sql = $"DELETE FROM {table} WHERE {sfIdColumnName} in @RecordIds";
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, RecordIds: {@RecordIds}", "DELETE", sql, recordIds);
+        }
+
+        var parameters = new DynamicParameters();
+        parameters.Add("RecordIds", recordIds.ToArray());
+
+        var result = new SqliteConnection(_connectionString)
+            .ExecuteAsync(sql, parameters);
+        return result;
     }
 
     public override Task<int> UnDelete(string table, List<string> recordIds) {

@@ -18,12 +18,12 @@ public abstract class DataRepositoryBase : IDataRepository {
         _debugQuery = configuration.GetValue<bool>("DebugQuery");
     }
 
-    public abstract Task Create(string table, Dictionary<string, object> data,
+    public abstract Task<int> Create(string table, Dictionary<string, object> data,
         CancellationToken cancellationToken = default);
 
-    public abstract Task Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data);
+    public abstract Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data);
 
-    public abstract Task<int> Delete(string table, List<string> recordIds);
+    public abstract Task<int> Delete(string table, string sfIdColumnName, List<string> recordIds);
     
     public abstract Task<int> UnDelete(string table, List<string> recordIds);
 }
