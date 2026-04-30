@@ -1,6 +1,7 @@
 using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Database.Repositories.DbDataRepositories;
 
@@ -9,6 +10,8 @@ public abstract class DataRepositoryBase : IDataRepository {
     protected readonly string _connectionString;
     protected readonly bool _debugQuery = false;
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Connection string and debug settings are required for initialization")]
     protected DataRepositoryBase(ILogger<DataRepositoryBase> logger, IConfiguration configuration) {
         _logger = logger;
         if (configuration.GetConnectionString("targetingDatabase") is null) {

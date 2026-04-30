@@ -1,0 +1,45 @@
+# Multi-stage Dockerfile for AOT-compiled SalesforceGRPC application
+# This Dockerfile creates a self-contained native executable with no .NET runtime dependency
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+
+# Install required build tools
+RUN apk add --no-cache clang zlib-dev
+
+WORKDIR /src
+
+# Copy project files
+COPY SalesforceGrpc.sln .
+COPY SalesforceGrpc/ ./SalesforceGrpc/
+COPY Database/ ./Database/
+
+# Build and publish as AOT
+RUN dotnet publish SalesforceGrpc/SalesforceGrpc.csproj -c Release -o /app/publish \
+    --no-self-contained \
+    /p:PublishAot=true \
+    /p:StripSymbols=false
+
+# Runtime stage - uses runtime-deps which includes only libc (no .NET runtime)
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine
+
+# Install runtime dependencies if needed
+RUN apk add --no-cache libstdc++
+
+WORKDIR /app
+
+# Copy the native executable from build stage
+COPY --from=build /app/publish ./
+
+# Create directory for logs (if needed)
+RUN mkdir -p logs
+
+# Copy config files
+COPY SalesforceGrpc/appsettings.json .
+COPY SalesforceGrpc/avro ./avro/
+
+# Non-root user for security
+RUN addgroup -g 1001 -S sfgrpc && adduser -u 1001 -S sfgrpc -G sfgrpc
+USER sfgrpc
+
+ENTRYPOINT ["./SalesforceGrpc"]
+

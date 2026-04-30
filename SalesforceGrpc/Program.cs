@@ -6,6 +6,7 @@ using Database.Utilities;
 using GrpcClient;
 using Microsoft.Extensions.Options;
 using SalesforceGrpc;
+using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
 using Serilog;
@@ -38,12 +39,8 @@ IHost host = Host.CreateDefaultBuilder(args)
     SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
     services.AddSingleton<IMetaRepository, MetaRepository>();
     
-    // Register data repository based on configuration
-    services.AddSingleton<IDataRepository>(sp => {
-        var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
-            ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
-        return DataRepositoryFactory.Create(targetingDbType, sp);
-    });
+    // Register data repository based on configuration - AOT-safe explicit registration
+    services.AddAotDataRepository(config);
     
     services.AddTransient<IEventStrategy, CreateStrategy>();
     services.AddTransient<IEventStrategy, UpdateStrategy>();

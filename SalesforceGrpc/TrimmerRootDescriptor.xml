@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<linker>
+  <!-- SalesforceGrpc Assembly -->
+  <assembly name="SalesforceGrpc">
+    <!-- Preserve all strategies - required for DI -->
+    <type name="SalesforceGrpc.Strategies.CreateStrategy" preserve="all" />
+    <type name="SalesforceGrpc.Strategies.UpdateStrategy" preserve="all" />
+    <type name="SalesforceGrpc.Strategies.DeleteStrategy" preserve="all" />
+    <type name="SalesforceGrpc.Strategies.UndeleteStrategy" preserve="all" />
+    <type name="SalesforceGrpc.Strategies.EventResolver" preserve="all" />
+    <type name="SalesforceGrpc.Strategies.IEventStrategy" preserve="all" />
+    
+    <!-- Preserve Worker and configuration -->
+    <type name="SalesforceGrpc.Worker" preserve="all" />
+    <type name="SalesforceGrpc.Salesforce.SalesforceConfig" preserve="all" />
+    <type name="SalesforceGrpc.Salesforce.SalesforceAuthHandler" preserve="all" />
+    <type name="SalesforceGrpc.Salesforce.SalesforceClient" preserve="all" />
+    <type name="SalesforceGrpc.Salesforce.SalesforceTokenProvider" preserve="all" />
+    <type name="SalesforceGrpc.Salesforce.ISalesforceTokenProvider" preserve="all" />
+    
+    <!-- Preserve extensions -->
+    <type name="SalesforceGrpc.Extensions.AvroExtensions" preserve="all" />
+    <type name="SalesforceGrpc.Extensions.AotConfiguration" preserve="all" />
+  </assembly>
+
+  <!-- Database Assembly -->
+  <assembly name="Database">
+    <!-- Preserve all repositories - required for multi-database support -->
+    <type name="Database.Repositories.Interfaces.IDataRepository" preserve="all" />
+    <type name="Database.Repositories.Interfaces.IMetaRepository" preserve="all" />
+    <type name="Database.Repositories.DbDataRepositories.DataRepositoryBase" preserve="all" />
+    <type name="Database.Repositories.DbDataRepositories.PostgresDataRepository" preserve="all" />
+    <type name="Database.Repositories.DbDataRepositories.SqlServerDataRepository" preserve="all" />
+    <type name="Database.Repositories.DbDataRepositories.MySqlDataRepository" preserve="all" />
+    <type name="Database.Repositories.DbDataRepositories.SqlLiteDataRepository" preserve="all" />
+    <type name="Database.Repositories.MetaRepository" preserve="all" />
+    
+    <!-- Database models and utilities -->
+    <type name="Database.Models.CDCSchema" preserve="all" />
+    <type name="Database.Models.MappedField" preserve="all" />
+    <type name="Database.Utilities.SqlTimeOnlyTypeHandler" preserve="all" />
+    <type name="Database.Repositories.DbType" preserve="all" />
+  </assembly>
+
+  <!-- Salesforce/gRPC Generated Types -->
+  <assembly name="GrpcClient">
+    <type name="GrpcClient.PubSub" preserve="all" />
+    <type name="GrpcClient.PubSub.PubSubClient" preserve="all" />
+  </assembly>
+
+  <!-- Apache.Avro - preserve reflection-dependent types -->
+  <assembly name="Apache.Avro">
+    <type name="Avro.Schema" preserve="all" />
+    <type name="Avro.RecordSchema" preserve="all" />
+    <type name="Avro.UnionSchema" preserve="all" />
+    <type name="Avro.Generic.GenericRecord" preserve="all" />
+    <type name="Avro.Generic.GenericDatumReader`1" preserve="all" />
+    <type name="Avro.Generic.GenericDatumWriter`1" preserve="all" />
+    <type name="Avro.IO.BinaryDecoder" preserve="all" />
+    <type name="Avro.IO.BinaryEncoder" preserve="all" />
+  </assembly>
+
+  <!-- Dapper - preserve type mapping required for queries -->
+  <assembly name="Dapper">
+    <type name="Dapper.SqlMapper" preserve="all" />
+    <type name="Dapper.DynamicParameters" preserve="all" />
+  </assembly>
+
+  <!-- Database Providers -->
+  <assembly name="Npgsql">
+    <type name="Npgsql.NpgsqlConnection" preserve="all" />
+    <type name="Npgsql.NpgsqlCommand" preserve="all" />
+  </assembly>
+
+  <assembly name="Microsoft.Data.SqlClient">
+    <type name="Microsoft.Data.SqlClient.SqlConnection" preserve="all" />
+    <type name="Microsoft.Data.SqlClient.SqlCommand" preserve="all" />
+  </assembly>
+
+  <assembly name="Microsoft.Data.Sqlite">
+    <type name="Microsoft.Data.Sqlite.SqliteConnection" preserve="all" />
+    <type name="Microsoft.Data.Sqlite.SqliteCommand" preserve="all" />
+  </assembly>
+
+  <assembly name="MySqlConnector">
+    <type name="MySql.Data.MySqlClient.MySqlConnection" preserve="all" />
+    <type name="MySql.Data.MySqlClient.MySqlCommand" preserve="all" />
+  </assembly>
+
+  <!-- Microsoft Extensions - preserve DI and Config types -->
+  <assembly name="Microsoft.Extensions.DependencyInjection">
+    <namespace name="Microsoft.Extensions.DependencyInjection" preserve="all" />
+  </assembly>
+
+  <assembly name="Microsoft.Extensions.Configuration">
+    <type name="Microsoft.Extensions.Configuration.ConfigurationBuilder" preserve="all" />
+    <type name="Microsoft.Extensions.Configuration.IConfiguration" preserve="all" />
+  </assembly>
+
+  <assembly name="Microsoft.Extensions.Logging">
+    <namespace name="Microsoft.Extensions.Logging" preserve="all" />
+  </assembly>
+
+  <!-- gRPC Core - preserve channel and call definitions -->
+  <assembly name="Grpc.Core.Api">
+    <namespace name="Grpc.Core" preserve="all" />
+  </assembly>
+
+  <assembly name="Grpc.Net.Client">
+    <type name="Grpc.Net.Client.GrpcChannel" preserve="all" />
+    <type name="Grpc.Net.Client.GrpcChannelOptions" preserve="all" />
+  </assembly>
+
+  <!-- Serilog - preserve sinks and configuration -->
+  <assembly name="Serilog">
+    <namespace name="Serilog" preserve="all" />
+    <type name="Serilog.Core.LoggingLevelSwitch" preserve="all" />
+  </assembly>
+
+  <assembly name="Serilog.Extensions.Hosting">
+    <namespace name="Serilog" preserve="all" />
+  </assembly>
+
+  <assembly name="Serilog.Settings.Configuration">
+    <type name="Serilog.Settings.Configuration.ConfigurationLoggerConfigurationExtensions" preserve="all" />
+  </assembly>
+
+  <!-- Polly resilience policies -->
+  <assembly name="Polly">
+    <namespace name="Polly" preserve="all" />
+  </assembly>
+
+  <!-- System types commonly used with reflection -->
+  <assembly name="System.Private.CoreLib">
+    <type name="System.Enum" preserve="all" />
+    <type name="System.Collections.Generic.Dictionary`2" preserve="all" />
+    <type name="System.Collections.Generic.List`1" preserve="all" />
+  </assembly>
+</linker>
+

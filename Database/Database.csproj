@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- AOT Configuration for Library -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
     <ItemGroup>

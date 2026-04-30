@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Database.Repositories;
 public class MetaRepository : IMetaRepository {
@@ -15,6 +16,8 @@ public class MetaRepository : IMetaRepository {
     private const string MappingCacheKeyPrefix = "mapping_";
     private const string SchemaCacheKeyPrefix = "schemas";
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Connection string and debug settings are required for initialization")]
     public MetaRepository(IMemoryCache cache, IConfiguration configuration, ILogger<MetaRepository> logger) {
         _cache = cache;
         _logger = logger;

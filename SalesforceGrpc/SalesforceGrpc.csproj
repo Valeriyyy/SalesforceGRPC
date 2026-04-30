@@ -6,6 +6,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-SalesforceGrpc-411E8C66-DC32-4FA2-BE87-E07BCD81566B</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <!-- AOT Configuration -->
+    <PublishAot>true</PublishAot>
+    <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
+    <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
+    <DebugType>embedded</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <!-- Enable configuration binding source generation for AOT -->
+    <ConfigurationBindingGeneratorEnabled>true</ConfigurationBindingGeneratorEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -61,6 +69,8 @@
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <!-- Include trimmer descriptor for AOT -->
+    <TrimmerRootDescriptor Include="TrimmerRootDescriptor.xml" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Services\" />
