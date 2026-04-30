@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using SalesforceGrpc;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
+using Serilog;
 using System.Net.Http.Headers;
 using static System.Console;
 
@@ -23,6 +24,10 @@ IHost host = Host.CreateDefaultBuilder(args)
     //services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
 
     //services.AddOptions<SalesforceConfig>().Bind(context.Configuration.GetSection("Salesforce"));
+    services.AddSerilog((serilogServices, lc) => lc
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(serilogServices)
+        .Enrich.FromLogContext());
 
     // another way to bind settings
     var config = context.Configuration;
