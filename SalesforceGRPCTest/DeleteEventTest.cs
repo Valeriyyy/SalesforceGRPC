@@ -18,7 +18,7 @@ public class DeleteEventTest {
         // Arrange
         var mockMetaRepo = Substitute.For<IMetaRepository>();
         var mockLogger = Substitute.For<ILogger<DeleteStrategy>>();
-        var mockDataRepo = Substitute.For<IDataRepository>();
+        var mockDataRepo = Substitute.For<IRepository>();
         var dbSchema = new CDCSchema {
             Id = 1,
             SchemaId = "SomeSchemaId",

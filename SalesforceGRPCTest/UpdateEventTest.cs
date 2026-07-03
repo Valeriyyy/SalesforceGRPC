@@ -25,7 +25,7 @@ public class UpdateEventTest {
         // var processor = new EventProcessor(mockMetaRepo.Object, new List<IEventStrategy> { mockStrategy.Object });
         
         var mockMetaRepo = Substitute.For<IMetaRepository>();
-        var mockDataRepo = Substitute.For<IDataRepository>();
+        var mockDataRepo = Substitute.For<IRepository>();
         var mockLogger = Substitute.For<ILogger<UpdateStrategy>>();
         var inMemorySettings = new Dictionary<string, string> { { "Salesforce:ClientId", "testClientId" }, { "Salesforce:ClientSecret", "testClientSecret" } };
         var dbSchema = new CDCSchema { Id = 1, SchemaId = "SomeSchemaId", SchemaName = "ContactSchema", EntityName = "Contact", DbSchemaFullName = "salesforce.contacts" };

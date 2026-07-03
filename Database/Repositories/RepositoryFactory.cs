@@ -3,13 +3,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Database.Repositories.DbDataRepositories;
+namespace Database.Repositories;
 
 /// <summary>
 /// Factory for creating the appropriate data repository based on the configured database type.
 /// </summary>
-public static class DataRepositoryFactory {
-    public static IDataRepository Create(string databaseType, IServiceProvider serviceProvider) {
+public static class RepositoryFactory {
+    public static IRepository Create(string databaseType, IServiceProvider serviceProvider) {
         if (!Enum.TryParse<DbType>(databaseType, true, out var dbType)) {
             throw new InvalidOperationException(
                 $"Invalid TargetingDatabaseType '{databaseType}'. Supported types: {string.Join(", ", Enum.GetNames(typeof(DbType)))}");
@@ -18,20 +18,20 @@ public static class DataRepositoryFactory {
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
 
         return dbType switch {
-            DbType.Postgres => new PostgresDataRepository(
-                serviceProvider.GetRequiredService<ILogger<PostgresDataRepository>>(),
+            DbType.Postgres => new PostgresRepository(
+                serviceProvider.GetRequiredService<ILogger<PostgresRepository>>(),
                 configuration),
             
-            DbType.SqlServer => new SqlServerDataRepository(
-                serviceProvider.GetRequiredService<ILogger<SqlServerDataRepository>>(),
+            DbType.SqlServer => new SqlServerRepository(
+                serviceProvider.GetRequiredService<ILogger<SqlServerRepository>>(),
                 configuration),
             
-            DbType.MySql => new MySqlDataRepository(
-                serviceProvider.GetRequiredService<ILogger<MySqlDataRepository>>(),
+            DbType.MySql => new MySqlRepository(
+                serviceProvider.GetRequiredService<ILogger<MySqlRepository>>(),
                 configuration),
             
-            DbType.SqlLite => new SqlLiteDataRepository(
-                serviceProvider.GetRequiredService<ILogger<SqlLiteDataRepository>>(),
+            DbType.SqlLite => new SqlLiteRepository(
+                serviceProvider.GetRequiredService<ILogger<SqlLiteRepository>>(),
                 configuration),
             
             _ => throw new InvalidOperationException($"Unsupported database type: {dbType}")

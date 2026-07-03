@@ -67,6 +67,8 @@ public class SalesforceTokenProvider : ISalesforceTokenProvider {
             HttpMethod.Post,
             _config.LoginUrl);
 
+        // after some time, the connected app clientid/consumer key and client secret/consumer secret may need to be updated,
+        // check in Salesforce for the values in case they have changed otherwise this will return 400
         var nvc = new List<KeyValuePair<string, string>>
         {
             new("grant_type", _config.GrantType),
@@ -74,7 +76,7 @@ public class SalesforceTokenProvider : ISalesforceTokenProvider {
             new("client_secret", _config.ClientSecret),
             new("username", _config.Username),
             new("password", _config.Password + _config.UserSecurityToken)
-            //new KeyValuePair<string, string>("password", configuration.Password)
+            // new KeyValuePair<string, string>("password", configuration.Password)
         };
         request.Content = new FormUrlEncodedContent(nvc);
 

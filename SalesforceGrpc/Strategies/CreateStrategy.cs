@@ -15,9 +15,9 @@ public class CreateStrategy : IEventStrategy {
 
     private readonly ILogger<CreateStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IDataRepository _dataRepo;
+    private readonly IRepository _dataRepo;
 
-    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db, IDataRepository dataRepo) {
+    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db, IRepository dataRepo) {
         _logger = logger;
         _db = db;
         _dataRepo = dataRepo;

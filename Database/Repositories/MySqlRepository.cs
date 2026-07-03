@@ -1,10 +1,11 @@
+using Database.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace Database.Repositories.DbDataRepositories;
+namespace Database.Repositories;
 
-public class MySqlDataRepository : DataRepositoryBase {
-    public MySqlDataRepository(ILogger<MySqlDataRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
+public class MySqlRepository : RepositoryBase {
+    public MySqlRepository(ILogger<MySqlRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
 
     public override Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         throw new NotImplementedException();
@@ -19,6 +20,18 @@ public class MySqlDataRepository : DataRepositoryBase {
     }
 
     public override Task<int> UnDelete(string table, List<string> recordIds) {
+        throw new NotImplementedException();
+    }
+
+    public override Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public", CancellationToken cancellationToken = default) {
+        throw new NotImplementedException();
+    }
+
+    public override Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public", CancellationToken cancellationToken = default) {
+        throw new NotImplementedException();
+    }
+
+    public override Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public") {
         throw new NotImplementedException();
     }
 

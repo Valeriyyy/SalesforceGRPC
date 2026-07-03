@@ -16,9 +16,9 @@ public class UpdateStrategy : IEventStrategy {
     public ChangeType ChangeType => ChangeType.UPDATE;
     private readonly ILogger<UpdateStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IDataRepository _dataRepo;
+    private readonly IRepository _dataRepo;
 
-    public UpdateStrategy(ILogger<UpdateStrategy> logger, IMetaRepository db, IDataRepository dataRepo) {
+    public UpdateStrategy(ILogger<UpdateStrategy> logger, IMetaRepository db, IRepository dataRepo) {
         _logger = logger;
         _db = db;
         _dataRepo = dataRepo;

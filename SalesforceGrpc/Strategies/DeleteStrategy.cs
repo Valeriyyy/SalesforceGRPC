@@ -13,9 +13,9 @@ public class DeleteStrategy : IEventStrategy {
     
     private readonly ILogger<DeleteStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IDataRepository _dataRepo;
+    private readonly IRepository _dataRepo;
 
-    public DeleteStrategy(ILogger<DeleteStrategy> logger, IDataRepository dataRepo, IMetaRepository db) {
+    public DeleteStrategy(ILogger<DeleteStrategy> logger, IRepository dataRepo, IMetaRepository db) {
         _logger = logger;
         _dataRepo = dataRepo;
         _db = db;

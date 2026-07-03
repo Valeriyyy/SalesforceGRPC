@@ -25,7 +25,7 @@ public class CreateEventTest {
         
         var mockMetaRepo = Substitute.For<IMetaRepository>();
         var mockLogger = Substitute.For<ILogger<CreateStrategy>>();
-        var mockDataRepo = Substitute.For<IDataRepository>();
+        var mockDataRepo = Substitute.For<IRepository>();
         var inMemorySettings = new Dictionary<string, string> { { "Salesforce:ClientId", "testClientId" }, { "Salesforce:ClientSecret", "testClientSecret" } };
         var dbSchema = new CDCSchema { Id = 1, SchemaId = "SomeSchemaId", SchemaName = "ContactSchema", EntityName = "Contact", DbSchemaFullName = "salesforce.contacts" };
         mockMetaRepo.GetCachedMapping(dbSchema.Id, CancellationToken.None).Returns(new Dictionary<string, string> {

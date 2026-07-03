@@ -70,7 +70,19 @@ public class MetaRepository : IMetaRepository {
             new { SchemaId = schemaId }).ConfigureAwait(false);
     }
 
-    public async Task<List<CDCSchema>> GetCachedSchemas(CancellationToken cancellationToken) {
+    public async Task<CDCSchema?> GetSchemaById(int schemaId) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        
+        var res = await connection.QueryAsync<CDCSchema>(
+            "SELECT id as Id, entity_name as EntityName, schema_id as SchemaId, schema_name as SchemaName, db_schema_full_name as DbSchemaFullName " +
+            "FROM salesforce.cdc_schemas where id = @SchemaId",
+            new { SchemaId = schemaId }
+            ).ConfigureAwait(false);
+
+        return res.FirstOrDefault();
+    }
+
+    public async Task<List<CDCSchema>> GetCachedSchemas(CancellationToken cancellationToken = default) {
         // Try to get from cache
         if (_cache.TryGetValue(SchemaCacheKeyPrefix, out List<CDCSchema>? cachedSchemas)) {
             return cachedSchemas!;

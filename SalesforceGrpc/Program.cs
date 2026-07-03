@@ -1,10 +1,14 @@
+using Application.Services;
+using Application.Services.Interfaces;
 using Dapper;
 using Database.Repositories;
-using Database.Repositories.DbDataRepositories;
 using Database.Repositories.Interfaces;
 using Database.Utilities;
 using GrpcClient;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using SalesforceGrpc;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
@@ -12,78 +16,101 @@ using Serilog;
 using System.Net.Http.Headers;
 using static System.Console;
 
-IHost host = Host.CreateDefaultBuilder(args)
-.ConfigureServices((context, services) => {
-    // one way to bind settings
-    //var settings = new SalesforceConfig();
-    //context.Configuration.GetSection("Salesforce").Bind(settings);
-    //services.AddSingleton(settings);
+var builder = WebApplication.CreateBuilder(args);
+var config = builder.Configuration;
 
-    // another way to bind settings
-    //services.Configure<SalesforceConfig>(options => context.Configuration.GetSection("Salesforce").Bind(options));
-    //services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
+builder.Services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
 
-    //services.AddOptions<SalesforceConfig>().Bind(context.Configuration.GetSection("Salesforce"));
-    services.AddSerilog((serilogServices, lc) => lc
-        .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(serilogServices)
-        .Enrich.FromLogContext());
+builder.Logging.AddSerilog();
+builder.Services.AddSerilog((serilogServices, lc) => lc
+    .ReadFrom.Configuration(config)
+    .ReadFrom.Services(serilogServices)
+    .Enrich.FromLogContext());
 
-    // another way to bind settings
-    var config = context.Configuration;
-    services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
-    services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
-
-    services.AddMemoryCache();
-    SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
-    services.AddSingleton<IMetaRepository, MetaRepository>();
-    
-    // Register data repository based on configuration
-    services.AddSingleton<IDataRepository>(sp => {
-        var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
-            ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
-        return DataRepositoryFactory.Create(targetingDbType, sp);
-    });
-    
-    services.AddTransient<IEventStrategy, CreateStrategy>();
-    services.AddTransient<IEventStrategy, UpdateStrategy>();
-    services.AddTransient<IEventStrategy, DeleteStrategy>();
-    services.AddTransient<IEventStrategy, UndeleteStrategy>();
-    services.AddTransient<EventResolver>();
-    
-    services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
-    services.AddTransient<SalesforceAuthHandler>();
-    services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
-        options.Address = new Uri("https://api.pubsub.salesforce.com:7443");
-    }).AddCallCredentials(async (_, metadata, serviceProvider) => {
-        // var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
-        // var authResponse = await authClient.GetToken();
-        var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
-        var authResponse = await tokenProvider.GetAuthToken();
-        metadata.Add("accesstoken", authResponse.AccessToken!);
-        metadata.Add("instanceurl", authResponse.InstanceUrl!);
-        metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => {
+        resource.AddService(serviceName: "SalesforceGrpcService")
+            .AddAttributes(new Dictionary<string, object> {
+                { "service.namespace", "SalesforceGrpcService" },
+                { "service.version", "1.0.0" },
+                { "service.instance.id", "SalesforceGrpcService-1" }
+            });
+    })
+    .WithMetrics(meterProviderBuilder => {
+        meterProviderBuilder.AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddRuntimeInstrumentation();
+    }).WithTracing(tracerProviderBuilder => {
+        tracerProviderBuilder.AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation();
     });
 
-    services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
-        var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
-        client.BaseAddress = new Uri(sfConfig.OrgUrl!);
-        var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
-        var authResponse = await tokenProvider.GetAuthToken();
-        WriteLine("This is access token " + authResponse.AccessToken);
-        client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
-    }).AddHttpMessageHandler<SalesforceAuthHandler>()
-    .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
-    
-    //create the directory to save avro files
-    var schemaSaveDir = config.GetValue<string>("AvroSchemaSaveDirectory");
-    if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
-        Directory.CreateDirectory(schemaSaveDir);
-    }
+builder.Services.AddMemoryCache();
+SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
+builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 
-    services.AddHostedService<Worker>();
-})
-.Build();
+builder.Services.AddSingleton<IRepository>(sp => {
+     var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
+         ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
+     return RepositoryFactory.Create(targetingDbType, sp);
+ });
 
-await host.RunAsync();
+builder.Services.AddTransient<IEventStrategy, CreateStrategy>();
+builder.Services.AddTransient<IEventStrategy, UpdateStrategy>();
+builder.Services.AddTransient<IEventStrategy, DeleteStrategy>();
+builder.Services.AddTransient<IEventStrategy, UndeleteStrategy>();
+builder.Services.AddTransient<EventResolver>();
+
+builder.Services.AddScoped<ISchemaService, SchemaService>();
+builder.Services.AddScoped<IFieldMappingService, IFieldMappingService>();
+     
+builder.Services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
+builder.Services.AddTransient<SalesforceAuthHandler>();
+builder.Services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
+    options.Address = new Uri("https://api.pubsub.salesforce.com:7443");
+}).AddCallCredentials(async (_, metadata, serviceProvider) => {
+    // var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
+    // var authResponse = await authClient.GetToken();
+    var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
+    var authResponse = await tokenProvider.GetAuthToken();
+    metadata.Add("accesstoken", authResponse.AccessToken!);
+    metadata.Add("instanceurl", authResponse.InstanceUrl!);
+    metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
+});
+
+builder.Services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
+    var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
+    client.BaseAddress = new Uri(sfConfig.OrgUrl!);
+    var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
+    var authResponse = await tokenProvider.GetAuthToken();
+    WriteLine("This is access token " + authResponse.AccessToken);
+    client.DefaultRequestHeaders.Authorization =
+        new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
+}).AddHttpMessageHandler<SalesforceAuthHandler>()
+.AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
+     
+//create the directory to save avro files
+var schemaSaveDir = config.GetValue<string>("AvroSchemaSaveDirectory");
+if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
+    Directory.CreateDirectory(schemaSaveDir);
+}
+
+builder.Services.AddHostedService<Worker>();
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline
+if (app.Environment.IsDevelopment()) {
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.MapControllers();
+
+app.Run();

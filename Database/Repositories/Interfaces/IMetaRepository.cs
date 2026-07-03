@@ -6,7 +6,8 @@ public interface IMetaRepository {
     // Task Update(string table, List<string> recordIds, Dictionary<string, object> data, CancellationToken cancellationToken);
     Task<Dictionary<string, string>> GetCachedMapping(int? schemaId, CancellationToken cancellationToken);
     Task<IEnumerable<MappedField>> GetEntityMappedFieldsBySchemaId(int? schemaId);
-    Task<List<CDCSchema>> GetCachedSchemas(CancellationToken cancellationToken);
+    Task<List<CDCSchema>> GetCachedSchemas(CancellationToken cancellationToken = default);
     // Task<IEnumerable<CDCSchema>> GetCDCSchemas(CancellationToken cancellationToken);
     Task<CDCSchema> CreateNewSchema(CDCSchema dbSchema);
+    Task<CDCSchema?> GetSchemaById(int schemaId);
 }
