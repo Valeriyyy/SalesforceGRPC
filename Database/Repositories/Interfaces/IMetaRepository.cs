@@ -10,4 +10,7 @@ public interface IMetaRepository {
     // Task<IEnumerable<CDCSchema>> GetCDCSchemas(CancellationToken cancellationToken);
     Task<CDCSchema> CreateNewSchema(CDCSchema dbSchema);
     Task<CDCSchema?> GetSchemaById(int schemaId);
+    Task<CDCSchema?> GetSchemaByRecordName(string recordName);
+    Task<CDCSchema> CreateNewSchemaWithAvroLink(CDCSchema dbSchema, int avroSchemaId);
+    Task<bool> UpdateCdcSchemaWithAvroLink(int cdcSchemaId, int avroSchemaId);
 }

@@ -1,0 +1,1 @@
+CREATE SCHEMA salesforce AUTHORIZATION postgres;

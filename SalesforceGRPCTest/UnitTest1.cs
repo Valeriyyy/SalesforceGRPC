@@ -43,11 +43,11 @@ public class UnitTest1 {
 
     [Fact(DisplayName = "Deserialize event")]
     public void DeserializeEvent() {
-        var accSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\AccountChangeEventGRPCSchema.avsc"));
-        var nameSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\Switchable_PersonNameSchema.avsc"));
-        var addressSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\AddressSchema.avsc"));
-        var cehSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\ChangeEventHeaderSchema.avsc"));
-        var customObjectSchema = Schema.Parse(File.ReadAllText("C:\\Users\\Valeriy Kutsar\\Documents\\programming\\dotnet\\SalesforceGrpc\\SalesforceGrpc\\avro\\Some_Custom_Object__ChangeEventGRPCSchema.avsc"));
+        /* var accSchema = Schema.Parse(File.ReadAllText("\\avro\\AccountChangeEventGRPCSchema.avsc"));
+        var nameSchema = Schema.Parse(File.ReadAllText("\\avro\\Switchable_PersonNameSchema.avsc"));
+        var addressSchema = Schema.Parse(File.ReadAllText("\\avro\\AddressSchema.avsc"));
+        var cehSchema = Schema.Parse(File.ReadAllText("\\avro\\ChangeEventHeaderSchema.avsc"));
+        var customObjectSchema = Schema.Parse(File.ReadAllText("\\avro\\Some_Custom_Object__ChangeEventGRPCSchema.avsc"));
         var accountChangeEvent = new AccountChangeEvent();
         var changeEventHeader = new ChangeEventHeader {
             entityName = "Account",
@@ -103,12 +103,12 @@ public class UnitTest1 {
         Assert.NotNull(changeType);
         Assert.Equal(ChangeType.UPDATE.ToString(), changeType.Value!);
 
-        /* var recordIdsFound = genericChangeEventHeader.TryGetValue("recordIds", out var recordIdsObject);
-		var recordIds = recordIdsObject as object[];
-		Assert.True(recordIdsFound);
-		Assert.NotNull(recordIds);
-		Assert.Single(recordIds);
-		Assert.Equal("recordIdListToDecompile", recordIds.First().ToString()); */
+        var recordIdsFound = genericChangeEventHeader.TryGetValue("recordIds", out var recordIdsObject);
+        var recordIds = recordIdsObject as object[];
+        Assert.True(recordIdsFound);
+        Assert.NotNull(recordIds);
+        Assert.Single(recordIds);
+        Assert.Equal("recordIdListToDecompile", recordIds.First().ToString()); */
     }
 
     [Fact(DisplayName = "Process Account Creation as Generic Record")]

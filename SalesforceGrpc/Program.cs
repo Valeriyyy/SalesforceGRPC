@@ -49,6 +49,7 @@ builder.Services.AddOpenTelemetry()
 builder.Services.AddMemoryCache();
 SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
 builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
+builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 
 builder.Services.AddSingleton<IRepository>(sp => {
      var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
@@ -63,7 +64,7 @@ builder.Services.AddTransient<IEventStrategy, UndeleteStrategy>();
 builder.Services.AddTransient<EventResolver>();
 
 builder.Services.AddScoped<ISchemaService, SchemaService>();
-builder.Services.AddScoped<IFieldMappingService, IFieldMappingService>();
+builder.Services.AddScoped<IFieldMappingService, FieldMappingService>();
      
 builder.Services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
 builder.Services.AddTransient<SalesforceAuthHandler>();

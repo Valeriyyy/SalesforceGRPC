@@ -25,6 +25,7 @@ public class Worker : BackgroundService {
     private readonly EventResolver _eventResolver;
     
     private readonly IMetaRepository _metaRepo;
+    private readonly IAvroSchemaRepository _avroSchemaRepo;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
 
     public Worker(
@@ -35,6 +36,7 @@ public class Worker : BackgroundService {
         IHostApplicationLifetime hostApplicationLifetime, 
         SalesforceClient client, 
         IMetaRepository metaRepo,
+        IAvroSchemaRepository avroSchemaRepo,
         EventResolver eventResolver) {
         _logger = logger;
         _sfconfig = sfconfig.Value;
@@ -43,6 +45,7 @@ public class Worker : BackgroundService {
         _hostApplicationLifetime = hostApplicationLifetime;
         _client = client;
         _metaRepo = metaRepo;
+        _avroSchemaRepo = avroSchemaRepo;
         _eventResolver = eventResolver;
     }
 
@@ -56,10 +59,6 @@ public class Worker : BackgroundService {
             // await TestMethod(stoppingToken);
             // await GetAndSaveSchema("Some_Custom_Object__ChangeEvent");
             await ListenForChannelEventsStrategy(stoppingToken);
-            // await GetAndSaveSchema("AccountChangeEvent");
-            /*await GetAndSaveSchema("AccountChangeEvent");*/
-            // await GetAndSaveSchemaById("YHKH1xWTqwF24lvYNGguGA");
-            // await GetTopic(stoppingToken);
         } catch (RpcException exc) {
             _logger.LogCritical(exc, "RPCException thrown with message: {message}", exc.Message);
             _logger.LogCritical("Status: {status}", exc.StatusCode);
@@ -78,7 +77,7 @@ public class Worker : BackgroundService {
         await stream.RequestStream.WriteAsync(fetchRequest, stoppingToken);
 
         var schemaDict = (await _metaRepo.GetCachedSchemas(stoppingToken))
-            .ToDictionary(p => p.SchemaId, p => p);
+            .ToDictionary(p => p.AvroSchema.SchemaId, p => p);
 
         while (await stream.ResponseStream.MoveNext(stoppingToken)) {
             var latestReplayId = stream.ResponseStream.Current.LatestReplayId.ToLongBE();
@@ -96,33 +95,40 @@ public class Worker : BackgroundService {
                     _logger.LogInformation("Event Replay Id: {replayId}", replayId);
                     Console.WriteLine("event number " + i);
                     var payload = e.Event.Payload;
+                    
+                    // the event has a schema id, we need to check if we have it in our dictionary, if not fetch and save it
                     _logger.LogInformation("Schema Id: {schemaId}", e.Event.SchemaId);
                     var validSchemaId = schemaDict.TryGetValue(e.Event.SchemaId, out var dbSchema);
                     
-                    // if an unhandeled schema id is encountered, log it and move on
+                    // if an unhandled schema id is encountered, fetch and save it
                     if (!validSchemaId || dbSchema is null) {
                         _logger.LogWarning("Unrecognized Schema Id: {schemaId}", e.Event.SchemaId);
-                        var schemaInfo = await GetAndSaveSchemaById(e.Event.SchemaId).ConfigureAwait(false);
-                        // var avroSchema = Schema.Parse(schemaInfo.SchemaJson);
-                        // var dbSchemaToInsert = new CDCSchema { 
-                        //     EntityName = avroSchema.Name.Replace("ChangeEvent", ""), 
-                        //     DbSchemaFullName = "salesforce.contacts", 
-                        //     SchemaId = e.Event.SchemaId, 
-                        //     SchemaName = avroSchema.Name
-                        // };
-                        // dbSchema = await _metaRepo.CreateNewSchema(dbSchemaToInsert).ConfigureAwait(false);
-                        // schemaDict.Add(e.Event.SchemaId, dbSchema);
+                        dbSchema = await GetAndSaveSchemaById(e.Event.SchemaId).ConfigureAwait(false);
+                        if (dbSchema is not null) {
+                            // add the new schema to the dictionary for future reference
+                            schemaDict.Add(e.Event.SchemaId, dbSchema);
+                            // find and remove the old schema, probably bad/slow if there are lots of schemas in dictionary
+                            var oldSchema = schemaDict.Values.FirstOrDefault(s => s.SchemaName == dbSchema.SchemaName && s.SchemaId != dbSchema.SchemaId);
+                            if (oldSchema is not null) {
+                                schemaDict.Remove(oldSchema.AvroSchema.SchemaId);
+                            }
+                        } else {
+                            _logger.LogError("Failed to retrieve schema with ID: {SchemaId}", e.Event.SchemaId);
+                            continue;
+                        }
                     }
                     _logger.LogInformation("Processing: {schemaName} event", dbSchema.SchemaName);
                     
-                    var schema = Schema.Parse(await File.ReadAllTextAsync($"./avro/{dbSchema.SchemaName}.avsc", stoppingToken));
+                    // Use Avro schema from database if available, otherwise fall back to file
+                    var schemaJson = dbSchema.AvroSchema?.SchemaJson ?? await File.ReadAllTextAsync($"./avro/{dbSchema.SchemaName}.avsc", stoppingToken).ConfigureAwait(false);
+                    var schema = Schema.Parse(schemaJson);
                     
                     using var memStream = new MemoryStream(payload.ToByteArray());
                     var decoder = new BinaryDecoder(memStream);
                     var datumReader = new GenericDatumReader<GenericRecord>(schema, schema);
                     var gr = datumReader.Read(null, decoder);
-                    var changeEventHeaderValid = gr.GetTypedValue<GenericRecord>("ChangeEventHeader", out var genericChangeEventHeader);
-                    var changeTypeFound = genericChangeEventHeader.GetTypedValue<dynamic>("changeType", out var changeType);
+                    gr.GetTypedValue<GenericRecord>("ChangeEventHeader", out var genericChangeEventHeader);
+                    genericChangeEventHeader.GetTypedValue<dynamic>("changeType", out var changeType);
                     var entityName = genericChangeEventHeader.GetValue(0).ToString();
                     Console.WriteLine(entityName + " HAS BEEN " + changeType.Value);
 
@@ -179,49 +185,68 @@ public class Worker : BackgroundService {
         await File.WriteAllTextAsync($"./avro/{name}", someSchema.SchemaJson);
     }
 
-    public async Task<SchemaInfo> GetAndSaveSchemaById(string schemaId) {
-        var schemaRequest = new SchemaRequest {
-            SchemaId = schemaId
-        };
-        var schemaInfo = await _pubsubClient.GetSchemaAsync(schemaRequest);
-        var avroSchema = Schema.Parse(schemaInfo.SchemaJson);
-        var name = $"{avroSchema.Name}.avsc";
-        
-        await File.WriteAllTextAsync($"./avro/{name}", schemaInfo.SchemaJson);
-
-        return schemaInfo;
-    }
-
-    public async Task GetTopic(CancellationToken cancellationToken) {
-        var topicRequest = new TopicRequest { TopicName = "/data/MyCustomChannel__chn" };
-        var res = await _pubsubClient.GetTopicAsync(topicRequest, cancellationToken: cancellationToken);
-        Console.WriteLine("Topic response " + res.ToJson());
-    }
-
-
-    public async Task TestMethod(CancellationToken cancellationToken = default) {
-        // var eventsJson = File.ReadAllText("./AccountUpdateEvents.json");
-        // var events = JsonSerializer.Deserialize<List<EventWrapper>>(eventsJson) ?? throw new NullReferenceException("Eventrs are null");
-        // Console.WriteLine("Number of events " + events.Count);
-        // var eventTasks = new List<Task>();
-        // var accSchema = Schema.Parse(File.ReadAllText("./avro/AccountChangeEventGRPCSchema.avsc"));
-        // foreach (var eve in events) {
-        //     Console.WriteLine("event " + eve.ReplayId);
-        //     // Console.WriteLine(eve.Event.Payload);
-        //     var byteString = ByteString.CopyFromUtf8(eve.Event.Payload);
-        //     var replayId = (ByteString.CopyFromUtf8(eve.ReplayId)).ToLongBE();
-        //     Console.WriteLine(replayId);
-        //     Console.WriteLine(byteString.Length);
-        //     eventTasks.Add(_mediator.Send(new GenericCDCEventCommand {
-        //         Name = "Account Change Event",
-        //         AvroPayload = byteString.ToByteArray(),
-        //         AvroSchema = accSchema
-        //     }));
-        // }
-        //
-        // await Task.WhenAll(eventTasks);
-
-
-        await _client.GetRecordTypes(cancellationToken);
+    private async Task<CDCSchema?> GetAndSaveSchemaById(string schemaId) {
+        try {
+            var schemaRequest = new SchemaRequest {
+                SchemaId = schemaId
+            };
+            var schemaInfo = await _pubsubClient.GetSchemaAsync(schemaRequest).ConfigureAwait(false);
+            var avroSchema = Schema.Parse(schemaInfo.SchemaJson);
+            var fileName = $"{avroSchema.Name}.avsc";
+            
+            // Save Avro schema to database
+            var dbAvroSchema = new DbAvroSchema {
+                SchemaId = schemaInfo.SchemaId,
+                RecordName = avroSchema.Name,
+                SchemaJson = schemaInfo.SchemaJson,
+                DateCreated = DateTime.UtcNow,
+                DateUpdated = null
+            };
+            
+            var avroSchemaId = await _avroSchemaRepo.InsertSchemaAsync(dbAvroSchema).ConfigureAwait(false);
+            _logger.LogInformation("Saved Avro schema to database with ID: {AvroSchemaId}, SchemaId: {SchemaId}", avroSchemaId, schemaInfo.SchemaId);
+            
+            // Check if CDC schema already exists for this schema_id
+            var existingCdcSchema = await _metaRepo.GetSchemaByRecordName(avroSchema.Name).ConfigureAwait(false);
+            
+            CDCSchema? savedCdcSchema;
+            
+            if (existingCdcSchema != null) {
+                // Update existing CDC schema with new Avro schema link
+                var updateSuccess = await _metaRepo.UpdateCdcSchemaWithAvroLink(existingCdcSchema.Id, avroSchemaId).ConfigureAwait(false);
+                
+                if (updateSuccess) {
+                    _logger.LogInformation("Updated existing CDC schema {CdcSchemaId} with Avro schema link {AvroSchemaId}", 
+                        existingCdcSchema.Id, avroSchemaId);
+                    
+                    // Refresh the schema from database to get updated Avro link
+                    savedCdcSchema = await _metaRepo.GetSchemaById(existingCdcSchema.Id).ConfigureAwait(false);
+                } else {
+                    _logger.LogWarning("Failed to update CDC schema {CdcSchemaId} with Avro schema link", existingCdcSchema.Id);
+                    return existingCdcSchema;
+                }
+            } else {
+                // Create new CDC schema record and link to Avro schema
+                var entityName = avroSchema.Name.Replace("ChangeEvent", "");
+                var cdcSchema = new CDCSchema {
+                    EntityName = entityName,
+                    SchemaId = schemaInfo.SchemaId,
+                    SchemaName = avroSchema.Name,
+                    DbSchemaFullName = $"salesforce.{entityName.ToLower()}",
+                    AvroSchema = dbAvroSchema
+                };
+                
+                savedCdcSchema = await _metaRepo.CreateNewSchemaWithAvroLink(cdcSchema, avroSchemaId).ConfigureAwait(false);
+                _logger.LogInformation("Created new CDC schema: {SchemaName} with Avro schema link", savedCdcSchema.SchemaName);
+            }
+            
+            // Also save to file for backwards compatibility (optional)
+            await File.WriteAllTextAsync($"./avro/{fileName}", schemaInfo.SchemaJson).ConfigureAwait(false);
+            
+            return savedCdcSchema;
+        } catch (Exception ex) {
+            _logger.LogError(ex, "Error retrieving and saving schema with ID: {SchemaId}", schemaId);
+            return null;
+        }
     }
 }

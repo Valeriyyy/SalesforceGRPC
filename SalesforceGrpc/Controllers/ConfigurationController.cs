@@ -5,6 +5,8 @@ using SalesforceGrpc.Salesforce;
 
 namespace SalesforceGrpc.Controllers;
 
+[ApiController]
+[Route("api/[controller]")]
 public class ConfigurationController : ControllerBase {
     private readonly IConfiguration _config;
     private readonly SalesforceConfig _sfConfig;

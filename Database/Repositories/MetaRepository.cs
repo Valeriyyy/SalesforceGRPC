@@ -24,8 +24,6 @@ public class MetaRepository : IMetaRepository {
         _connectionString = configuration.GetConnectionString("appDatabase")!;
         _debugQuery = configuration.GetValue<bool>("DebugQuery");
     }
-    
-    
 
     public async Task<Dictionary<string, string>> GetCachedMapping(int? schemaId, CancellationToken cancellationToken) {
         if (schemaId is null) {
@@ -73,11 +71,79 @@ public class MetaRepository : IMetaRepository {
     public async Task<CDCSchema?> GetSchemaById(int schemaId) {
         await using var connection = new NpgsqlConnection(_connectionString);
         
-        var res = await connection.QueryAsync<CDCSchema>(
-            "SELECT id as Id, entity_name as EntityName, schema_id as SchemaId, schema_name as SchemaName, db_schema_full_name as DbSchemaFullName " +
-            "FROM salesforce.cdc_schemas where id = @SchemaId",
-            new { SchemaId = schemaId }
-            ).ConfigureAwait(false);
+        const string sql = @"
+            SELECT 
+                cs.id as Id, 
+                cs.avro_schema_id as AvroSchemaId,
+                cs.entity_name as EntityName, 
+                cs.db_schema_full_name as DbSchemaFullName,
+                cs.soft_delete_enabled as SoftDeleteEnabled,
+                cs.soft_delete_column_name as SoftDeleteColumnName,
+                avro.id as Id,
+                avro.schema_id as SchemaId,
+                avro.record_name as RecordName,
+                avro.schema_json as SchemaJson,
+                avro.date_created as DateCreated,
+                avro.date_updated as DateUpdated
+            FROM salesforce.cdc_schemas cs
+            LEFT JOIN salesforce.avro_schemas avro ON cs.avro_schema_id = avro.id
+            WHERE cs.id = @SchemaId";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, SchemaId: {SchemaId}", "SELECT", sql, schemaId);
+        }
+
+        var res = await connection.QueryAsync<CDCSchema, DbAvroSchema, CDCSchema>(
+            sql,
+            (cdcSchema, avroSchema) => {
+                cdcSchema.AvroSchema = avroSchema;
+                return cdcSchema;
+            },
+            new { SchemaId = schemaId },
+            splitOn: "Id"
+        ).ConfigureAwait(false);
+
+        return res.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Retrieves a CDC schema by the Avro schema's record name.
+    /// </summary>
+    public async Task<CDCSchema?> GetSchemaByRecordName(string recordName) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        
+        const string sql = @"
+            SELECT 
+                cs.id as Id,
+                cs.avro_schema_id as AvroSchemaId,
+                cs.entity_name as EntityName,
+                cs.db_schema_full_name as DbSchemaFullName,
+                cs.soft_delete_enabled as SoftDeleteEnabled,
+                cs.soft_delete_column_name as SoftDeleteColumnName,
+                avro.id as Id,
+                avro.schema_id as SchemaId,
+                avro.record_name as RecordName,
+                avro.schema_json as SchemaJson,
+                avro.date_created as DateCreated,
+                avro.date_updated as DateUpdated
+            FROM salesforce.cdc_schemas cs
+            LEFT JOIN salesforce.avro_schemas avro 
+                ON cs.avro_schema_id = avro.id
+            WHERE avro.record_name = @RecordName";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, RecordName: {RecordName}", "SELECT", sql, recordName);
+        }
+
+        var res = await connection.QueryAsync<CDCSchema, DbAvroSchema, CDCSchema>(
+            sql,
+            (cdcSchema, avroSchema) => {
+                cdcSchema.AvroSchema = avroSchema;
+                return cdcSchema;
+            },
+            new { RecordName = recordName },
+            splitOn: "Id"
+        ).ConfigureAwait(false);
 
         return res.FirstOrDefault();
     }
@@ -104,27 +170,120 @@ public class MetaRepository : IMetaRepository {
         
         await using var connection = new NpgsqlConnection(_connectionString);
         
+        const string sql = @"
+            INSERT INTO salesforce.cdc_schemas (entity_name, db_schema_full_name, soft_delete_enabled, soft_delete_column_name) 
+            VALUES (@EntityName, @DbSchemaFullName, @SoftDeletedEnabled, @SoftDeleteColumnName)
+            RETURNING id as Id, entity_name as EntityName, db_schema_full_name as DbSchemaFullName, soft_delete_enabled as SoftDeletedEnabled, soft_delete_column_name as SoftDeleteColumnName;";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}", "INSERT", sql);
+        }
+
         var insertedRecord = await connection.QuerySingleAsync<CDCSchema>(
-            @"INSERT INTO salesforce.cdc_schemas (entity_name, schema_id, schema_name, db_schema_full_name) 
-              VALUES (@EntityName, @SchemaId, @SchemaName, @DbSchemaFullName)
-                RETURNING *;",
+            sql,
             new {
                 dbSchema.EntityName,
-                dbSchema.SchemaId,
-                dbSchema.SchemaName,
-                dbSchema.DbSchemaFullName
+                dbSchema.DbSchemaFullName,
+                dbSchema.SoftDeletedEnabled,
+                dbSchema.SoftDeleteColumnName
             }).ConfigureAwait(false);
         
         return insertedRecord;
     }
 
+    /// <summary>
+    /// Creates a new CDC schema and links it to an Avro schema.
+    /// </summary>
+    public async Task<CDCSchema> CreateNewSchemaWithAvroLink(CDCSchema dbSchema, int avroSchemaId) {
+        // Invalidate cache
+        _cache.Remove(SchemaCacheKeyPrefix);
+        
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        const string sql = @"
+            INSERT INTO salesforce.cdc_schemas (entity_name, db_schema_full_name, soft_delete_enabled, soft_delete_column_name, avro_schema_id) 
+            VALUES (@EntityName, @DbSchemaFullName, @SoftDeletedEnabled, @SoftDeleteColumnName, @AvroSchemaId)
+            RETURNING id as Id, avro_schema_id as AvroSchemaId, entity_name as EntityName, db_schema_full_name as DbSchemaFullName, soft_delete_enabled as SoftDeletedEnabled, soft_delete_column_name as SoftDeleteColumnName;";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, AvroSchemaId: {AvroSchemaId}", "INSERT", sql, avroSchemaId);
+        }
+
+        var insertedRecord = await connection.QuerySingleAsync<CDCSchema>(
+            sql,
+            new {
+                dbSchema.EntityName,
+                dbSchema.DbSchemaFullName,
+                dbSchema.SoftDeletedEnabled,
+                dbSchema.SoftDeleteColumnName,
+                AvroSchemaId = avroSchemaId
+            }).ConfigureAwait(false);
+
+        if (dbSchema.AvroSchema != null) {
+            insertedRecord.AvroSchema = dbSchema.AvroSchema;
+        }
+        
+        return insertedRecord;
+    }
+
+    /// <summary>
+    /// Updates an existing CDC schema with a new Avro schema link.
+    /// </summary>
+    public async Task<bool> UpdateCdcSchemaWithAvroLink(int cdcSchemaId, int avroSchemaId) {
+        // Invalidate cache
+        _cache.Remove(SchemaCacheKeyPrefix);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        const string sql = @"
+            UPDATE salesforce.cdc_schemas
+            SET avro_schema_id = @AvroSchemaId
+            WHERE id = @CdcSchemaId";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, CdcSchemaId: {CdcSchemaId}, AvroSchemaId: {AvroSchemaId}", 
+                "UPDATE", sql, cdcSchemaId, avroSchemaId);
+        }
+
+        var affectedRows = await connection.ExecuteAsync(sql, 
+            new { CdcSchemaId = cdcSchemaId, AvroSchemaId = avroSchemaId }).ConfigureAwait(false);
+
+        return affectedRows > 0;
+    }
+
     public async Task<IEnumerable<CDCSchema>> GetAllSchemas(CancellationToken cancellationToken) {
         await using var connection = new NpgsqlConnection(_connectionString);
         
-        var res = await connection.QueryAsync<CDCSchema>(
-            "SELECT id as Id, entity_name as EntityName, schema_id as SchemaId, schema_name as SchemaName, db_schema_full_name as DbSchemaFullName " +
-            "FROM salesforce.cdc_schemas"
-        , cancellationToken).ConfigureAwait(false);
+        const string sql = @"
+            SELECT 
+                cs.id as Id, 
+                cs.avro_schema_id as AvroSchemaId,
+                cs.entity_name as EntityName, 
+                cs.db_schema_full_name as DbSchemaFullName,
+                cs.soft_delete_enabled as SoftDeleteEnabled,
+                cs.soft_delete_column_name as SoftDeleteColumnName,
+                avro.id as Id,
+                avro.schema_id as SchemaId,
+                avro.record_name as RecordName,
+                avro.schema_json as SchemaJson,
+                avro.date_created as DateCreated,
+                avro.date_updated as DateUpdated
+            FROM salesforce.cdc_schemas cs
+            LEFT JOIN salesforce.avro_schemas avro ON cs.avro_schema_id = avro.id
+            ORDER BY cs.entity_name";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}", "SELECT", sql);
+        }
+
+        var res = await connection.QueryAsync<CDCSchema, DbAvroSchema, CDCSchema>(
+            sql,
+            (cdcSchema, avroSchema) => {
+                cdcSchema.AvroSchema = avroSchema;
+                return cdcSchema;
+            },
+            splitOn: "Id"
+        ).ConfigureAwait(false);
 
         return res;
     }
