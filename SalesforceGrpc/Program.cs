@@ -90,6 +90,13 @@ builder.Services.AddHttpClient<SalesforceClient>(async (serviceProvider, client)
         new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
 }).AddHttpMessageHandler<SalesforceAuthHandler>()
 .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
+
+builder.Services.AddHttpClient<SalesforceToolingClient>(async (serviceProvider, client) => {
+    var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
+    client.BaseAddress = new Uri(sfConfig.OrgUrl!);
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+}).AddHttpMessageHandler<SalesforceAuthHandler>()
+.AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
      
 //create the directory to save avro files
 var schemaSaveDir = config.GetValue<string>("AvroSchemaSaveDirectory");

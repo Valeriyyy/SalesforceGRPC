@@ -1,6 +1,4 @@
 ﻿using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
-using SalesforceGrpc.Salesforce.MetadataType;
 
 namespace SalesforceGrpc.Salesforce;
 
@@ -21,18 +19,5 @@ public class SalesforceClient {
         } else {
             Console.WriteLine("NOT SETTING SALESFORCE ACCESS TOKEN FFFFFFFFFUUUUUUUUU");
         }*/
-    }
-
-    public async Task GetRecordTypes(CancellationToken cancellationToken = default) {
-        var query = "select Id, Name, DeveloperName, IsActive, IsPersonType, SObjectType from RecordType where sObjectType IN (\'Account\', \'Contact\', \'Some_Custom_Object__c\')";
-        var endpoint = $"services/data/v{configuration.ApiVersion}/query/?q={query}";
-        var recordTypesString = await client.GetStringAsync(endpoint, cancellationToken);
-        Console.WriteLine("Record Types response " + recordTypesString);
-        var recordTypes = JsonConvert.DeserializeObject<RecordTypeQueryResponse>(recordTypesString);
-        Console.WriteLine("this is record types " + recordTypesString);
-        Console.WriteLine(recordTypes.TotalSize);
-        foreach (var recordType in recordTypes.Records) {
-            Console.WriteLine(recordType.SObjectType + " " + recordType.Name);
-        }
     }
 }

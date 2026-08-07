@@ -11,16 +11,16 @@ public interface ISalesforceTokenProvider {
 public class SalesforceTokenProvider : ISalesforceTokenProvider {
     private readonly HttpClient _authClient;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
-    private readonly ILogger<SalesforceTokenProvider> _logger;
+    // private readonly ILogger<SalesforceTokenProvider> _logger;
     private readonly SalesforceConfig _config;
     
     private AuthToken? _accessToken;
     private DateTimeOffset _issuedAt;
     private readonly TimeSpan _tokenLifetime = TimeSpan.FromMinutes(30);
 
-    public SalesforceTokenProvider(HttpClient authClient, IOptions<SalesforceConfig> configurationOptions, ILogger<SalesforceTokenProvider> logger) {
+    public SalesforceTokenProvider(HttpClient authClient, IOptions<SalesforceConfig> configurationOptions) {
         _authClient = authClient;
-        _logger = logger;
+        // _logger = logger;
         _config = configurationOptions.Value;
     }
 

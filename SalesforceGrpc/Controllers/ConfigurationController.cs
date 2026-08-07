@@ -2,20 +2,24 @@ using Application.Services.Interfaces;
 using Database.Models;
 using Microsoft.AspNetCore.Mvc;
 using SalesforceGrpc.Salesforce;
+using System.Threading.Channels;
 
 namespace SalesforceGrpc.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 public class ConfigurationController : ControllerBase {
+    private readonly ILogger<ConfigurationController> _logger;
     private readonly IConfiguration _config;
     private readonly SalesforceConfig _sfConfig;
     private readonly ISchemaService _schemaService;
+    private readonly SalesforceToolingClient _sfToolingClient;
 
-    public ConfigurationController(IConfiguration config, SalesforceConfig sfConfig, ISchemaService schemaService) {
+    public ConfigurationController(IConfiguration config, SalesforceConfig sfConfig, ISchemaService schemaService, SalesforceToolingClient sfToolingClient) {
         _config = config;
         _sfConfig = sfConfig;
         _schemaService = schemaService;
+        _sfToolingClient = sfToolingClient;
     }
     
     [HttpGet]
