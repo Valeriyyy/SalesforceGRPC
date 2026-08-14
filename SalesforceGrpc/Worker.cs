@@ -8,6 +8,7 @@ using Database.Repositories.Interfaces;
 using Grpc.Core;
 using GrpcClient;
 using Microsoft.Extensions.Options;
+using Salesforce.Clients;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
@@ -20,7 +21,7 @@ public class Worker : BackgroundService {
     private readonly ILogger<Worker> _logger;
     private readonly SalesforceConfig _sfconfig;
     private readonly PubSub.PubSubClient _pubsubClient;
-    private readonly SalesforceClient _client;
+    private readonly SalesforceRestClient _restClient;
     private readonly IConfiguration _config;
     private readonly EventResolver _eventResolver;
     
@@ -34,7 +35,7 @@ public class Worker : BackgroundService {
         IConfiguration config,
         PubSub.PubSubClient psClient,
         IHostApplicationLifetime hostApplicationLifetime, 
-        SalesforceClient client, 
+        SalesforceRestClient restClient, 
         IMetaRepository metaRepo,
         IAvroSchemaRepository avroSchemaRepo,
         EventResolver eventResolver) {
@@ -43,7 +44,7 @@ public class Worker : BackgroundService {
         _pubsubClient = psClient;
         _config = config;
         _hostApplicationLifetime = hostApplicationLifetime;
-        _client = client;
+        _restClient = restClient;
         _metaRepo = metaRepo;
         _avroSchemaRepo = avroSchemaRepo;
         _eventResolver = eventResolver;
@@ -143,47 +144,47 @@ public class Worker : BackgroundService {
         }
     }
 
-    private async Task PublishEvent(CancellationToken stoppingToken) {
-        /*var tokenString = token;
-        var headers = new Metadata
-        {
-            { "accesstoken", $"Bearer {tokenString}" },
-            { "instanceurl", _sfconfig.OrgUrl },
-            { "tenantid", _sfconfig.OrgId }
-        };*/
-        var dict = new Dictionary<string, string> {
-            { "a", "1" },
-            { "b", "2" },
-            { "c", "3" }
-        };
-        var events = new ProducerEvent[] {
-            new ProducerEvent {
-                Id = "123123", SchemaId = "i8wgJwwM-AVcDbFkbRl5Nw", Payload = null
-            }
-        };
-        var request = new PublishRequest {
-            TopicName = "/data/AccountChangeEvent",
-            Events = { events }
-        };
-        var res = await _pubsubClient.PublishAsync(request, null, null, stoppingToken);
-        _logger.LogInformation(res.ToString());
-    }
+    // private async Task PublishEvent(CancellationToken stoppingToken) {
+    //     /*var tokenString = token;
+    //     var headers = new Metadata
+    //     {
+    //         { "accesstoken", $"Bearer {tokenString}" },
+    //         { "instanceurl", _sfconfig.OrgUrl },
+    //         { "tenantid", _sfconfig.OrgId }
+    //     };*/
+    //     var dict = new Dictionary<string, string> {
+    //         { "a", "1" },
+    //         { "b", "2" },
+    //         { "c", "3" }
+    //     };
+    //     var events = new ProducerEvent[] {
+    //         new ProducerEvent {
+    //             Id = "123123", SchemaId = "i8wgJwwM-AVcDbFkbRl5Nw", Payload = null
+    //         }
+    //     };
+    //     var request = new PublishRequest {
+    //         TopicName = "/data/AccountChangeEvent",
+    //         Events = { events }
+    //     };
+    //     var res = await _pubsubClient.PublishAsync(request, null, null, stoppingToken);
+    //     _logger.LogInformation(res.ToString());
+    // }
 
-    public async Task GetAndSaveSchema(string schemaName) {
-        var topicRequest = new TopicRequest {
-            TopicName = $"/data/{schemaName}"
-        };
-        var topicResponse = await _pubsubClient.GetTopicAsync(topicRequest);
-        Console.WriteLine("THIS IS SCHEMA ID " + topicResponse.SchemaId);
-        var schemaRequest = new SchemaRequest {
-            SchemaId = topicResponse.SchemaId
-        };
-        var someSchema = await _pubsubClient.GetSchemaAsync(schemaRequest);
-        var avroSchema = Schema.Parse(someSchema.SchemaJson);
-        var name = $"{avroSchema.Name}.avsc";
-        Console.WriteLine("saving schame as " + name);
-        await File.WriteAllTextAsync($"./avro/{name}", someSchema.SchemaJson);
-    }
+    // public async Task GetAndSaveSchema(string schemaName) {
+    //     var topicRequest = new TopicRequest {
+    //         TopicName = $"/data/{schemaName}"
+    //     };
+    //     var topicResponse = await _pubsubClient.GetTopicAsync(topicRequest);
+    //     Console.WriteLine("THIS IS SCHEMA ID " + topicResponse.SchemaId);
+    //     var schemaRequest = new SchemaRequest {
+    //         SchemaId = topicResponse.SchemaId
+    //     };
+    //     var someSchema = await _pubsubClient.GetSchemaAsync(schemaRequest);
+    //     var avroSchema = Schema.Parse(someSchema.SchemaJson);
+    //     var name = $"{avroSchema.Name}.avsc";
+    //     Console.WriteLine("saving schame as " + name);
+    //     await File.WriteAllTextAsync($"./avro/{name}", someSchema.SchemaJson);
+    // }
 
     private async Task<CDCSchema?> GetAndSaveSchemaById(string schemaId) {
         try {

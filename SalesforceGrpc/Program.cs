@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Salesforce.Clients;
 using SalesforceGrpc;
 using SalesforceGrpc.Salesforce;
 using SalesforceGrpc.Strategies;
@@ -50,6 +51,7 @@ builder.Services.AddMemoryCache();
 SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
 builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
+builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
 
 builder.Services.AddSingleton<IRepository>(sp => {
      var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
@@ -65,14 +67,13 @@ builder.Services.AddTransient<EventResolver>();
 
 builder.Services.AddScoped<ISchemaService, SchemaService>();
 builder.Services.AddScoped<IFieldMappingService, FieldMappingService>();
+builder.Services.AddScoped<IPlatformEventService, PlatformEventService>();
      
 builder.Services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
 builder.Services.AddTransient<SalesforceAuthHandler>();
 builder.Services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
     options.Address = new Uri("https://api.pubsub.salesforce.com:7443");
 }).AddCallCredentials(async (_, metadata, serviceProvider) => {
-    // var authClient = serviceProvider.GetRequiredService<SalesforceAuthClient>();
-    // var authResponse = await authClient.GetToken();
     var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
     var authResponse = await tokenProvider.GetAuthToken();
     metadata.Add("accesstoken", authResponse.AccessToken!);
@@ -80,18 +81,14 @@ builder.Services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options =>
     metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
 });
 
-builder.Services.AddHttpClient<SalesforceClient>(async (serviceProvider, client) => {
-    var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
-    client.BaseAddress = new Uri(sfConfig.OrgUrl!);
-    var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
-    var authResponse = await tokenProvider.GetAuthToken();
-    WriteLine("This is access token " + authResponse.AccessToken);
-    client.DefaultRequestHeaders.Authorization =
-        new AuthenticationHeaderValue("Bearer", authResponse.AccessToken);
-}).AddHttpMessageHandler<SalesforceAuthHandler>()
+builder.Services.AddHttpClient<SalesforceRestClient>((serviceProvider, client) => {
+        var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
+        client.BaseAddress = new Uri(sfConfig.OrgUrl!);
+        client.DefaultRequestHeaders.Add("Accept", "application/json");
+    }).AddHttpMessageHandler<SalesforceAuthHandler>()
 .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
 
-builder.Services.AddHttpClient<SalesforceToolingClient>(async (serviceProvider, client) => {
+builder.Services.AddHttpClient<SalesforceToolingClient>((serviceProvider, client) => {
     var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
     client.BaseAddress = new Uri(sfConfig.OrgUrl!);
     client.DefaultRequestHeaders.Add("Accept", "application/json");

@@ -402,3 +402,10 @@ FodyWeavers.xsd
 appsettings.*
 
 mds/*
+
+# Claude Code
+CLAUDE.md
+.claude/
+.agents/
+skills-lock.json
+docs/

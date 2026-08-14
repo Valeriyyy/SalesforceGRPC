@@ -70,3 +70,62 @@ CREATE TABLE salesforce.mapped_fields (
 	
 	CONSTRAINT schema_id FOREIGN KEY (schema_id) REFERENCES salesforce.cdc_schemas (schema_id)
 );
+
+-- Local mirror of the PlatformEventChannel Tooling API object. Salesforce remains the source of
+-- truth; rows here are written after a successful Tooling API call and can be rebuilt by resync.
+DROP TABLE IF EXISTS salesforce.platform_event_channel_members;
+DROP TABLE IF EXISTS salesforce.platform_event_channels;
+CREATE TABLE salesforce.platform_event_channels (
+    id serial4 NOT NULL,
+    sf_id varchar(18) NOT NULL, -- Salesforce ID of the channel, 0YL prefix
+    full_name varchar(255) NOT NULL, -- Metadata full name including the __chn suffix
+    developer_name varchar(255) NOT NULL, -- Unique name without the __chn suffix
+    master_label varchar(255) NULL,
+    channel_type varchar(20) NOT NULL, -- data (Change Data Capture) or event (platform events)
+    event_type varchar(20) NULL, -- custom, data, monitoring or standard (API 61.0+)
+    namespace_prefix varchar(15) NULL,
+    manageable_state varchar(30) NULL,
+    date_created timestamptz DEFAULT now() NOT NULL,
+    date_updated timestamptz NULL,
+    last_synced_at timestamptz NULL, -- When this row was last reconciled against Salesforce
+    CONSTRAINT platform_event_channels_pkey PRIMARY KEY (id),
+    CONSTRAINT platform_event_channels_sf_id_key UNIQUE (sf_id),
+    CONSTRAINT platform_event_channels_full_name_key UNIQUE (full_name)
+);
+
+COMMENT ON COLUMN salesforce.platform_event_channels.sf_id IS 'Salesforce ID of the channel, 0YL prefix';
+COMMENT ON COLUMN salesforce.platform_event_channels.full_name IS 'Metadata full name including the __chn suffix';
+COMMENT ON COLUMN salesforce.platform_event_channels.developer_name IS 'Unique name without the __chn suffix';
+COMMENT ON COLUMN salesforce.platform_event_channels.channel_type IS 'data (Change Data Capture) or event (platform events); immutable in Salesforce after create';
+COMMENT ON COLUMN salesforce.platform_event_channels.event_type IS 'custom, data, monitoring or standard (API 61.0+); immutable in Salesforce after create';
+COMMENT ON COLUMN salesforce.platform_event_channels.last_synced_at IS 'When this row was last reconciled against Salesforce';
+
+-- Local mirror of the PlatformEventChannelMember Tooling API object: one event/entity on a channel.
+CREATE TABLE salesforce.platform_event_channel_members (
+    id serial4 NOT NULL,
+    channel_id int4 NOT NULL,
+    sf_id varchar(18) NOT NULL, -- Salesforce ID of the member, 0v8 prefix
+    full_name varchar(255) NOT NULL, -- <channel>_<entity> with double underscores flattened to single
+    developer_name varchar(255) NULL,
+    selected_entity varchar(255) NOT NULL, -- Entity name, e.g. AccountChangeEvent
+    filter_expression text NULL, -- Server-side delivery filter (API 56.0+)
+    enriched_fields jsonb NULL, -- Fields always included in the payload (API 51.0+)
+    cdc_schema_id int4 NULL, -- Optional link to the sync config for this entity
+    date_created timestamptz DEFAULT now() NOT NULL,
+    date_updated timestamptz NULL,
+    last_synced_at timestamptz NULL,
+    CONSTRAINT platform_event_channel_members_pkey PRIMARY KEY (id),
+    CONSTRAINT platform_event_channel_members_sf_id_key UNIQUE (sf_id),
+    CONSTRAINT pecm_channel_fk FOREIGN KEY (channel_id)
+        REFERENCES salesforce.platform_event_channels(id) ON DELETE CASCADE,
+    CONSTRAINT pecm_cdc_schema_fk FOREIGN KEY (cdc_schema_id)
+        REFERENCES salesforce.cdc_schemas(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS platform_event_channel_members_channel_id_idx
+    ON salesforce.platform_event_channel_members (channel_id);
+
+COMMENT ON COLUMN salesforce.platform_event_channel_members.sf_id IS 'Salesforce ID of the member, 0v8 prefix';
+COMMENT ON COLUMN salesforce.platform_event_channel_members.full_name IS '<channel>_<entity> with double underscores flattened to single';
+COMMENT ON COLUMN salesforce.platform_event_channel_members.selected_entity IS 'Entity name, e.g. AccountChangeEvent; immutable in Salesforce after create';
+COMMENT ON COLUMN salesforce.platform_event_channel_members.cdc_schema_id IS 'Optional link to the cdc_schemas row that says where this entity lands in the target database';

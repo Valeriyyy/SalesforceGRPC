@@ -9,6 +9,7 @@
     <ItemGroup>
       <ProjectReference Include="..\Database\Database.csproj" />
       <ProjectReference Include="..\DTO\DTO.csproj" />
+      <ProjectReference Include="..\Salesforce\Salesforce.csproj" />
     </ItemGroup>
 
 </Project>

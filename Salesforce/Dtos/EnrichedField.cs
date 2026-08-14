@@ -2,22 +2,11 @@ using Newtonsoft.Json;
 
 namespace Salesforce.Dtos;
 
+/// <summary>
+/// An entry in PlatformEventChannelMember.Metadata.enrichedFields — a field Salesforce always includes
+/// in the change event payload, even when its value did not change.
+/// </summary>
 public class EnrichedField {
-    [JsonProperty("Id")]
-    public string? Id { get; set; }
-    
-    [JsonProperty("EventChannelId")]
-    public string? EventChannelId { get; set; }
-    
-    [JsonProperty("EntityId")]
-    public string? EntityId { get; set; }
-    
-    [JsonProperty("EntityFieldId")]
-    public string? EntityFieldId { get; set; }
-    
-    [JsonProperty("IsSelected")]
-    public bool IsSelected { get; set; }
-    
-    [JsonProperty("SelectedEntityFields")]
-    public string? SelectedEntityFields { get; set; }
+    [JsonProperty("name")]
+    public string? Name { get; set; }
 }
