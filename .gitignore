@@ -409,3 +409,5 @@ CLAUDE.md
 .agents/
 skills-lock.json
 docs/
+.scratch/
+CONTEXT.md
