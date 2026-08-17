@@ -1,9 +1,11 @@
 using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
+using Common;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Salesforce.Avro;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Models;
 using static System.Console;
@@ -72,7 +74,7 @@ public class CreateStrategy : IEventStrategy {
             var createdCount = await _dataRepo.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
         } catch (Exception e) {
-            _logger.LogCritical(e, "Failed to insert record {Data}", data.ToJson());
+            _logger.LogCritical(e, "Failed to insert record {Data}", StringExtensions.ToJson(data));
         }
     }
 
@@ -154,8 +156,9 @@ public class CreateStrategy : IEventStrategy {
                 continue;
             }
 
-            // Create the nested field key (e.g., PersonNameFirstName for FirstName in PersonName)
-            var sfNestedFieldKey = $"{nestedFieldName}{nestedField.Name}";
+            // The same rule the bindable field list is built with, so a mapping the user created from that
+            // list is guaranteed to match here.
+            var sfNestedFieldKey = EntityFieldReader.FlattenedName(nestedFieldName, nestedField.Name);
 
             WriteLine($"      {nestedField.Name}: {fieldValue}");
 

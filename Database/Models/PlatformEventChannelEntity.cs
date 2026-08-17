@@ -37,6 +37,13 @@ public class PlatformEventChannelEntity {
     [Column("manageable_state")]
     public string? ManageableState { get; set; }
 
+    /// <summary>
+    /// True for the Primary Channel — the single channel the worker subscribes to. At most one row carries
+    /// this, enforced by a partial unique index.
+    /// </summary>
+    [Column("is_primary")]
+    public bool IsPrimary { get; set; }
+
     [Column("date_created")]
     public DateTime DateCreated { get; set; }
 

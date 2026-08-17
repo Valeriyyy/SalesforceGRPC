@@ -52,8 +52,4 @@ public class ConfigurationController : ControllerBase {
         }
     }
 
-    [HttpPost("mappedfields/add")]
-    public async Task<ActionResult> CreateMappedField() {
-        return Ok();
-    }
 }

@@ -1,10 +1,12 @@
 using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
+using Common;
 using Database;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Salesforce.Avro;
 using SalesforceGrpc.Extensions;
 using SalesforceGrpc.Models;
 using System.Collections;
@@ -26,10 +28,6 @@ public class UpdateStrategy : IEventStrategy {
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema,
         CancellationToken cancellationToken) {
-        var schemas =
-            (await _db.GetCachedSchemas(cancellationToken).ConfigureAwait(false)).ToDictionary(s => s.EntityName,
-                s => s.DbSchemaFullName);
-
         // Extract change event header efficiently
         if (!record.TryGetValue("ChangeEventHeader", out var changeEventHeaderObj) ||
             changeEventHeaderObj is not GenericRecord changeEventHeader) {
@@ -65,7 +63,7 @@ public class UpdateStrategy : IEventStrategy {
 
         // Create RecordChangeSet with all record IDs
         var recordIdStrings = recordIds.Select(id => id.ToString() ?? string.Empty).ToList();
-        var changeSet = new RecordChangeSet(schemas[dbSchema.EntityName], recordIdStrings, ChangeType.UPDATE);
+        var changeSet = new RecordChangeSet(dbSchema.DbSchemaFullName, recordIdStrings, ChangeType.UPDATE);
         foreach (var field in changedFieldsList) {
             changeSet.ChangedFields.Add(field);
         }
@@ -74,10 +72,10 @@ public class UpdateStrategy : IEventStrategy {
         if (data.Count == 0) return;
 
         try {
-            var updatedCount = await _dataRepo.Update(schemas[dbSchema.EntityName], sfMappedKey, recordIdStrings, data);
+            var updatedCount = await _dataRepo.Update(dbSchema.DbSchemaFullName, sfMappedKey, recordIdStrings, data);
             _logger.LogInformation("Updated {UpdatedCount} records from {ObjectType}", updatedCount, dbSchema.EntityName);
         } catch (Exception e) {
-            _logger.LogCritical(e, "Failed to update record {Data}", data.ToJson());
+            _logger.LogCritical(e, "Failed to update record {Data}", StringExtensions.ToJson(data));
         }
     }
 
@@ -146,8 +144,9 @@ public class UpdateStrategy : IEventStrategy {
 
         WriteLine($"  Nested field '{nestedFieldName}' values:");
         foreach (var decodedField in decodedNestedFields) {
-            // Create the nested field key (e.g., PersonNameFirstName for FirstName in PersonName)
-            var sfNestedFieldKey = $"{nestedFieldName}{decodedField}";
+            // The same rule the bindable field list is built with, so a mapping the user created from that
+            // list is guaranteed to match here.
+            var sfNestedFieldKey = EntityFieldReader.FlattenedName(nestedFieldName, decodedField);
 
             if (!nestedRecord.TryGetValue(decodedField, out var fieldValue)) {
                 _logger.LogWarning($"Field '{decodedField}' not found in nested record '{nestedFieldName}'");

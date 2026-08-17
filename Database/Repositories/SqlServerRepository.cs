@@ -7,6 +7,8 @@ namespace Database.Repositories;
 public class SqlServerRepository : RepositoryBase {
     public SqlServerRepository(ILogger<SqlServerRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
 
+    public override DbType DatabaseType => DbType.SqlServer;
+
     public override Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         throw new NotImplementedException();
     }
@@ -19,7 +21,11 @@ public class SqlServerRepository : RepositoryBase {
         throw new NotImplementedException();
     }
 
-    public override Task<int> UnDelete(string table, List<string> recordIds) {
+    public override Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) {
+        throw new NotImplementedException();
+    }
+
+    public override Task<int> UnDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) {
         throw new NotImplementedException();
     }
 

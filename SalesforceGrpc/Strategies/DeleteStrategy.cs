@@ -45,9 +45,16 @@ public class DeleteStrategy : IEventStrategy {
         _logger.LogInformation("Processing created records: {records}", string.Join(",", recordIdStrings));
 
         try {
-            // For DELETE events, we only need to delete by record ID (no field values needed)
-            var deletedCount = await _dataRepo.Delete(dbSchema.DbSchemaFullName, sfKeyFieldName, recordIdStrings).ConfigureAwait(false);
-            _logger.LogInformation("Deleted {DeletedCount} records from {ObjectType}", deletedCount, dbSchema.EntityName);
+            // For DELETE events, we only need the record IDs — a delete carries no field values.
+            // Whether the row goes or is only marked is the Binding's decision, not this strategy's.
+            if (dbSchema.SoftDeleteEnabled && !string.IsNullOrWhiteSpace(dbSchema.SoftDeleteColumnName)) {
+                var markedCount = await _dataRepo.SoftDelete(dbSchema.DbSchemaFullName, sfKeyFieldName,
+                    dbSchema.SoftDeleteColumnName, recordIdStrings).ConfigureAwait(false);
+                _logger.LogInformation("Marked {MarkedCount} records deleted in {ObjectType}", markedCount, dbSchema.EntityName);
+            } else {
+                var deletedCount = await _dataRepo.Delete(dbSchema.DbSchemaFullName, sfKeyFieldName, recordIdStrings).ConfigureAwait(false);
+                _logger.LogInformation("Deleted {DeletedCount} records from {ObjectType}", deletedCount, dbSchema.EntityName);
+            }
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to delete the following {ObjectType} records: {recordIds}", dbSchema.EntityName, string.Join(",", recordIdStrings));
         }

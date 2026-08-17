@@ -1,0 +1,584 @@
+{
+  "name": "ContactChangeEvent",
+  "type": "record",
+  "fields": [
+    {
+      "doc": "Data:ComplexValueType",
+      "name": "ChangeEventHeader",
+      "type": {
+        "name": "ChangeEventHeader",
+        "type": "record",
+        "fields": [
+          {
+            "name": "entityName",
+            "type": "string"
+          },
+          {
+            "name": "recordIds",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          },
+          {
+            "name": "changeType",
+            "type": {
+              "name": "ChangeType",
+              "type": "enum",
+              "symbols": [
+                "CREATE",
+                "UPDATE",
+                "DELETE",
+                "UNDELETE",
+                "GAP_CREATE",
+                "GAP_UPDATE",
+                "GAP_DELETE",
+                "GAP_UNDELETE",
+                "GAP_OVERFLOW",
+                "SNAPSHOT"
+              ]
+            }
+          },
+          {
+            "name": "changeOrigin",
+            "type": "string"
+          },
+          {
+            "name": "transactionKey",
+            "type": "string"
+          },
+          {
+            "name": "sequenceNumber",
+            "type": "int"
+          },
+          {
+            "name": "commitTimestamp",
+            "type": "long"
+          },
+          {
+            "name": "commitNumber",
+            "type": "long"
+          },
+          {
+            "name": "commitUser",
+            "type": "string"
+          },
+          {
+            "name": "nulledFields",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          },
+          {
+            "name": "diffFields",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          },
+          {
+            "name": "changedFields",
+            "type": {
+              "type": "array",
+              "items": "string"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "doc": "ForeignKey:EntityId",
+      "name": "AccountId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Boolean",
+      "name": "IsPersonAccount",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:PersonName",
+      "name": "Name",
+      "type": [
+        "null",
+        {
+          "name": "PersonName",
+          "type": "record",
+          "fields": [
+            {
+              "name": "Salutation",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "FirstName",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "LastName",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            }
+          ]
+        }
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Address",
+      "name": "OtherAddress",
+      "type": [
+        "null",
+        {
+          "name": "Address",
+          "type": "record",
+          "fields": [
+            {
+              "name": "Street",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "City",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "State",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "PostalCode",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "Country",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "StateCode",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "CountryCode",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "Latitude",
+              "type": [
+                "null",
+                "double"
+              ],
+              "default": null
+            },
+            {
+              "name": "Longitude",
+              "type": [
+                "null",
+                "double"
+              ],
+              "default": null
+            },
+            {
+              "name": "GeocodeAccuracy",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            }
+          ]
+        }
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Address",
+      "name": "MailingAddress",
+      "type": [
+        "null",
+        "Address"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Phone",
+      "name": "Phone",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Phone",
+      "name": "Fax",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Phone",
+      "name": "MobilePhone",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Phone",
+      "name": "HomePhone",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Phone",
+      "name": "OtherPhone",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Phone",
+      "name": "AssistantPhone",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "ForeignKey:EntityId",
+      "name": "ReportsToId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Email",
+      "name": "Email",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text",
+      "name": "Title",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text",
+      "name": "Department",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text",
+      "name": "AssistantName",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DynamicEnum",
+      "name": "LeadSource",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DateOnly",
+      "name": "Birthdate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:StringPlusClob",
+      "name": "Description",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "ForeignKey:EntityId",
+      "name": "OwnerId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Boolean",
+      "name": "HasOptedOutOfEmail",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Boolean",
+      "name": "HasOptedOutOfFax",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Boolean",
+      "name": "DoNotCall",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "default": null
+    },
+    {
+      "doc": "CreatedDate:DateTime",
+      "name": "CreatedDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "doc": "ForeignKey:EntityId",
+      "name": "CreatedById",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DateTime",
+      "name": "LastModifiedDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "doc": "ForeignKey:EntityId",
+      "name": "LastModifiedById",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DateTime",
+      "name": "LastCURequestDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DateTime",
+      "name": "LastCUUpdateDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text",
+      "name": "EmailBouncedReason",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DateTime",
+      "name": "EmailBouncedDate",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text",
+      "name": "Jigsaw",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "ExternalForeignKey:ExternalId",
+      "name": "JigsawContactId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:StaticEnum",
+      "name": "CleanStatus",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "ForeignKey:EntityId",
+      "name": "IndividualId",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DynamicEnum",
+      "name": "Pronouns",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DynamicEnum",
+      "name": "GenderIdentity",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:StaticEnum",
+      "name": "ContactSource",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:MultiEnum",
+      "name": "BuyerAttributes",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:DynamicEnum:00NDp00000BbvCj",
+      "name": "Level__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text:00NDp00000BbvCi",
+      "name": "Languages__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "doc": "Data:Text:00NDp000009RrFq",
+      "name": "GUID__c",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    }
+  ],
+  "namespace": "com.sforce.eventbus"
+}

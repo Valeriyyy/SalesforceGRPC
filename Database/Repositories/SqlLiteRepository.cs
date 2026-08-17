@@ -9,6 +9,8 @@ namespace Database.Repositories;
 public class SqlLiteRepository : RepositoryBase {
     public SqlLiteRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
+    public override DbType DatabaseType => DbType.SqlLite;
+
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
         var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
@@ -54,8 +56,27 @@ public class SqlLiteRepository : RepositoryBase {
         return result;
     }
 
-    public override Task<int> UnDelete(string table, List<string> recordIds) {
-        throw new NotImplementedException();
+    public override Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) =>
+        SetSoftDeleteFlag(table, sfIdColumnName, softDeleteColumnName, recordIds, true);
+
+    public override Task<int> UnDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) =>
+        SetSoftDeleteFlag(table, sfIdColumnName, softDeleteColumnName, recordIds, false);
+
+    private Task<int> SetSoftDeleteFlag(string table, string sfIdColumnName, string softDeleteColumnName,
+        List<string> recordIds, bool deleted) {
+        var sql = $"UPDATE {table} SET {softDeleteColumnName} = @Deleted WHERE {sfIdColumnName} in @RecordIds";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, RecordIds: {@RecordIds}",
+                deleted ? "SOFT DELETE" : "UNDELETE", sql, recordIds);
+        }
+
+        var parameters = new DynamicParameters();
+        parameters.Add("RecordIds", recordIds.ToArray());
+        // SQLite has no boolean type; the flag is stored as 0 or 1, which is what Type Compatibility warns of.
+        parameters.Add("Deleted", deleted ? 1 : 0);
+
+        return new SqliteConnection(_connectionString).ExecuteAsync(sql, parameters);
     }
 
     #region Meta Queries

@@ -27,7 +27,14 @@ public class CreateEventTest {
         var mockLogger = Substitute.For<ILogger<CreateStrategy>>();
         var mockDataRepo = Substitute.For<IRepository>();
         var inMemorySettings = new Dictionary<string, string> { { "Salesforce:ClientId", "testClientId" }, { "Salesforce:ClientSecret", "testClientSecret" } };
-        var dbSchema = new CDCSchema { Id = 1, SchemaId = "SomeSchemaId", SchemaName = "ContactSchema", EntityName = "Contact", DbSchemaFullName = "salesforce.contacts" };
+        var dbSchema = new CDCSchema {
+            Id = 1, EntityName = "Contact", DbSchemaFullName = "salesforce.contacts",
+            // SchemaId and SchemaName are read from the linked Avro Schema, which is the only place they are
+            // ever populated — they used to be stored columns that no query selected, so they were always null.
+            AvroSchema = new DbAvroSchema {
+                Id = 1, SchemaId = "SomeSchemaId", RecordName = "ContactSchema", SchemaJson = "{}"
+            }
+        };
         mockMetaRepo.GetCachedMapping(dbSchema.Id, CancellationToken.None).Returns(new Dictionary<string, string> {
             { "NameFirstName", "first_name" },
             { "NameLastName", "last_name" },

@@ -26,6 +26,7 @@ public class PlatformEventChannelRepository : IPlatformEventChannelRepository {
                 event_type AS EventType,
                 namespace_prefix AS NamespacePrefix,
                 manageable_state AS ManageableState,
+                is_primary AS IsPrimary,
                 date_created AS DateCreated,
                 date_updated AS DateUpdated,
                 last_synced_at AS LastSyncedAt";
@@ -348,6 +349,111 @@ public class PlatformEventChannelRepository : IPlatformEventChannelRepository {
 
         return await connection.QuerySingleAsync<PlatformEventChannelMemberEntity>(
             new CommandDefinition(sql, parameters, transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    #endregion
+
+    #region Primary channel and bindings
+
+    /// <summary>
+    /// Returns the Primary Channel with its members, or null when none has been selected.
+    /// </summary>
+    public async Task<PlatformEventChannelEntity?> GetPrimaryChannelAsync(CancellationToken cancellationToken = default) {
+        var sql = $@"
+            SELECT {ChannelColumns}
+            FROM salesforce.platform_event_channels
+            WHERE is_primary
+            LIMIT 1";
+
+        LogQuery("SELECT", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        var channel = await connection.QuerySingleOrDefaultAsync<PlatformEventChannelEntity>(
+            new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        if (channel is not null) {
+            channel.Members = await GetMembersByChannelIdAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+        }
+
+        return channel;
+    }
+
+    /// <summary>
+    /// Makes one channel the Primary Channel, clearing the flag from every other row.
+    /// </summary>
+    /// <remarks>
+    /// Both statements run in one transaction because a partial unique index enforces at most one primary
+    /// row; clearing and setting separately would leave a window where two rows are flagged.
+    /// </remarks>
+    public async Task<bool> SetPrimaryChannelAsync(int channelId, CancellationToken cancellationToken = default) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        try {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "UPDATE salesforce.platform_event_channels SET is_primary = false WHERE is_primary AND id <> @ChannelId",
+                new { ChannelId = channelId }, transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+            var affectedRows = await connection.ExecuteAsync(new CommandDefinition(
+                "UPDATE salesforce.platform_event_channels SET is_primary = true, date_updated = now() WHERE id = @ChannelId",
+                new { ChannelId = channelId }, transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return affectedRows > 0;
+        } catch {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Clears the Primary Channel flag from every channel.
+    /// </summary>
+    public async Task ClearPrimaryChannelAsync(CancellationToken cancellationToken = default) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition(
+            "UPDATE salesforce.platform_event_channels SET is_primary = false WHERE is_primary",
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Points a Channel Member at its Binding, or clears the link when <paramref name="cdcSchemaId"/> is null.
+    /// </summary>
+    public async Task<bool> SetMemberBindingAsync(int memberId, int? cdcSchemaId, CancellationToken cancellationToken = default) {
+        const string sql = @"
+            UPDATE salesforce.platform_event_channel_members
+            SET cdc_schema_id = @CdcSchemaId, date_updated = now()
+            WHERE id = @MemberId";
+
+        LogQuery("UPDATE", sql, new { MemberId = memberId, CdcSchemaId = cdcSchemaId });
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        var affectedRows = await connection.ExecuteAsync(new CommandDefinition(
+            sql, new { MemberId = memberId, CdcSchemaId = cdcSchemaId }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        return affectedRows > 0;
+    }
+
+    /// <summary>
+    /// Returns every Channel Member pointing at a Binding, across all channels.
+    /// </summary>
+    /// <remarks>
+    /// A Binding is per-Entity, so more than one member can point at the same one when two channels carry the
+    /// same Entity. Used to clear the link when a Binding is deleted.
+    /// </remarks>
+    public async Task<List<PlatformEventChannelMemberEntity>> GetMembersByBindingIdAsync(int cdcSchemaId,
+        CancellationToken cancellationToken = default) {
+        var sql = $@"
+            SELECT {MemberColumns}
+            FROM salesforce.platform_event_channel_members
+            WHERE cdc_schema_id = @CdcSchemaId";
+
+        LogQuery("SELECT", sql, new { CdcSchemaId = cdcSchemaId });
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        var members = await connection.QueryAsync<PlatformEventChannelMemberEntity>(
+            new CommandDefinition(sql, new { CdcSchemaId = cdcSchemaId }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        return members.ToList();
     }
 
     #endregion

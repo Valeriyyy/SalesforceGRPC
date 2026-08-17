@@ -9,6 +9,8 @@ namespace Database.Repositories;
 public class PostgresRepository : RepositoryBase {
     public PostgresRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
+    public override DbType DatabaseType => DbType.Postgres;
+
     #region Data Queries
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
@@ -56,8 +58,29 @@ public class PostgresRepository : RepositoryBase {
         return result.Result;
     }
 
-    public override Task<int> UnDelete(string table, List<string> recordIds) {
-        throw new NotImplementedException();
+    public override async Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) {
+        return await SetSoftDeleteFlag(table, sfIdColumnName, softDeleteColumnName, recordIds, true).ConfigureAwait(false);
+    }
+
+    public override async Task<int> UnDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) {
+        return await SetSoftDeleteFlag(table, sfIdColumnName, softDeleteColumnName, recordIds, false).ConfigureAwait(false);
+    }
+
+    private async Task<int> SetSoftDeleteFlag(string table, string sfIdColumnName, string softDeleteColumnName,
+        List<string> recordIds, bool deleted) {
+        var sql = $"UPDATE {table} SET {softDeleteColumnName} = @Deleted WHERE {sfIdColumnName} = ANY(@RecordIds)";
+
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, RecordIds: {@RecordIds}",
+                deleted ? "SOFT DELETE" : "UNDELETE", sql, recordIds);
+        }
+
+        var parameters = new DynamicParameters();
+        parameters.Add("RecordIds", recordIds.ToArray());
+        parameters.Add("Deleted", deleted);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        return await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
     #endregion
     
@@ -121,7 +144,10 @@ public class PostgresRepository : RepositoryBase {
                 data_type as DataType,
                 (is_nullable = 'YES') as IsNullable,
                 column_default as DefaultValue,
-                ordinal_position as OrdinalPosition
+                ordinal_position as OrdinalPosition,
+                character_maximum_length as MaxLength,
+                numeric_precision as NumericPrecision,
+                numeric_scale as NumericScale
             FROM information_schema.columns
             WHERE table_schema = @SchemaName
             AND table_name = @TableName

@@ -1,3 +1,4 @@
+using Application.Bindings;
 using Application.Services;
 using Application.Services.Interfaces;
 using Dapper;
@@ -53,6 +54,8 @@ builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
 
+
+// TODO: Set this behind a db configuration that is saved in the db as a configuration that will be managed through a UI
 builder.Services.AddSingleton<IRepository>(sp => {
      var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
          ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
@@ -65,8 +68,10 @@ builder.Services.AddTransient<IEventStrategy, DeleteStrategy>();
 builder.Services.AddTransient<IEventStrategy, UndeleteStrategy>();
 builder.Services.AddTransient<EventResolver>();
 
+builder.Services.AddSingleton<IBindingChangeSignal, BindingChangeSignal>();
+builder.Services.AddScoped<IEntitySchemaProvider, PubSubEntitySchemaProvider>();
+builder.Services.AddScoped<IBindingService, BindingService>();
 builder.Services.AddScoped<ISchemaService, SchemaService>();
-builder.Services.AddScoped<IFieldMappingService, FieldMappingService>();
 builder.Services.AddScoped<IPlatformEventService, PlatformEventService>();
      
 builder.Services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();

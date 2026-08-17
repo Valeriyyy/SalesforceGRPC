@@ -36,9 +36,12 @@ public class PlatformEventChannelMemberEntity {
     public string? EnrichedFields { get; set; }
 
     /// <summary>
-    /// Optional link to the cdc_schemas row describing where this entity lands in the target database.
-    /// Not populated yet — reserved for wiring channel configuration to the sync pipeline.
+    /// The Binding for this member's Entity, or null when the user has not bound it to a Target Table yet.
     /// </summary>
+    /// <remarks>
+    /// The foreign key is ON DELETE SET NULL, so removing a Channel Member orphans its Binding rather than
+    /// destroying it — re-adding the member later restores the configuration instead of costing a rebuild.
+    /// </remarks>
     [Column("cdc_schema_id")]
     public int? CdcSchemaId { get; set; }
 

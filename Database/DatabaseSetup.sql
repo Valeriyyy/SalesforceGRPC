@@ -1,4 +1,12 @@
-﻿CREATE SCHEMA IF NOT EXISTS salesforce;
+-- App Database setup
+--
+-- GENERATED from Database/Definitions/schemas/. That directory is the source of truth; edit a table there and
+-- regenerate this file rather than editing it directly. The two had drifted badly before — this file still
+-- declared cdc_schemas.schema_id and schema_name as varchars and keyed mapped_fields on the rotating Avro
+-- Schema Id, none of which the code has matched for some time.
+--
+-- For an existing database, apply Database/Definitions/migrations/ instead of running this.
+CREATE SCHEMA IF NOT EXISTS salesforce;
 
 
 DROP DOMAIN IF EXISTS salesforce.sfid CASCADE;
@@ -35,47 +43,84 @@ CREATE TABLE salesforce.addresses (
 	CONSTRAINT addresses_pk PRIMARY KEY (id)
 );
 
+
+-- salesforce.avro_schemas definition
+-- One row per Avro Schema revision Salesforce has issued. Salesforce mints a new schema_id every time an
+-- object's shape changes, so several rows share a record_name and only the newest describes current events.
+CREATE TABLE IF NOT EXISTS salesforce.avro_schemas (
+     id serial4 NOT NULL,
+     schema_id varchar NOT NULL, -- The Salesforce Schema Id; rotates on every revision
+     record_name varchar NOT NULL, -- The Entity name, e.g. AccountChangeEvent
+     schema_json jsonb NOT NULL,
+     is_active bool DEFAULT true NOT NULL,
+     date_created timestamptz DEFAULT now() NOT NULL,
+     date_updated timestamptz NULL,
+     CONSTRAINT avro_schemas_pk PRIMARY KEY (id),
+     CONSTRAINT avro_schemas_schema_id_key UNIQUE (schema_id)
+);
+
+CREATE INDEX IF NOT EXISTS avro_schemas_record_name_idx ON salesforce.avro_schemas (record_name);
+
+COMMENT ON COLUMN salesforce.avro_schemas.schema_id IS 'The Salesforce Schema Id; a new one is issued on every revision';
+COMMENT ON COLUMN salesforce.avro_schemas.record_name IS 'The Entity name, e.g. AccountChangeEvent';
+
+
 -- salesforce.cdc_schemas definition
+-- One row per Binding: the decision that one Entity's change events land in one Target Table.
+-- The table name predates the term; it holds no schema of any kind.
+-- DROP TABLE salesforce.cdc_schemas;
 
--- Drop table
-
-DROP TABLE IF EXISTS salesforce.cdc_schemas;
-CREATE TABLE salesforce.cdc_schemas (
-    id serial4 NOT NULL,
-    entity_name varchar(100) NOT NULL, -- The salesforce object the schema belongs to
-    schema_id varchar(100) NOT NULL, -- The id of the schema provided from salesforce
-    schema_name varchar(100) NOT NULL,
-    db_schema_full_name varchar NULL, -- The full database schema name for the target table
-    soft_delete bool DEFAULT false NULL, -- Setting to either hard or soft delete records of schema
-    soft_delete_column_name varchar NULL, -- Name of the field to set to soft delete, must be boolean type column
-    CONSTRAINT cdc_schemas_pkey PRIMARY KEY (id),
-    CONSTRAINT cdc_schemas_schema_id_key UNIQUE (schema_id),
-    CONSTRAINT cdc_schemas_unique UNIQUE (db_schema_full_name)
+CREATE TABLE IF NOT EXISTS salesforce.cdc_schemas (
+      id serial4 NOT NULL,
+      avro_schema_id int4 NULL,
+      entity_name varchar(100) NOT NULL, -- Entity name, e.g. AccountChangeEvent
+      db_schema_full_name varchar NULL, -- Schema-qualified Target Table, e.g. salesforce.account
+      binding_state varchar(20) DEFAULT 'Incomplete' NOT NULL, -- Incomplete, Active or Inactive
+      soft_delete_enabled bool DEFAULT false NULL,
+      soft_delete_column_name varchar NULL,
+      CONSTRAINT cdc_schemas_pkey PRIMARY KEY (id),
+      CONSTRAINT cdc_schemas_binding_state_check
+          CHECK (binding_state IN ('Incomplete', 'Active', 'Inactive')),
+      -- One Binding per Entity, so an event has one unambiguous destination.
+      CONSTRAINT cdc_schemas_entity_name_key UNIQUE (entity_name),
+      -- One Binding per Target Table, so two Entities never fight over the same rows.
+      CONSTRAINT cdc_schemas_db_schema_full_name_key UNIQUE (db_schema_full_name),
+      CONSTRAINT cdc_schemas_avro_schemas_fk FOREIGN KEY (avro_schema_id) REFERENCES salesforce.avro_schemas(id) ON DELETE CASCADE
 );
 
--- Column comments
+COMMENT ON TABLE salesforce.cdc_schemas IS 'One row per Binding: which Entity lands in which Target Table';
+COMMENT ON COLUMN salesforce.cdc_schemas.entity_name IS 'Entity name, e.g. AccountChangeEvent';
+COMMENT ON COLUMN salesforce.cdc_schemas.db_schema_full_name IS 'Schema-qualified Target Table, e.g. salesforce.account';
+COMMENT ON COLUMN salesforce.cdc_schemas.binding_state IS 'Incomplete (never applied), Active (worker applies it) or Inactive (switched off, mappings kept)';
 
-COMMENT ON COLUMN salesforce.cdc_schemas.entity_name IS 'The salesforce object the schema belongs to';
-COMMENT ON COLUMN salesforce.cdc_schemas.schema_id IS 'The id of the schema provided from salesforce';
-COMMENT ON COLUMN salesforce.cdc_schemas.db_schema_full_name IS 'The full database schema name for the target table';
-COMMENT ON COLUMN salesforce.cdc_schemas.soft_delete IS 'Setting to either hard or soft delete records of schema';
-COMMENT ON COLUMN salesforce.cdc_schemas.soft_delete_column_name IS 'Name of the field to set to soft delete, must be boolean type column';
 
-DROP TABLE IF EXISTS salesforce.mapped_fields;
-CREATE TABLE salesforce.mapped_fields (
-	id serial4 PRIMARY KEY,
-	schema_id VARCHAR(100) NOT NULL, 
-	salesforce_field_name varchar(100) NOT NULL,
-	target_field_name varchar(100) NOT NULL,
-	
-	CONSTRAINT schema_id FOREIGN KEY (schema_id) REFERENCES salesforce.cdc_schemas (schema_id)
+-- salesforce.mapped_fields definition
+-- One row per Field Mapping: a flattened Salesforce field name paired with a Target Column name.
+-- The Key Mapping is stored here too, under the sentinel salesforce_field_name 'MappedSFKey'.
+
+CREATE TABLE IF NOT EXISTS salesforce.mapped_fields (
+      id serial4 NOT NULL,
+      salesforce_field_name varchar(100) NOT NULL, -- Flattened, e.g. BillingAddressCity
+      target_field_name varchar(100) NOT NULL,
+      schema_id int4 NULL, -- The Binding this mapping belongs to
+      CONSTRAINT mapped_fields_pkey PRIMARY KEY (id),
+      CONSTRAINT unique_mapping UNIQUE (salesforce_field_name, target_field_name, schema_id),
+      CONSTRAINT mapped_fields_cdc_schema_fk FOREIGN KEY (schema_id)
+          REFERENCES salesforce.cdc_schemas(id) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS mapped_fields_schema_id_idx ON salesforce.mapped_fields (schema_id);
+
+COMMENT ON COLUMN salesforce.mapped_fields.salesforce_field_name IS 'Flattened Salesforce field name, e.g. BillingAddressCity; MappedSFKey marks the Key Mapping';
+COMMENT ON COLUMN salesforce.mapped_fields.schema_id IS 'The cdc_schemas row (Binding) this mapping belongs to';
+
+
+-- salesforce.platform_event_channels definition
 -- Local mirror of the PlatformEventChannel Tooling API object. Salesforce remains the source of
 -- truth; rows here are written after a successful Tooling API call and can be rebuilt by resync.
-DROP TABLE IF EXISTS salesforce.platform_event_channel_members;
-DROP TABLE IF EXISTS salesforce.platform_event_channels;
-CREATE TABLE salesforce.platform_event_channels (
+-- DROP TABLE salesforce.platform_event_channels;
+
+CREATE TABLE IF NOT EXISTS salesforce.platform_event_channels (
     id serial4 NOT NULL,
     sf_id varchar(18) NOT NULL, -- Salesforce ID of the channel, 0YL prefix
     full_name varchar(255) NOT NULL, -- Metadata full name including the __chn suffix
@@ -85,6 +130,7 @@ CREATE TABLE salesforce.platform_event_channels (
     event_type varchar(20) NULL, -- custom, data, monitoring or standard (API 61.0+)
     namespace_prefix varchar(15) NULL,
     manageable_state varchar(30) NULL,
+    is_primary bool DEFAULT false NOT NULL, -- The single channel the worker subscribes to
     date_created timestamptz DEFAULT now() NOT NULL,
     date_updated timestamptz NULL,
     last_synced_at timestamptz NULL, -- When this row was last reconciled against Salesforce
@@ -93,15 +139,25 @@ CREATE TABLE salesforce.platform_event_channels (
     CONSTRAINT platform_event_channels_full_name_key UNIQUE (full_name)
 );
 
+-- At most one Primary Channel. A partial index rather than a constraint so the many false rows do not
+-- collide with each other.
+CREATE UNIQUE INDEX IF NOT EXISTS platform_event_channels_one_primary_idx
+    ON salesforce.platform_event_channels (is_primary) WHERE is_primary;
+
 COMMENT ON COLUMN salesforce.platform_event_channels.sf_id IS 'Salesforce ID of the channel, 0YL prefix';
+COMMENT ON COLUMN salesforce.platform_event_channels.is_primary IS 'The single channel the worker subscribes to; at most one row is true';
 COMMENT ON COLUMN salesforce.platform_event_channels.full_name IS 'Metadata full name including the __chn suffix';
 COMMENT ON COLUMN salesforce.platform_event_channels.developer_name IS 'Unique name without the __chn suffix';
 COMMENT ON COLUMN salesforce.platform_event_channels.channel_type IS 'data (Change Data Capture) or event (platform events); immutable in Salesforce after create';
 COMMENT ON COLUMN salesforce.platform_event_channels.event_type IS 'custom, data, monitoring or standard (API 61.0+); immutable in Salesforce after create';
 COMMENT ON COLUMN salesforce.platform_event_channels.last_synced_at IS 'When this row was last reconciled against Salesforce';
 
+
+-- salesforce.platform_event_channel_members definition
 -- Local mirror of the PlatformEventChannelMember Tooling API object: one event/entity on a channel.
-CREATE TABLE salesforce.platform_event_channel_members (
+-- DROP TABLE salesforce.platform_event_channel_members;
+
+CREATE TABLE IF NOT EXISTS salesforce.platform_event_channel_members (
     id serial4 NOT NULL,
     channel_id int4 NOT NULL,
     sf_id varchar(18) NOT NULL, -- Salesforce ID of the member, 0v8 prefix

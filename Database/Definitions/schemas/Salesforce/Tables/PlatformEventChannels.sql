@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS salesforce.platform_event_channels (
     event_type varchar(20) NULL, -- custom, data, monitoring or standard (API 61.0+)
     namespace_prefix varchar(15) NULL,
     manageable_state varchar(30) NULL,
+    is_primary bool DEFAULT false NOT NULL, -- The single channel the worker subscribes to
     date_created timestamptz DEFAULT now() NOT NULL,
     date_updated timestamptz NULL,
     last_synced_at timestamptz NULL, -- When this row was last reconciled against Salesforce
@@ -21,7 +22,13 @@ CREATE TABLE IF NOT EXISTS salesforce.platform_event_channels (
     CONSTRAINT platform_event_channels_full_name_key UNIQUE (full_name)
 );
 
+-- At most one Primary Channel. A partial index rather than a constraint so the many false rows do not
+-- collide with each other.
+CREATE UNIQUE INDEX IF NOT EXISTS platform_event_channels_one_primary_idx
+    ON salesforce.platform_event_channels (is_primary) WHERE is_primary;
+
 COMMENT ON COLUMN salesforce.platform_event_channels.sf_id IS 'Salesforce ID of the channel, 0YL prefix';
+COMMENT ON COLUMN salesforce.platform_event_channels.is_primary IS 'The single channel the worker subscribes to; at most one row is true';
 COMMENT ON COLUMN salesforce.platform_event_channels.full_name IS 'Metadata full name including the __chn suffix';
 COMMENT ON COLUMN salesforce.platform_event_channels.developer_name IS 'Unique name without the __chn suffix';
 COMMENT ON COLUMN salesforce.platform_event_channels.channel_type IS 'data (Change Data Capture) or event (platform events); immutable in Salesforce after create';

@@ -1,38 +1,39 @@
+using Salesforce.Avro;
+
 namespace SalesforceGrpc.Extensions;
 
 /// <summary>
-/// Handles type conversion for different Avro field types
-/// Uses the schema doc property to identify datetime fields for proper SQL conversion
+/// Converts a decoded Avro value into what the target database column expects.
 /// </summary>
+/// <remarks>
+/// The Avro type alone cannot decide this: Date, DateTime and Time all arrive as a long, so the Salesforce
+/// Field Type from the schema's doc annotation is what distinguishes them. That annotation is read by
+/// <see cref="SalesforceFieldDoc"/>, the same parser the Binding validation uses, so the type a user
+/// validated a mapping against and the type a value is converted with cannot diverge.
+/// </remarks>
 public static class FieldTypeConverter {
     private static readonly DateTime UnixEpoch = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     /// <summary>
-    /// Converts a value based on its Avro type and field documentation
-    /// The doc property from the schema is more reliable than the type for identifying datetime fields
+    /// Converts a value using the field's doc annotation, falling back to the Avro type when there is none.
     /// </summary>
     public static object? ConvertValue(object? value, string avroType, string? fieldDoc = null) {
         if (value == null) {
             return null;
         }
 
-        // Check doc property first for accurate type identification
-        // Schema doc format examples: "Data:DateTime", "CreatedDate:DateTime", "Data:Date", etc.
-        if (!string.IsNullOrEmpty(fieldDoc)) {
-            if (IsDateTimeField(fieldDoc)) {
+        var fieldType = SalesforceFieldDoc.Parse(fieldDoc).FieldType;
+
+        switch (fieldType) {
+            case SalesforceFieldType.DateTime:
                 return ConvertEpochToDateTime(Convert.ToInt64(value));
-            }
-
-            if (IsDateOnlyField(fieldDoc)) {
+            case SalesforceFieldType.DateOnly:
                 return ConvertEpochToDate(Convert.ToInt64(value));
-            }
-
-            if (IsTimeOnlyField(fieldDoc)) {
+            case SalesforceFieldType.TimeOnly:
                 return ConvertEpochToTime(Convert.ToInt64(value));
-            }
         }
 
-        // Fallback to type-based detection if no doc property
+        // Fallback to type-based detection when the schema carries no usable doc annotation.
         var normalizedType = avroType.Split('|')[0].Trim().ToLowerInvariant();
 
         return normalizedType switch {
@@ -41,87 +42,47 @@ public static class FieldTypeConverter {
             "double" => Convert.ToDouble(value),
             "float" => Convert.ToSingle(value),
             "boolean" => Convert.ToBoolean(value),
-            _ => $"{EscapeSqlString(value.ToString() ?? "")}"
+            // Passed through unchanged. Every repository writes values as parameters, so escaping here would
+            // double up: an apostrophe would reach the target table as two.
+            _ => value.ToString() ?? string.Empty
         };
     }
 
     /// <summary>
-    /// Converts epoch milliseconds to SQL-compatible datetime string
-    /// Format: '2024-01-15 10:30:45.000'
+    /// Converts epoch milliseconds to a DateTime.
     /// </summary>
     private static DateTime? ConvertEpochToDateTime(long epochMilliseconds) {
         try {
-            var dateTime = UnixEpoch.AddMilliseconds(epochMilliseconds);
-            return dateTime;
-            // return $"'{dateTime:yyyy-MM-dd HH:mm:ss.fff}'";
+            return UnixEpoch.AddMilliseconds(epochMilliseconds);
         } catch {
-            // return "NULL";
             return null;
         }
     }
 
     /// <summary>
-    /// Converts epoch milliseconds to SQL-compatible date string
-    /// Format: '2024-01-15'
+    /// Converts a Salesforce Date field to a DateTime at midnight.
     /// </summary>
+    /// <remarks>
+    /// Identical to <see cref="ConvertEpochToDateTime"/> on purpose, and not a copy-paste slip: Salesforce
+    /// sends a Date as an epoch datetime in milliseconds whose time component is already zeroed, so reading it
+    /// the same way lands on the right date at midnight.
+    /// </remarks>
     private static DateTime? ConvertEpochToDate(long epochMilliseconds) {
         try {
-            var date = UnixEpoch.AddMilliseconds(epochMilliseconds);
-            return date;
-            // return $"'{dateTime:yyyy-MM-dd}'";
+            return UnixEpoch.AddMilliseconds(epochMilliseconds);
         } catch {
-            // return "NULL";
             return null;
         }
     }
 
     /// <summary>
-    /// Converts epoch milliseconds to SQL-compatible time string
-    /// Format: '10:30:45.000'
+    /// Converts milliseconds since midnight to a TimeOnly.
     /// </summary>
     public static TimeOnly? ConvertEpochToTime(long epochMilliseconds) {
         try {
-            // var timeOnly = new TimeOnly(epochMilliseconds);
-            // var dateTime = UnixEpoch.AddMilliseconds(epochMilliseconds);
-            // return $"'{dateTime:HH:mm:ss.fff}'";
-            var fromDateTime = TimeOnly.FromTimeSpan(TimeSpan.FromMilliseconds(epochMilliseconds));
-            return fromDateTime;
+            return TimeOnly.FromTimeSpan(TimeSpan.FromMilliseconds(epochMilliseconds));
         } catch {
             return null;
         }
-    }
-
-    /// <summary>
-    /// Checks if the doc field indicates a DateTime type
-    /// Examples: "Data:DateTime", "CreatedDate:DateTime", "Data:DateTime:fieldId"
-    /// </summary>
-    private static bool IsDateTimeField(string fieldDoc) {
-        return fieldDoc.Contains("DateTime", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Checks if the doc field indicates a Date (DateOnly) type
-    /// Examples: "Data:Date", "BirthDate:Date"
-    /// </summary>
-    private static bool IsDateOnlyField(string fieldDoc) {
-        return fieldDoc.Contains(":Date", StringComparison.OrdinalIgnoreCase) &&
-               !fieldDoc.Contains("DateTime", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Checks if the doc field indicates a Time (TimeOnly) type
-    /// Examples: "Data:Time", "BusinessHours:Time"
-    /// </summary>
-    private static bool IsTimeOnlyField(string fieldDoc) {
-        return fieldDoc.Contains(":Time", StringComparison.OrdinalIgnoreCase) &&
-               !fieldDoc.Contains("DateTime", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Escapes single quotes in string values for SQL safety
-    /// Returns only the escaped string without quotes - quotes should be added by the caller
-    /// </summary>
-    private static string EscapeSqlString(string value) {
-        return value.Replace("'", "''");
     }
 }
