@@ -108,7 +108,7 @@ if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
 
 builder.Services.AddHostedService<Worker>();
 
-builder.Services.AddControllers();
+builder.Services.AddControllersWithViews();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -121,6 +121,7 @@ if (app.Environment.IsDevelopment()) {
 }
 
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.MapControllers();
 
 app.Run();

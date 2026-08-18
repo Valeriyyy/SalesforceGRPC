@@ -50,6 +50,21 @@
   <ItemGroup>
     <Protobuf Include="protos\pubsub_api.proto" GrpcServices="Client" />
   </ItemGroup>
+  <PropertyGroup>
+    <FrontendDir>$(MSBuildProjectDirectory)/../app</FrontendDir>
+    <FrontendManifest>$(MSBuildProjectDirectory)/wwwroot/dist/.vite/manifest.json</FrontendManifest>
+  </PropertyGroup>
+
+  <Target Name="NpmInstall" BeforeTargets="NpmBuildFrontend" Condition="'$(Configuration)' == 'Release' AND !Exists('$(FrontendDir)/node_modules')">
+    <Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
+  </Target>
+
+  <Target Name="NpmBuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'"
+          Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.ts;$(FrontendDir)/src/**/*.*"
+          Outputs="$(FrontendManifest)">
+    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
+  </Target>
+
   <ItemGroup>
     <Content Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -62,6 +77,13 @@
     <Content Update="avro">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <!-- The SDK's default wwwroot content glob excludes dot-prefixed directories, so Vite's
+         wwwroot/dist/.vite/manifest.json (read at runtime by ViteManifest) needs an explicit include
+         or it silently never reaches the publish output. -->
+    <Content Include="wwwroot\dist\.vite\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
