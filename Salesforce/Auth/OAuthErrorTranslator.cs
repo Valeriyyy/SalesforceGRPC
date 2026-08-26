@@ -65,7 +65,7 @@ public static class OAuthErrorTranslator {
             Error = error,
             ErrorDescription = description,
             RawResponse = rawResponse,
-            Guidance = Explain(error, description, certificateFingerprint, isSandbox)
+            Guidance = Explain(error, description, certificateFingerprint, SalesforceLoginHost.For(isSandbox))
         };
     }
 
@@ -89,7 +89,7 @@ public static class OAuthErrorTranslator {
         return ("unknown_error", rawResponse.Length > 500 ? rawResponse[..500] : rawResponse);
     }
 
-    private static string? Explain(string error, string description, string? fingerprint, bool isSandbox) {
+    private static string? Explain(string error, string description, string? fingerprint, SalesforceLoginHost host) {
         var text = description.ToLowerInvariant();
 
         return error.ToLowerInvariant() switch {
@@ -103,7 +103,7 @@ public static class OAuthErrorTranslator {
             "invalid_grant" when text.Contains("invalid assertion")
                                  || text.Contains("invalid_assertion")
                                  || text.Contains("audience") =>
-                BuildAssertionGuidance(fingerprint, isSandbox),
+                BuildAssertionGuidance(fingerprint, host),
 
             "invalid_grant" when text.Contains("inactive user") || text.Contains("user is inactive") =>
                 "The Run-as User is deactivated in Salesforce. Reactivate them, or point the connection at a " +
@@ -139,15 +139,12 @@ public static class OAuthErrorTranslator {
         };
     }
 
-    private static string BuildAssertionGuidance(string? fingerprint, bool isSandbox) {
-        var expectedAudience = isSandbox ? "https://test.salesforce.com" : "https://login.salesforce.com";
-        var wrongAudience = isSandbox ? "https://login.salesforce.com" : "https://test.salesforce.com";
-
+    private static string BuildAssertionGuidance(string? fingerprint, SalesforceLoginHost host) {
         var guidance =
-            $"Salesforce would not accept the signed assertion. This connection is marked " +
-            $"{(isSandbox ? "sandbox" : "production")}, so the audience is {expectedAudience}; if the org is " +
-            $"actually {(isSandbox ? "production" : "a sandbox")} the audience should be {wrongAudience} and " +
-            "the production/sandbox setting is wrong. Otherwise the certificate Salesforce holds does not " +
+            "Salesforce would not accept the signed assertion. This connection is marked " +
+            $"{host.Description}, so the audience is {host.Url}; if the org is actually " +
+            $"{host.Opposite.Description} the audience should be {host.Opposite.Url} and the " +
+            "production/sandbox setting is wrong. Otherwise the certificate Salesforce holds does not " +
             "match this application's Signing Keypair.";
 
         return fingerprint is null

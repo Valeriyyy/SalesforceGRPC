@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using System.Collections.Concurrent;
 
 namespace Salesforce.Auth;
@@ -40,8 +39,8 @@ public interface ISalesforceTokenProvider {
 /// one cache entry between them would hand the event stream an administrator's token.
 /// </para>
 /// <para>
-/// Credentials are read through <see cref="ISalesforceCredentialSource"/> on every refresh rather than
-/// captured at construction, so an edited connection takes effect without a restart.
+/// The Org Connection is read through <see cref="IOrgConnectionSource"/> on every refresh rather than captured
+/// at construction, so an edited connection takes effect without a restart.
 /// </para>
 /// </remarks>
 public sealed class SalesforceTokenProvider : ISalesforceTokenProvider {
@@ -63,17 +62,17 @@ public sealed class SalesforceTokenProvider : ISalesforceTokenProvider {
     private static readonly TimeSpan RefreshMargin = TimeSpan.FromMinutes(2);
 
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ISalesforceCredentialSource _credentials;
+    private readonly IOrgConnectionSource _connections;
     private readonly ILogger<SalesforceTokenProvider> _logger;
     private readonly TimeProvider _time;
 
     private readonly ConcurrentDictionary<SalesforceIdentity, CachedToken> _tokens = new();
     private readonly ConcurrentDictionary<SalesforceIdentity, SemaphoreSlim> _refreshLocks = new();
 
-    public SalesforceTokenProvider(IHttpClientFactory httpClientFactory, ISalesforceCredentialSource credentials,
+    public SalesforceTokenProvider(IHttpClientFactory httpClientFactory, IOrgConnectionSource connections,
         ILogger<SalesforceTokenProvider> logger, TimeProvider time) {
         _httpClientFactory = httpClientFactory;
-        _credentials = credentials;
+        _connections = connections;
         _logger = logger;
         _time = time;
     }
@@ -125,39 +124,33 @@ public sealed class SalesforceTokenProvider : ISalesforceTokenProvider {
     }
 
     private async Task<AuthToken> RequestTokenAsync(SalesforceIdentity identity, CancellationToken cancellationToken) {
-        var credentials = await _credentials.GetCredentialsAsync(cancellationToken).ConfigureAwait(false)
-                          ?? throw new NoOrgConnectionException();
+        var connection = await _connections.GetConnectionAsync(cancellationToken).ConfigureAwait(false)
+                         ?? throw new NoOrgConnectionException();
 
         var now = _time.GetUtcNow();
-        var assertion = JwtAssertionFactory.Create(credentials, identity, now);
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{credentials.LoginUrl}/services/oauth2/token") {
-            Content = new FormUrlEncodedContent([
-                new KeyValuePair<string, string>("grant_type", JwtAssertionFactory.GrantType),
-                new KeyValuePair<string, string>("assertion", assertion)
-            ])
-        };
+        var assertion = JwtAssertionFactory.Create(connection, identity, now);
 
         using var client = _httpClientFactory.CreateClient(HttpClientName);
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        if (!response.IsSuccessStatusCode) {
-            var error = OAuthErrorTranslator.Translate(
-                body, credentials.CertificateFingerprint, IsSandbox(credentials));
-
-            await _credentials.RecordTokenFailureAsync(error.Summary, cancellationToken).ConfigureAwait(false);
-            throw new SalesforceOAuthException(error);
+        AuthToken token;
+        try {
+            token = await SalesforceTokenEndpoint.PostAsync(client, connection.LoginHost, [
+                new KeyValuePair<string, string>("grant_type", JwtAssertionFactory.GrantType),
+                new KeyValuePair<string, string>("assertion", assertion)
+            ], connection.CertificateFingerprint, cancellationToken).ConfigureAwait(false);
+        } catch (SalesforceOAuthException exc) {
+            // The whole error, so the raw Salesforce text survives as far as the API. A user reading a
+            // translated guess with no way back to what Salesforce actually said is worse off than one
+            // reading the raw text alone.
+            await _connections.RecordTokenFailureAsync(exc.Error, cancellationToken).ConfigureAwait(false);
+            throw;
         }
 
-        var token = JsonConvert.DeserializeObject<AuthToken>(body);
-        if (token?.AccessToken is null || token.InstanceUrl is null) {
-            var error = OAuthErrorTranslator.Translate(body, credentials.CertificateFingerprint, IsSandbox(credentials));
-            await _credentials.RecordTokenFailureAsync(
-                "Salesforce answered the token request successfully but without an access token or instance URL.",
-                cancellationToken).ConfigureAwait(false);
-            throw new SalesforceOAuthException(error);
-        }
+        // Recorded before the token is cached, not after. This call is where an org change is caught and
+        // refused, and a token cached first would stay live in the cache — and get used — for an org this
+        // application is not connected to.
+        await _connections.RecordTokenSuccessAsync(token.InstanceUrl!, token.OrgId, cancellationToken)
+            .ConfigureAwait(false);
 
         var lifetime = token.ExpiresInSeconds is > 0
             ? TimeSpan.FromSeconds(token.ExpiresInSeconds.Value)
@@ -166,18 +159,10 @@ public sealed class SalesforceTokenProvider : ISalesforceTokenProvider {
         _tokens[identity] = new CachedToken(token, now.Add(lifetime) - RefreshMargin);
 
         _logger.LogInformation("Obtained a Salesforce access token for the {Identity} ({Username})",
-            identity, credentials.UsernameFor(identity));
-
-        // Recorded on every success, not only the first: this is what keeps LastConnectedAt and the
-        // connection's state truthful, and it is where an org change is caught and refused.
-        await _credentials.RecordTokenSuccessAsync(token.InstanceUrl, token.OrgId, cancellationToken)
-            .ConfigureAwait(false);
+            identity, connection.UsernameFor(identity));
 
         return token;
     }
-
-    private static bool IsSandbox(SalesforceCredentials credentials) =>
-        credentials.LoginUrl.Contains("test.salesforce.com", StringComparison.OrdinalIgnoreCase);
 
     private sealed record CachedToken(AuthToken Token, DateTimeOffset ExpiresAt);
 }

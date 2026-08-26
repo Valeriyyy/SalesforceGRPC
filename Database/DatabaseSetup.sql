@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS salesforce.org_connection (
     connection_state varchar(20) DEFAULT 'Incomplete' NOT NULL, -- Incomplete, Connected or Failed
     last_connected_at timestamptz NULL,
     last_error text NULL,
+    last_error_raw text NULL,
     last_error_at timestamptz NULL,
 
     -- Held only between the Bootstrap and the first successful JWT. Encrypted, and purged after — a metadata

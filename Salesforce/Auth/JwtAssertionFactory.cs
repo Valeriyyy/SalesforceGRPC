@@ -30,13 +30,13 @@ public static class JwtAssertionFactory {
     /// <summary>
     /// Signs an assertion for one identity.
     /// </summary>
-    /// <param name="credentials">The Consumer Key, usernames, audience and private key.</param>
+    /// <param name="connection">The Consumer Key, usernames, login host and private key.</param>
     /// <param name="identity">Which user the assertion is for — this is the only thing that differs between the two.</param>
     /// <param name="now">The current time, injected so the <c>exp</c> window is testable.</param>
-    public static string Create(SalesforceCredentials credentials, SalesforceIdentity identity, DateTimeOffset now) {
-        ArgumentNullException.ThrowIfNull(credentials);
+    public static string Create(OrgConnectionDetails connection, SalesforceIdentity identity, DateTimeOffset now) {
+        ArgumentNullException.ThrowIfNull(connection);
 
-        var subject = credentials.UsernameFor(identity);
+        var subject = connection.UsernameFor(identity);
         if (string.IsNullOrWhiteSpace(subject)) {
             throw new InvalidOperationException(
                 $"The Org Connection has no username for the {identity}, so no assertion can be signed for it.");
@@ -45,18 +45,18 @@ public static class JwtAssertionFactory {
         var header = new { alg = "RS256", typ = "JWT" };
 
         var claims = new Dictionary<string, object> {
-            ["iss"] = credentials.ConsumerKey,
+            ["iss"] = connection.ConsumerKey,
             ["sub"] = subject,
             // The audience is login.salesforce.com or test.salesforce.com and nothing else — notably not the
             // org's own instance URL, which is the mistake this claim usually carries.
-            ["aud"] = credentials.LoginUrl,
+            ["aud"] = connection.LoginHost.Url,
             ["exp"] = now.Add(Lifetime).ToUnixTimeSeconds()
         };
 
         var signingInput = $"{Encode(header)}.{Encode(claims)}";
 
         using var rsa = RSA.Create();
-        rsa.ImportFromPem(credentials.SigningPrivateKeyPem);
+        rsa.ImportFromPem(connection.SigningPrivateKeyPem);
 
         var signature = rsa.SignData(
             Encoding.UTF8.GetBytes(signingInput), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);

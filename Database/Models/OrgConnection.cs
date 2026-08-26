@@ -4,8 +4,7 @@ namespace Database.Models;
 /// Where an Org Connection stands with Salesforce.
 /// </summary>
 /// <remarks>
-/// Three states rather than a pair of booleans, so "has credentials" and "those credentials work" can never
-/// disagree. Incomplete is not an error: a connection holds a real Signing Keypair from the moment the user
+/// Three states rather than a pair of booleans, so "is set up" and "actually works" can never disagree. Incomplete is not an error: a connection holds a real Signing Keypair from the moment the user
 /// supplies their details, and the keypair has to exist before Salesforce can be told about it.
 /// </remarks>
 public enum ConnectionState {
@@ -25,8 +24,8 @@ public enum ConnectionState {
 /// <remarks>
 /// <see cref="SigningPrivateKey"/>, <see cref="BootstrapConsumerSecret"/> and
 /// <see cref="BootstrapRefreshToken"/> hold Data Protection ciphertext, exactly as they sit in the database.
-/// Nothing here decrypts them — that is the credential source's job — so an instance of this type is safe to
-/// log or to hand around, and a read model built from it leaks nothing as long as those three are left out.
+/// Nothing here decrypts them — that happens a layer up — so an instance of this type is safe to log or to
+/// hand around, and a read model built from it leaks nothing as long as those three are left out.
 /// </remarks>
 public class OrgConnection {
     public int Id { get; set; }
@@ -63,7 +62,20 @@ public class OrgConnection {
     public ConnectionState ConnectionState { get; set; }
 
     public DateTime? LastConnectedAt { get; set; }
+
+    /// <summary>The translated one-line summary of the last failure.</summary>
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// Salesforce's response body for the last failure, untouched.
+    /// </summary>
+    /// <remarks>
+    /// Kept alongside the translation rather than instead of it. The translation table is incomplete by
+    /// construction, so this is the only text a user can search for or paste into a support conversation —
+    /// and a summary cannot be un-summarised later.
+    /// </remarks>
+    public string? LastErrorRaw { get; set; }
+
     public DateTime? LastErrorAt { get; set; }
 
     /// <summary>
@@ -77,15 +89,6 @@ public class OrgConnection {
 
     public DateTime DateCreated { get; set; }
     public DateTime? DateUpdated { get; set; }
-
-    /// <summary>
-    /// The OAuth host for this org: the JWT <c>aud</c> claim and the authorize/token endpoint's authority.
-    /// </summary>
-    /// <remarks>
-    /// A production URL against a sandbox is one of the most common causes of an opaque <c>invalid_grant</c>,
-    /// so it is derived from the flag in one place rather than stored or passed around.
-    /// </remarks>
-    public string LoginUrl => IsSandbox ? "https://test.salesforce.com" : "https://login.salesforce.com";
 
     /// <summary>True when a token has succeeded and the discovered org details are known.</summary>
     public bool IsUsable => ConnectionState == ConnectionState.Connected

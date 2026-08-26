@@ -44,9 +44,6 @@ public sealed record SubscriptionPlan {
     /// <summary>True when there is a Primary Channel to subscribe to.</summary>
     public bool HasChannel => !string.IsNullOrWhiteSpace(TopicName);
 
-    /// <summary>True when the worker has everything it needs to open a stream.</summary>
-    public bool CanSubscribe => HasConnection && HasChannel;
-
     /// <summary>Builds the plan the worker uses when nothing is configured yet.</summary>
     public static SubscriptionPlan Empty => new();
 }

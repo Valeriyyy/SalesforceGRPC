@@ -24,8 +24,8 @@ public class OrgConnectionStateTests {
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero));
 
-    private OrgConnectionCredentialSource NewSource() =>
-        new(_provider, _repository, _signal, NullLogger<OrgConnectionCredentialSource>.Instance, _time);
+    private StoredOrgConnectionSource NewSource() =>
+        new(_provider, _repository, _signal, NullLogger<StoredOrgConnectionSource>.Instance, _time);
 
     private static OrgConnection Connection(ConnectionState state = ConnectionState.Incomplete, string? orgId = null) => new() {
         Id = 1,
@@ -79,10 +79,17 @@ public class OrgConnectionStateTests {
     public async Task ARejectedToken_MovesTheConnectionToFailedAndKeepsTheReason() {
         WithConnection(Connection(ConnectionState.Connected, OrgId));
 
-        await NewSource().RecordTokenFailureAsync("invalid_grant: user hasn't approved this consumer", Ct);
+        var error = OAuthErrorTranslator.Translate(
+            """{"error":"invalid_grant","error_description":"user hasn't approved this consumer"}""");
 
+        await NewSource().RecordTokenFailureAsync(error, Ct);
+
+        // Both halves: the translated summary a status line shows, and Salesforce's untouched words, which
+        // are the only thing a user can search for when the translation table has nothing to say.
         await _repository.Received(1).RecordFailureAsync(
-            "invalid_grant: user hasn't approved this consumer", _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+            Arg.Is<string>(summary => summary.Contains("invalid_grant")),
+            Arg.Is<string>(raw => raw.Contains("user hasn't approved this consumer")),
+            _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -131,7 +138,7 @@ public class OrgConnectionStateTests {
         await _repository.DidNotReceive().RecordSuccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.Received(1).RecordFailureAsync(
-            Arg.Is<string>(m => m.Contains("org id")), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+            Arg.Is<string>(m => m.Contains("org id")), Arg.Any<string>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 }
 

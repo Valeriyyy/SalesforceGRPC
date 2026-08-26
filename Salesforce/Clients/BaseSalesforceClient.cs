@@ -10,7 +10,7 @@ namespace Salesforce.Clients;
 public class BaseSalesforceClient {
     protected readonly SalesforceConfig _config;
     protected readonly ILogger<BaseSalesforceClient> _logger;
-    protected readonly ISalesforceCredentialSource _credentials;
+    protected readonly IOrgConnectionSource _connections;
     protected readonly HttpClient _client;
 
     private static readonly JsonSerializerSettings SerializerSettings = new() {
@@ -18,11 +18,11 @@ public class BaseSalesforceClient {
     };
 
     protected BaseSalesforceClient(HttpClient client, SalesforceConfig configuration,
-        ILogger<BaseSalesforceClient> logger, ISalesforceCredentialSource credentials) {
+        ILogger<BaseSalesforceClient> logger, IOrgConnectionSource connections) {
         _client = client;
         _config = configuration;
         _logger = logger;
-        _credentials = credentials;
+        _connections = connections;
     }
 
     /// <summary>
@@ -35,7 +35,7 @@ public class BaseSalesforceClient {
     /// can replace it later without a restart.
     /// </remarks>
     protected async Task<string> ToolingUrlAsync(string relativePath, CancellationToken cancellationToken) {
-        var orgUrl = await _credentials.GetOrgUrlAsync(cancellationToken).ConfigureAwait(false);
+        var orgUrl = await _connections.GetOrgUrlAsync(cancellationToken).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(orgUrl)) {
             throw new NoOrgConnectionException();

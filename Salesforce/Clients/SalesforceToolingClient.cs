@@ -25,9 +25,9 @@ public sealed class SalesforceToolingClient : BaseSalesforceClient {
     private const string ChannelMemberListFields =
         "Id, EventChannel, MasterLabel, DeveloperName, FilterExpression, SelectedEntity, ManageableState, NamespacePrefix";
 
-    public SalesforceToolingClient(HttpClient httpClient, ISalesforceCredentialSource credentials,
+    public SalesforceToolingClient(HttpClient httpClient, IOrgConnectionSource connections,
         IOptions<SalesforceConfig> config, ILogger<SalesforceToolingClient> logger)
-        : base(httpClient, config.Value, logger, credentials) {
+        : base(httpClient, config.Value, logger, connections) {
     }
 
     #region Channels

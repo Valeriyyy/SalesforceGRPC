@@ -47,4 +47,32 @@ public class SalesforceConfig {
     /// </para>
     /// </remarks>
     public string? CallbackUrl { get; set; }
+
+    /// <summary>
+    /// Returns why <see cref="CallbackUrl"/> is unusable, or null when it is fine.
+    /// </summary>
+    /// <remarks>
+    /// Checked here rather than left to Salesforce, because Salesforce's rejection arrives only after the user
+    /// has created an app, pasted keys and opened a browser — and says nothing more than that the redirect URI
+    /// does not match.
+    /// </remarks>
+    public string? ValidateCallbackUrl() {
+        if (string.IsNullOrWhiteSpace(CallbackUrl)) {
+            return "SalesforceConfig:CallbackUrl is not configured, so there is nowhere for Salesforce to send " +
+                   "the authorization code. Set it to this application's public callback URL and register the " +
+                   "same value on the External Client App.";
+        }
+
+        if (!Uri.TryCreate(CallbackUrl, UriKind.Absolute, out var callbackUrl)) {
+            return $"SalesforceConfig:CallbackUrl is not a valid URL: {CallbackUrl}";
+        }
+
+        // Salesforce requires https for callback URLs, with localhost the only exception.
+        if (callbackUrl.Scheme != Uri.UriSchemeHttps && !callbackUrl.IsLoopback) {
+            return "SalesforceConfig:CallbackUrl must use https — Salesforce accepts http only for localhost. " +
+                   $"It is currently {CallbackUrl}.";
+        }
+
+        return null;
+    }
 }

@@ -67,10 +67,32 @@ public class OrgConnectionController : ControllerBase {
             : result.Result!;
     }
 
-    /// <summary>Starts the Bootstrap, returning the Salesforce URL to send the user's browser to.</summary>
+    /// <summary>
+    /// Starts the Bootstrap, returning the Salesforce URL to send the user's browser to.
+    /// </summary>
+    /// <remarks>
+    /// Returns the URL rather than redirecting, so a fetch-based UI can show the user where they are about to
+    /// be sent before sending them. <see cref="RedirectToBootstrap"/> is the browser-navigable equivalent.
+    /// </remarks>
     [HttpPost("bootstrap")]
     public Task<ActionResult<BootstrapStartDTO>> StartBootstrap(CancellationToken ct) =>
         Execute(() => _connections.StartBootstrapAsync(ct));
+
+    /// <summary>
+    /// Starts the Bootstrap and redirects straight to Salesforce.
+    /// </summary>
+    /// <remarks>
+    /// For a plain link or a browser address bar, where there is no script to follow a URL returned as JSON.
+    /// Each call issues a fresh <c>state</c>, so this is a navigation target rather than something to bookmark.
+    /// </remarks>
+    [HttpGet("bootstrap/start")]
+    public async Task<IActionResult> RedirectToBootstrap(CancellationToken ct) {
+        var result = await Execute(() => _connections.StartBootstrapAsync(ct)).ConfigureAwait(false);
+
+        return result.Value is { } start
+            ? Redirect(start.AuthorizeUrl)
+            : result.Result!;
+    }
 
     /// <summary>
     /// Where Salesforce sends the user's browser after they approve.

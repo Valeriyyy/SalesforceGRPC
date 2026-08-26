@@ -14,9 +14,9 @@ namespace Application.Connections;
 /// Setting up, verifying and tearing down the Org Connection.
 /// </summary>
 /// <remarks>
-/// Owns the whole user-facing lifecycle. The state machine itself lives in
-/// <see cref="OrgConnectionCredentialSource"/>, because state turns on the outcome of a token request and
-/// the token provider is what makes those.
+/// Owns the whole user-facing lifecycle. Connection State itself turns in
+/// <see cref="StoredOrgConnectionSource"/>, because it follows the outcome of a token request and the token
+/// provider is what makes those.
 /// </remarks>
 public interface IOrgConnectionService {
     Task<OrgConnectionDTO> GetAsync(CancellationToken cancellationToken = default);
@@ -96,32 +96,32 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         }
 
         var existing = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
-        if (existing is not null && existing.ConnectionState == ConnectionState.Connected) {
-            // Editing a working connection's details is how a user ends up pointed at a different org without
-            // meaning to. Disconnect is the deliberate route, and it says what it destroys.
-            throw new ValidationException(
-                $"This application is already connected to org {existing.OrgId}. To change connection details, " +
-                "Disconnect first — that destroys the Bindings, Field Mappings and cached schemas belonging to " +
-                "the current org, which is why it is a deliberate action.");
-        }
 
-        // Generated before any Salesforce round-trip, and unavoidably so: the certificate has to exist before
-        // Salesforce can be told about it. This is why a connection can be Incomplete while holding a real secret.
-        var keypair = SigningKeypairFactory.Create(_time.GetUtcNow());
+        // Editing a Connected connection is allowed on purpose. It is the scenario the org-mismatch refusal
+        // exists for: a user re-points the Run-as User at another org's user, verification discovers a
+        // different org id, and refuses. Blocking the edit here would make that guard unreachable and turn a
+        // clear refusal into a vaguer "Disconnect first" for edits that are perfectly legitimate.
+        //
+        // The keypair is reused when one already exists. Regenerating it would silently invalidate the
+        // certificate Salesforce holds, so correcting a typo in a username would break authentication and
+        // require re-registering the certificate by hand.
+        var keypair = existing is null ? SigningKeypairFactory.Create(_time.GetUtcNow()) : null;
 
         var saved = await _repository.UpsertAsync(new OrgConnection {
             ConsumerKey = request.ConsumerKey.Trim(),
             AdministeringUsername = request.AdministeringUsername.Trim(),
             RunAsUsername = request.RunAsUsername.Trim(),
             IsSandbox = request.IsSandbox,
-            SigningPrivateKey = _protector.Protect(keypair.PrivateKeyPem),
-            SigningCertificate = keypair.CertificatePem,
-            CertificateFingerprint = keypair.Fingerprint,
-            CertificateExpiresAt = keypair.ExpiresAt
+            SigningPrivateKey = keypair is null ? existing!.SigningPrivateKey : _protector.Protect(keypair.PrivateKeyPem),
+            SigningCertificate = keypair?.CertificatePem ?? existing!.SigningCertificate,
+            CertificateFingerprint = keypair?.Fingerprint ?? existing!.CertificateFingerprint,
+            CertificateExpiresAt = keypair?.ExpiresAt ?? existing!.CertificateExpiresAt
         }, cancellationToken).ConfigureAwait(false);
 
-        await _repository.SaveBootstrapSecretsAsync(
-            _protector.Protect(request.ConsumerSecret.Trim()), null, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(request.ConsumerSecret)) {
+            await _repository.SaveBootstrapSecretsAsync(
+                _protector.Protect(request.ConsumerSecret.Trim()), null, cancellationToken).ConfigureAwait(false);
+        }
 
         _provider.Invalidate();
         _tokenProvider.ClearCache();
@@ -129,7 +129,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
 
         _logger.LogInformation(
             "Org Connection saved for Consumer Key {ConsumerKey}; Signing Certificate {Fingerprint} expires {Expiry:u}",
-            saved.ConsumerKey, keypair.Fingerprint, keypair.ExpiresAt);
+            saved.ConsumerKey, saved.CertificateFingerprint, saved.CertificateExpiresAt);
 
         return await GetAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -138,11 +138,17 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         var connection = await RequireConnectionAsync(cancellationToken).ConfigureAwait(false);
         var callbackUrl = RequireCallbackUrl();
 
+        if (connection.BootstrapConsumerSecret is null) {
+            throw new ValidationException(
+                "The Consumer Secret is needed for the one-time browser approval. Save it with the connection " +
+                "details first; it is discarded once the connection works.");
+        }
+
         var state = _stateStore.Issue();
 
         return new BootstrapStartDTO {
             AuthorizeUrl = _bootstrap.BuildAuthorizeUrl(
-                connection.LoginUrl, connection.ConsumerKey, callbackUrl, state)
+                SalesforceLoginHost.For(connection.IsSandbox), connection.ConsumerKey, callbackUrl, state)
         };
     }
 
@@ -172,8 +178,8 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         var consumerSecret = _protector.Unprotect(connection.BootstrapConsumerSecret);
 
         var session = await _bootstrap.ExchangeCodeAsync(
-            connection.LoginUrl, connection.ConsumerKey, consumerSecret, callbackUrl, code, cancellationToken)
-            .ConfigureAwait(false);
+            SalesforceLoginHost.For(connection.IsSandbox), connection.ConsumerKey, consumerSecret, callbackUrl,
+            code, cancellationToken).ConfigureAwait(false);
 
         // Kept until the first JWT succeeds, not until the deploy returns. A metadata deploy is eventually
         // consistent, so "configured, JWT not working yet" is expected — and this session is the only way to
@@ -269,11 +275,6 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         if (string.IsNullOrWhiteSpace(request.ConsumerKey)) {
             throw new ValidationException("The Consumer Key is required. Copy it from the External Client App in Setup.");
         }
-        if (string.IsNullOrWhiteSpace(request.ConsumerSecret)) {
-            throw new ValidationException(
-                "The Consumer Secret is required for the one-time browser approval. It is discarded once the " +
-                "connection works.");
-        }
         if (string.IsNullOrWhiteSpace(request.AdministeringUsername)) {
             throw new ValidationException("The Administering User's username is required.");
         }
@@ -282,33 +283,12 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         }
     }
 
-    /// <summary>
-    /// Returns the configured callback URL, refusing one Salesforce would reject.
-    /// </summary>
-    /// <remarks>
-    /// Checked here rather than left to Salesforce, because Salesforce's rejection arrives after the user has
-    /// created an app, pasted keys and opened a browser, and says only that the redirect URI does not match.
-    /// </remarks>
     private string RequireCallbackUrl() {
-        if (string.IsNullOrWhiteSpace(_config.CallbackUrl)) {
-            throw new ValidationException(
-                "SalesforceConfig:CallbackUrl is not configured, so there is nowhere for Salesforce to send " +
-                "the authorization code. Set it to this application's public callback URL and register the " +
-                "same value on the External Client App.");
+        if (_config.ValidateCallbackUrl() is { } problem) {
+            throw new ValidationException(problem);
         }
 
-        if (!Uri.TryCreate(_config.CallbackUrl, UriKind.Absolute, out var callbackUrl)) {
-            throw new ValidationException($"SalesforceConfig:CallbackUrl is not a valid URL: {_config.CallbackUrl}");
-        }
-
-        var isLocalhost = callbackUrl.IsLoopback;
-        if (callbackUrl.Scheme != Uri.UriSchemeHttps && !isLocalhost) {
-            throw new ValidationException(
-                $"SalesforceConfig:CallbackUrl must use https — Salesforce accepts http only for localhost. " +
-                $"It is currently {_config.CallbackUrl}.");
-        }
-
-        return _config.CallbackUrl;
+        return _config.CallbackUrl!;
     }
 
     private static DisconnectPreviewDTO ToPreview(OrgScopedStateCounts counts) => new() {
@@ -359,12 +339,12 @@ public sealed class OrgConnectionService : IOrgConnectionService {
             return null;
         }
 
-        // LastError is stored as the translator's already-summarised line, which carries the raw Salesforce
-        // text. Re-translating here would parse a summary rather than a response body.
+        // Both halves reach the user: the translated summary, and Salesforce's own words underneath it. The
+        // raw text is stored separately precisely so this does not have to reconstruct it from a summary.
         return new OAuthFailureDTO {
             Error = connection.ConnectionState.ToString(),
             ErrorDescription = connection.LastError,
-            RawResponse = connection.LastError,
+            RawResponse = connection.LastErrorRaw ?? "",
             OccurredAt = connection.LastErrorAt
         };
     }

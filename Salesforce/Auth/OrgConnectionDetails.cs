@@ -18,15 +18,14 @@ public enum SalesforceIdentity {
 }
 
 /// <summary>
-/// Everything the token provider needs to sign an assertion, with the one secret already decrypted.
+/// The Org Connection as this project needs it, with its one secret already decrypted.
 /// </summary>
 /// <remarks>
-/// This is the shape of the Org Connection as the Salesforce project sees it. It is defined here, rather than
-/// the token provider taking a database type, because the Salesforce project deliberately knows nothing about
-/// the App Database — the Application project implements
-/// <see cref="ISalesforceCredentialSource"/> over the stored connection.
+/// Defined here, rather than the token provider taking the stored row directly, because this project
+/// deliberately knows nothing about the App Database — the Application project implements
+/// <see cref="IOrgConnectionSource"/> over what is stored.
 /// </remarks>
-public sealed record SalesforceCredentials {
+public sealed record OrgConnectionDetails {
     /// <summary>The External Client App's Consumer Key — the assertion's <c>iss</c> claim.</summary>
     public required string ConsumerKey { get; init; }
 
@@ -36,11 +35,8 @@ public sealed record SalesforceCredentials {
     /// <summary>The Signing Keypair's private key, PKCS#8 PEM. Decrypted; do not log it.</summary>
     public required string SigningPrivateKeyPem { get; init; }
 
-    /// <summary>
-    /// The assertion's <c>aud</c> claim and the token endpoint's authority: login.salesforce.com for
-    /// production, test.salesforce.com for a sandbox.
-    /// </summary>
-    public required string LoginUrl { get; init; }
+    /// <summary>Which Salesforce host this org authenticates against.</summary>
+    public required SalesforceLoginHost LoginHost { get; init; }
 
     /// <summary>The discovered instance URL, or null before the first successful token exchange.</summary>
     public string? OrgUrl { get; init; }

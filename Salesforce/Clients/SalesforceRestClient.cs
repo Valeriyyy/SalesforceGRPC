@@ -5,8 +5,8 @@ using Salesforce.Auth;
 namespace Salesforce.Clients;
 
 public class SalesforceRestClient : BaseSalesforceClient {
-    public SalesforceRestClient(HttpClient httpClient, ISalesforceCredentialSource credentials,
+    public SalesforceRestClient(HttpClient httpClient, IOrgConnectionSource connections,
         IOptions<SalesforceConfig> config, ILogger<SalesforceRestClient> logger)
-        : base(httpClient, config.Value, logger, credentials) {
+        : base(httpClient, config.Value, logger, connections) {
     }
 }

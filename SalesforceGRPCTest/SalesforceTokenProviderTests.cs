@@ -22,22 +22,22 @@ public class SalesforceTokenProviderTests {
     private static readonly RSA Key = RSA.Create(2048);
 
     private readonly FakeTokenEndpoint _endpoint = new();
-    private readonly ISalesforceCredentialSource _credentials = Substitute.For<ISalesforceCredentialSource>();
+    private readonly IOrgConnectionSource _connections = Substitute.For<IOrgConnectionSource>();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero));
 
     public SalesforceTokenProviderTests() {
-        _credentials.GetCredentialsAsync(Arg.Any<CancellationToken>()).Returns(new SalesforceCredentials {
+        _connections.GetConnectionAsync(Arg.Any<CancellationToken>()).Returns(new OrgConnectionDetails {
             ConsumerKey = "3MVG9key",
             AdministeringUsername = "admin@example.com",
             RunAsUsername = "integration@example.com",
             SigningPrivateKeyPem = Key.ExportPkcs8PrivateKeyPem(),
-            LoginUrl = "https://login.salesforce.com",
+            LoginHost = SalesforceLoginHost.Production,
             CertificateFingerprint = "AA:BB"
         });
     }
 
     private SalesforceTokenProvider NewProvider() =>
-        new(_endpoint.Factory, _credentials, NullLogger<SalesforceTokenProvider>.Instance, _time);
+        new(_endpoint.Factory, _connections, NullLogger<SalesforceTokenProvider>.Instance, _time);
 
     [Fact]
     public async Task ASuccessfulExchange_ReturnsTheTokenAndRecordsTheDiscoveredOrg() {
@@ -46,7 +46,7 @@ public class SalesforceTokenProviderTests {
         var token = await NewProvider().GetAuthToken(SalesforceIdentity.RunAsUser, Ct);
 
         Assert.Equal("00Dxx!token", token.AccessToken);
-        await _credentials.Received(1).RecordTokenSuccessAsync(
+        await _connections.Received(1).RecordTokenSuccessAsync(
             "https://example.my.salesforce.com", "00D000000000001AAA", Arg.Any<CancellationToken>());
     }
 
@@ -112,8 +112,11 @@ public class SalesforceTokenProviderTests {
         Assert.Contains("user hasn't approved this consumer", ex.Error.RawResponse);
         Assert.NotNull(ex.Error.Guidance);
 
-        await _credentials.Received(1).RecordTokenFailureAsync(
-            Arg.Is<string>(m => m.Contains("invalid_grant")), Arg.Any<CancellationToken>());
+        // The raw Salesforce body has to survive the failure path, not just the translation of it.
+        await _connections.Received(1).RecordTokenFailureAsync(
+            Arg.Is<SalesforceOAuthError>(e =>
+                e.Error == "invalid_grant" && e.RawResponse.Contains("user hasn't approved this consumer")),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -129,12 +132,34 @@ public class SalesforceTokenProviderTests {
 
     [Fact]
     public async Task WithNoOrgConnection_TheFailureSaysSetupIsMissingRatherThanBlamingSalesforce() {
-        _credentials.GetCredentialsAsync(Arg.Any<CancellationToken>()).Returns((SalesforceCredentials?)null);
+        _connections.GetConnectionAsync(Arg.Any<CancellationToken>()).Returns((OrgConnectionDetails?)null);
 
         await Assert.ThrowsAsync<NoOrgConnectionException>(
             () => NewProvider().GetAuthToken(SalesforceIdentity.RunAsUser, Ct));
 
         Assert.Equal(0, _endpoint.RequestCount);
+    }
+
+    /// <summary>
+    /// The org-mismatch refusal says "do not connect". A token cached before the refusal would stay live and
+    /// get used by the auth handler, so the connection this application refused would work anyway.
+    /// </summary>
+    [Fact]
+    public async Task ATokenRefusedForTheWrongOrg_IsNotLeftInTheCache() {
+        _endpoint.RespondWithToken();
+        _connections
+            .When(c => c.RecordTokenSuccessAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()))
+            .Do(_ => throw new InvalidOperationException("this token is for a different org"));
+
+        var provider = NewProvider();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => provider.GetAuthToken(SalesforceIdentity.RunAsUser, Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => provider.GetAuthToken(SalesforceIdentity.RunAsUser, Ct));
+
+        // A cached token would have made the second call never reach Salesforce.
+        Assert.Equal(2, _endpoint.RequestCount);
     }
 
     [Fact]

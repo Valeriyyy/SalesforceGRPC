@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS salesforce.org_connection (
     connection_state varchar(20) DEFAULT 'Incomplete' NOT NULL,
     last_connected_at timestamptz NULL,
     last_error text NULL,
+    last_error_raw text NULL,
     last_error_at timestamptz NULL,
     bootstrap_consumer_secret text NULL,
     bootstrap_refresh_token text NULL,

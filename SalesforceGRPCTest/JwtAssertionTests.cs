@@ -17,12 +17,12 @@ public class JwtAssertionTests {
 
     private static readonly RSA Key = RSA.Create(2048);
 
-    private static SalesforceCredentials Credentials(bool isSandbox = false) => new() {
+    private static OrgConnectionDetails Connection(bool isSandbox = false) => new() {
         ConsumerKey = "3MVG9consumerkey",
         AdministeringUsername = "admin@example.com",
         RunAsUsername = "integration@example.com",
         SigningPrivateKeyPem = Key.ExportPkcs8PrivateKeyPem(),
-        LoginUrl = isSandbox ? "https://test.salesforce.com" : "https://login.salesforce.com"
+        LoginHost = SalesforceLoginHost.For(isSandbox)
     };
 
     private static JObject PayloadOf(string assertion) {
@@ -37,7 +37,7 @@ public class JwtAssertionTests {
 
     [Fact]
     public void Assertion_CarriesTheConsumerKeyAsIssuer() {
-        var payload = PayloadOf(JwtAssertionFactory.Create(Credentials(), SalesforceIdentity.RunAsUser, Now));
+        var payload = PayloadOf(JwtAssertionFactory.Create(Connection(), SalesforceIdentity.RunAsUser, Now));
 
         Assert.Equal("3MVG9consumerkey", payload.Value<string>("iss"));
     }
@@ -50,7 +50,7 @@ public class JwtAssertionTests {
     [InlineData(SalesforceIdentity.RunAsUser, "integration@example.com")]
     [InlineData(SalesforceIdentity.AdministeringUser, "admin@example.com")]
     public void Assertion_NamesTheRequestedIdentityAsSubject(SalesforceIdentity identity, string expected) {
-        var payload = PayloadOf(JwtAssertionFactory.Create(Credentials(), identity, Now));
+        var payload = PayloadOf(JwtAssertionFactory.Create(Connection(), identity, Now));
 
         Assert.Equal(expected, payload.Value<string>("sub"));
     }
@@ -63,14 +63,14 @@ public class JwtAssertionTests {
     [InlineData(false, "https://login.salesforce.com")]
     [InlineData(true, "https://test.salesforce.com")]
     public void Assertion_AudienceFollowsTheSandboxFlag(bool isSandbox, string expected) {
-        var payload = PayloadOf(JwtAssertionFactory.Create(Credentials(isSandbox), SalesforceIdentity.RunAsUser, Now));
+        var payload = PayloadOf(JwtAssertionFactory.Create(Connection(isSandbox), SalesforceIdentity.RunAsUser, Now));
 
         Assert.Equal(expected, payload.Value<string>("aud"));
     }
 
     [Fact]
     public void Assertion_ExpiresWithinSalesforcesThreeMinuteLimit() {
-        var payload = PayloadOf(JwtAssertionFactory.Create(Credentials(), SalesforceIdentity.RunAsUser, Now));
+        var payload = PayloadOf(JwtAssertionFactory.Create(Connection(), SalesforceIdentity.RunAsUser, Now));
 
         var expiry = DateTimeOffset.FromUnixTimeSeconds(payload.Value<long>("exp"));
 
@@ -81,7 +81,7 @@ public class JwtAssertionTests {
 
     [Fact]
     public void Assertion_IsSignedRS256AndVerifiesAgainstThePublicKey() {
-        var assertion = JwtAssertionFactory.Create(Credentials(), SalesforceIdentity.RunAsUser, Now);
+        var assertion = JwtAssertionFactory.Create(Connection(), SalesforceIdentity.RunAsUser, Now);
 
         var parts = assertion.Split('.');
         Assert.Equal(3, parts.Length);
@@ -102,10 +102,10 @@ public class JwtAssertionTests {
 
     [Fact]
     public void Assertion_ForAnIdentityWithNoUsername_SaysSoRatherThanSigningAnEmptySubject() {
-        var credentials = Credentials() with { AdministeringUsername = "" };
+        var connection = Connection() with { AdministeringUsername = "" };
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => JwtAssertionFactory.Create(credentials, SalesforceIdentity.AdministeringUser, Now));
+            () => JwtAssertionFactory.Create(connection, SalesforceIdentity.AdministeringUser, Now));
 
         Assert.Contains("AdministeringUser", ex.Message);
     }

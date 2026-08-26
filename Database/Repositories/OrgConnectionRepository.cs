@@ -37,6 +37,7 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
                 connection_state AS ConnectionState,
                 last_connected_at AS LastConnectedAt,
                 last_error AS LastError,
+                last_error_raw AS LastErrorRaw,
                 last_error_at AS LastErrorAt,
                 bootstrap_consumer_secret AS BootstrapConsumerSecret,
                 bootstrap_refresh_token AS BootstrapRefreshToken,
@@ -87,9 +88,13 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
                 -- Incomplete and the previous success is cleared rather than left to look current.
                 connection_state = 'Incomplete',
                 org_url = NULL,
-                org_id = NULL,
+                -- org_id deliberately survives. It is the identity of the org this installation is bound to,
+                -- not a by-product of the last token, and it is the only thing the mismatch guard has to
+                -- compare against. Clearing it here would let a user re-point the connection at a different
+                -- org and connect cleanly, which is exactly what Disconnect exists to make deliberate.
                 last_connected_at = NULL,
                 last_error = NULL,
+                last_error_raw = NULL,
                 last_error_at = NULL,
                 date_updated = now()
             RETURNING {ConnectionColumns}";
@@ -118,6 +123,7 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
                 org_id = @OrgId,
                 last_connected_at = @At,
                 last_error = NULL,
+                last_error_raw = NULL,
                 last_error_at = NULL,
                 date_updated = now()";
 
@@ -128,13 +134,15 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
             new { OrgUrl = orgUrl, OrgId = orgId, At = at }, cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
-    public async Task RecordFailureAsync(string error, DateTime at, CancellationToken cancellationToken = default) {
+    public async Task RecordFailureAsync(string error, string? rawResponse, DateTime at,
+        CancellationToken cancellationToken = default) {
         // last_connected_at survives a failure on purpose: "worked until 04:12, then this" is the useful
         // report, and clearing it would erase the only evidence the connection ever worked.
         const string sql = @"
             UPDATE salesforce.org_connection SET
                 connection_state = 'Failed',
                 last_error = @Error,
+                last_error_raw = @RawResponse,
                 last_error_at = @At,
                 date_updated = now()";
 
@@ -142,7 +150,8 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.ExecuteAsync(new CommandDefinition(sql,
-            new { Error = error, At = at }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+            new { Error = error, RawResponse = rawResponse, At = at }, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
     }
 
     public async Task SaveBootstrapSecretsAsync(string? encryptedConsumerSecret, string? encryptedRefreshToken,

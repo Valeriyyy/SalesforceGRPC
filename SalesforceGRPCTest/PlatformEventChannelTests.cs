@@ -255,12 +255,12 @@ public class PlatformEventChannelTests {
 
             // The org's host is resolved per request now, so it comes from the credential source rather than
             // configuration. A stub value is enough: no test here is allowed to reach the wire.
-            var credentials = Substitute.For<ISalesforceCredentialSource>();
-            credentials.GetOrgUrlAsync(Arg.Any<CancellationToken>()).Returns("https://example.my.salesforce.com");
+            var connections = Substitute.For<IOrgConnectionSource>();
+            connections.GetOrgUrlAsync(Arg.Any<CancellationToken>()).Returns("https://example.my.salesforce.com");
 
             var toolingClient = new SalesforceToolingClient(
                 new HttpClient(_handler),
-                credentials,
+                connections,
                 config,
                 NullLogger<SalesforceToolingClient>.Instance);
 

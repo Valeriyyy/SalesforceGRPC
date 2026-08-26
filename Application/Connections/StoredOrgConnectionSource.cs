@@ -28,22 +28,22 @@ public sealed class OrgMismatchException : InvalidOperationException {
 }
 
 /// <summary>
-/// Implements the Salesforce project's credential seam over the stored Org Connection.
+/// Implements the Salesforce project's Org Connection seam over what the App Database stores.
 /// </summary>
 /// <remarks>
-/// This is where the Salesforce project's <see cref="ISalesforceCredentialSource"/> meets the App Database,
-/// and where the connection's state machine actually turns: Incomplete or Failed becomes Connected on a
-/// successful token, anything becomes Failed on a rejected one.
+/// This is where <see cref="IOrgConnectionSource"/> meets the App Database, and where the Connection State
+/// actually turns: Incomplete or Failed becomes Connected on a successful token, anything becomes Failed on a
+/// rejected one.
 /// </remarks>
-public sealed class OrgConnectionCredentialSource : ISalesforceCredentialSource {
+public sealed class StoredOrgConnectionSource : IOrgConnectionSource {
     private readonly IOrgConnectionProvider _provider;
     private readonly IOrgConnectionRepository _repository;
     private readonly IConfigurationChangeSignal _changeSignal;
-    private readonly ILogger<OrgConnectionCredentialSource> _logger;
+    private readonly ILogger<StoredOrgConnectionSource> _logger;
     private readonly TimeProvider _time;
 
-    public OrgConnectionCredentialSource(IOrgConnectionProvider provider, IOrgConnectionRepository repository,
-        IConfigurationChangeSignal changeSignal, ILogger<OrgConnectionCredentialSource> logger, TimeProvider time) {
+    public StoredOrgConnectionSource(IOrgConnectionProvider provider, IOrgConnectionRepository repository,
+        IConfigurationChangeSignal changeSignal, ILogger<StoredOrgConnectionSource> logger, TimeProvider time) {
         _provider = provider;
         _repository = repository;
         _changeSignal = changeSignal;
@@ -51,8 +51,8 @@ public sealed class OrgConnectionCredentialSource : ISalesforceCredentialSource 
         _time = time;
     }
 
-    public Task<SalesforceCredentials?> GetCredentialsAsync(CancellationToken cancellationToken = default) =>
-        _provider.GetCredentialsAsync(cancellationToken);
+    public Task<OrgConnectionDetails?> GetConnectionAsync(CancellationToken cancellationToken = default) =>
+        _provider.GetDetailsAsync(cancellationToken);
 
     public async Task<string?> GetOrgUrlAsync(CancellationToken cancellationToken = default) {
         var connection = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
@@ -72,10 +72,15 @@ public sealed class OrgConnectionCredentialSource : ISalesforceCredentialSource 
             // The org id feeds the Pub/Sub tenantid header, so a connection without one cannot stream. Left
             // as a failure rather than a partial success, because "Connected but the worker will not start"
             // is the least explicable state the application could be in.
-            await RecordTokenFailureAsync(
-                "The token exchange succeeded but carried no org id, which the Pub/Sub API requires as its " +
-                "tenantid. Verify the connection again; if this persists the org id must be read from " +
-                "/services/oauth2/userinfo instead.", cancellationToken).ConfigureAwait(false);
+            await RecordTokenFailureAsync(new SalesforceOAuthError {
+                Error = "missing_org_id",
+                ErrorDescription =
+                    "The token exchange succeeded but carried no org id, which the Pub/Sub API requires as its tenant.",
+                RawResponse = "",
+                Guidance =
+                    "Verify the connection again. If it persists, the org id has to be read from " +
+                    "/services/oauth2/userinfo or a SOQL query against Organization instead of the token response."
+            }, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -104,16 +109,20 @@ public sealed class OrgConnectionCredentialSource : ISalesforceCredentialSource 
         }
     }
 
-    public async Task RecordTokenFailureAsync(string error, CancellationToken cancellationToken = default) {
+    public async Task RecordTokenFailureAsync(SalesforceOAuthError error, CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(error);
+
         var connection = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
         if (connection is null) {
             return;
         }
 
-        _logger.LogError("Salesforce rejected the token request: {Error}", error);
+        _logger.LogError("Salesforce rejected the token request: {Error}", error.Summary);
 
-        await _repository.RecordFailureAsync(error, _time.GetUtcNow().UtcDateTime, cancellationToken)
-            .ConfigureAwait(false);
+        // Both halves stored. The summary is what a status line shows; the raw body is the only thing a user
+        // can search for when the translation table has nothing to say about their error.
+        await _repository.RecordFailureAsync(
+            error.Summary, error.RawResponse, _time.GetUtcNow().UtcDateTime, cancellationToken).ConfigureAwait(false);
         _provider.Invalidate();
     }
 }

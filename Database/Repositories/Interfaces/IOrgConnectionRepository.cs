@@ -33,7 +33,8 @@ public interface IOrgConnectionRepository {
     /// <remarks>
     /// Discovered fields and connection state are not written here — they are the outcome of a token
     /// exchange, not something a caller supplies. Editing the details resets the connection to Incomplete,
-    /// because the previous success said nothing about the new details.
+    /// because the previous success said nothing about the new details. The discovered org id survives that
+    /// reset: it is the org this installation is bound to, and it is what the mismatch guard compares against.
     /// </remarks>
     Task<OrgConnection> UpsertAsync(OrgConnection connection, CancellationToken cancellationToken = default);
 
@@ -41,9 +42,10 @@ public interface IOrgConnectionRepository {
     Task RecordSuccessAsync(string orgUrl, string orgId, DateTime at, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Records a failed token exchange, moving the connection to Failed and keeping the raw Salesforce text.
+    /// Records a failed token exchange, moving the connection to Failed and keeping the raw Salesforce text
+    /// alongside the translated summary.
     /// </summary>
-    Task RecordFailureAsync(string error, DateTime at, CancellationToken cancellationToken = default);
+    Task RecordFailureAsync(string error, string? rawResponse, DateTime at, CancellationToken cancellationToken = default);
 
     /// <summary>Stores the encrypted Bootstrap session material.</summary>
     Task SaveBootstrapSecretsAsync(string? encryptedConsumerSecret, string? encryptedRefreshToken,

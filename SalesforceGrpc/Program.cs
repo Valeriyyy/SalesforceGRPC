@@ -106,7 +106,7 @@ builder.Services.AddSingleton<ISecretProtector>(sp => {
 
 builder.Services.AddSingleton<IOrgConnectionProvider, OrgConnectionProvider>();
 builder.Services.AddSingleton<IBootstrapStateStore, BootstrapStateStore>();
-builder.Services.AddSingleton<ISalesforceCredentialSource, OrgConnectionCredentialSource>();
+builder.Services.AddSingleton<IOrgConnectionSource, StoredOrgConnectionSource>();
 builder.Services.AddSingleton<IBootstrapOAuthClient, BootstrapOAuthClient>();
 // Self-Configuration rests on an assumption not yet proved against a real org — that an OAuth access token is
 // accepted as the Metadata API SessionHeader. Until it is, this stands in and tells the user what to do in
