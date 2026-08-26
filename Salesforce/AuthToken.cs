@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace SalesforceGrpc.Salesforce;
+namespace Salesforce;
 
 public record AuthToken {
     [JsonProperty("access_token")]

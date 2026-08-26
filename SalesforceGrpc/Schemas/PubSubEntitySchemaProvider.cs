@@ -7,7 +7,7 @@ using Grpc.Core;
 using GrpcClient;
 using Microsoft.Extensions.Caching.Memory;
 
-namespace SalesforceGrpc.Salesforce;
+namespace SalesforceGrpc.Schemas;
 
 /// <summary>
 /// Supplies an Entity's Avro Schema, asking Salesforce for the current revision and caching it locally.

@@ -1,4 +1,4 @@
-﻿namespace SalesforceGrpc.Salesforce;
+﻿namespace Salesforce;
 
 public class SalesforceConfig {
     public string? Username { get; set; }

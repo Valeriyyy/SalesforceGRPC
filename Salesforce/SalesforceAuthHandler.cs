@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 
-namespace SalesforceGrpc.Salesforce;
+namespace Salesforce;
 
 public class SalesforceAuthHandler : DelegatingHandler {
     private readonly ISalesforceTokenProvider _tokenProvider;

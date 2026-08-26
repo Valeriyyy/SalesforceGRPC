@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Salesforce.Dtos;
-using SalesforceGrpc.Salesforce;
 
 namespace Salesforce.Clients;
 

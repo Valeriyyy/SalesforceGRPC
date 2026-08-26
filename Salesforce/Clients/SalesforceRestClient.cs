@@ -1,6 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using SalesforceGrpc.Salesforce;
 
 namespace Salesforce.Clients;
 

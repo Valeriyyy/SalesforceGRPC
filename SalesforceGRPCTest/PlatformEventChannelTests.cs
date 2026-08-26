@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Salesforce.Clients;
-using SalesforceGrpc.Salesforce;
+using Salesforce;
 using System.ComponentModel.DataAnnotations;
 
 namespace SalesforceGRPCTest;

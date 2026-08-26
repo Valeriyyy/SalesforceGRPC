@@ -2,7 +2,7 @@ using Application.Services.Interfaces;
 using Database.Models;
 using Microsoft.AspNetCore.Mvc;
 using Salesforce.Clients;
-using SalesforceGrpc.Salesforce;
+using Salesforce;
 
 namespace SalesforceGrpc.Controllers;
 

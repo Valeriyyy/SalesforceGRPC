@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 
-namespace SalesforceGrpc.Salesforce;
+namespace Salesforce;
 
 public interface ISalesforceTokenProvider {
     Task<AuthToken> GetAuthToken(CancellationToken cancellationToken = default);
