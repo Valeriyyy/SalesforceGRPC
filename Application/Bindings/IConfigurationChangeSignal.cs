@@ -10,8 +10,12 @@ namespace Application.Bindings;
 ///
 /// It works because the worker and the API share a process. Splitting them would make this a distributed
 /// invalidation problem and the design would need revisiting.
+///
+/// It covers Bindings and the Org Connection alike. Naming it for Bindings alone, as it once was, invited a
+/// second parallel signal for connection changes — two things to remember to raise, and one of them
+/// eventually forgotten.
 /// </remarks>
-public interface IBindingChangeSignal {
+public interface IConfigurationChangeSignal {
     /// <summary>Marks the current plan stale and wakes anything waiting.</summary>
     void Signal();
 
@@ -22,7 +26,7 @@ public interface IBindingChangeSignal {
 }
 
 /// <inheritdoc />
-public sealed class BindingChangeSignal : IBindingChangeSignal {
+public sealed class ConfigurationChangeSignal : IConfigurationChangeSignal {
     private TaskCompletionSource _pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public void Signal() {

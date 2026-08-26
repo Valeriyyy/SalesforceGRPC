@@ -413,3 +413,5 @@ skills-lock.json
 docs/
 .scratch/
 CONTEXT.md
+# macOS
+.DS_Store

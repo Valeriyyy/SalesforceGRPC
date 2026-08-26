@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Connections;
 using Application.Services.Interfaces;
 using Avro;
 using Database.Models;
@@ -31,7 +32,8 @@ public class BindingService : IBindingService {
     private readonly IRepository _targetDb;
     private readonly IPlatformEventChannelRepository _channels;
     private readonly IEntitySchemaProvider _entitySchemas;
-    private readonly IBindingChangeSignal _changeSignal;
+    private readonly IConfigurationChangeSignal _changeSignal;
+    private readonly IOrgConnectionProvider _connections;
     private readonly ILogger<BindingService> _logger;
 
     public BindingService(
@@ -40,7 +42,8 @@ public class BindingService : IBindingService {
         IRepository targetDb,
         IPlatformEventChannelRepository channels,
         IEntitySchemaProvider entitySchemas,
-        IBindingChangeSignal changeSignal,
+        IConfigurationChangeSignal changeSignal,
+        IOrgConnectionProvider connections,
         ILogger<BindingService> logger) {
         _meta = meta;
         _avroSchemas = avroSchemas;
@@ -48,6 +51,7 @@ public class BindingService : IBindingService {
         _channels = channels;
         _entitySchemas = entitySchemas;
         _changeSignal = changeSignal;
+        _connections = connections;
         _logger = logger;
     }
 
@@ -425,9 +429,14 @@ public class BindingService : IBindingService {
     }
 
     public async Task<SubscriptionPlan> GetSubscriptionPlanAsync(CancellationToken cancellationToken = default) {
+        // Whether the connection is usable, not merely present: a connection that has never authenticated
+        // has no org id, and the Pub/Sub API requires one as its tenant.
+        var connection = await _connections.GetAsync(cancellationToken).ConfigureAwait(false);
+        var hasConnection = connection?.IsUsable == true;
+
         var channel = await _channels.GetPrimaryChannelAsync(cancellationToken).ConfigureAwait(false);
         if (channel is null) {
-            return SubscriptionPlan.Empty;
+            return SubscriptionPlan.Empty with { HasConnection = hasConnection };
         }
 
         var entityNames = channel.Members
@@ -448,6 +457,7 @@ public class BindingService : IBindingService {
         }
 
         return new SubscriptionPlan {
+            HasConnection = hasConnection,
             TopicName = $"/data/{channel.FullName}",
             ChannelFullName = channel.FullName,
             ActiveBindingsBySchemaId = active,

@@ -1,18 +1,23 @@
 using Application.Bindings;
+using Application.Connections;
 using Application.Services;
 using Application.Services.Interfaces;
 using Dapper;
+using Database.DataProtection;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
 using Database.Utilities;
 using GrpcClient;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Salesforce;
+using Salesforce.Auth;
 using Salesforce.Clients;
 using SalesforceGrpc;
+using SalesforceGrpc.Health;
 using SalesforceGrpc.Schemas;
 using SalesforceGrpc.Strategies;
 using Serilog;
@@ -22,8 +27,10 @@ using static System.Console;
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
 
+// Deployment-level settings only. Everything org-specific — credentials, org URL, org id, channel — lives in
+// the App Database as the Org Connection, so nothing here is a secret and nothing here needs a restart to change.
 builder.Services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
-builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SalesforceConfig>>().Value);
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Logging.AddSerilog();
 builder.Services.AddSerilog((serilogServices, lc) => lc
@@ -54,6 +61,58 @@ SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
 builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
+builder.Services.AddSingleton<IOrgConnectionRepository, OrgConnectionRepository>();
+
+#region Data Protection
+// The one secret this application stores is a private key it generated for itself. The key ring lives in the
+// App Database so a restart needs no operator, and is itself protected by a certificate resolved from OUTSIDE
+// that database — a key ring sitting beside the ciphertext it protects defends against nothing. See
+// docs/adr/0002.
+builder.Services.AddSingleton<IProtectingCertificateResolver, ProtectingCertificateResolver>();
+builder.Services.AddSingleton<DapperXmlRepository>();
+
+builder.Services.AddSingleton<ISecretProtector>(sp => {
+    var resolver = sp.GetRequiredService<IProtectingCertificateResolver>();
+    var resolution = resolver.Resolve();
+    var logger = sp.GetRequiredService<ILogger<SecretProtector>>();
+
+    if (!resolution.Resolved) {
+        // No protecting key means no key ring is persisted at all. Writing an unprotected one to the database
+        // would be worse than useless: it would look like encryption while providing none, and the operator
+        // would not learn otherwise until it mattered. The host still starts, and the API says what to supply.
+        var attempts = string.Join("; ", resolution.Attempts);
+        sp.GetRequiredService<ILogger<Program>>().LogWarning(
+            "No Data Protection protecting certificate was found, so Salesforce credentials cannot be stored. " +
+            "Supply one through DataProtection:ProtectingCertificate. Tried: {Attempts}", attempts);
+
+        return new SecretProtector(null, attempts, logger);
+    }
+
+    var dataProtection = new ServiceCollection()
+        .AddLogging()
+        .AddDataProtection()
+        // Explicit, so purpose strings stay stable across deployments and container names.
+        .SetApplicationName("SalesforceGrpc")
+        .ProtectKeysWithCertificate(resolution.Certificate!)
+        .Services
+        .AddSingleton<Microsoft.AspNetCore.DataProtection.Repositories.IXmlRepository>(
+            _ => sp.GetRequiredService<DapperXmlRepository>())
+        .BuildServiceProvider();
+
+    return new SecretProtector(
+        dataProtection.GetRequiredService<IDataProtectionProvider>(), resolution.Source, logger);
+});
+#endregion
+
+builder.Services.AddSingleton<IOrgConnectionProvider, OrgConnectionProvider>();
+builder.Services.AddSingleton<IBootstrapStateStore, BootstrapStateStore>();
+builder.Services.AddSingleton<ISalesforceCredentialSource, OrgConnectionCredentialSource>();
+builder.Services.AddSingleton<IBootstrapOAuthClient, BootstrapOAuthClient>();
+// Self-Configuration rests on an assumption not yet proved against a real org — that an OAuth access token is
+// accepted as the Metadata API SessionHeader. Until it is, this stands in and tells the user what to do in
+// Setup by hand, which is the documented fallback for orgs that would refuse the deploy anyway.
+builder.Services.AddSingleton<IOrgSelfConfigurator, ManualRegistrationConfigurator>();
+builder.Services.AddScoped<IOrgConnectionService, OrgConnectionService>();
 
 
 // TODO: Set this behind a db configuration that is saved in the db as a configuration that will be managed through a UI
@@ -69,7 +128,7 @@ builder.Services.AddTransient<IEventStrategy, DeleteStrategy>();
 builder.Services.AddTransient<IEventStrategy, UndeleteStrategy>();
 builder.Services.AddTransient<EventResolver>();
 
-builder.Services.AddSingleton<IBindingChangeSignal, BindingChangeSignal>();
+builder.Services.AddSingleton<IConfigurationChangeSignal, ConfigurationChangeSignal>();
 builder.Services.AddScoped<IEntitySchemaProvider, PubSubEntitySchemaProvider>();
 builder.Services.AddScoped<IBindingService, BindingService>();
 builder.Services.AddScoped<ISchemaService, SchemaService>();
@@ -77,26 +136,46 @@ builder.Services.AddScoped<IPlatformEventService, PlatformEventService>();
      
 builder.Services.AddSingleton<ISalesforceTokenProvider, SalesforceTokenProvider>();
 builder.Services.AddTransient<SalesforceAuthHandler>();
+
+// Bare named clients: the token and authorize endpoints are on login/test.salesforce.com, which is derived
+// from the connection's production/sandbox flag rather than configured, and neither carries a bearer token.
+builder.Services.AddHttpClient(SalesforceTokenProvider.HttpClientName)
+    .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
+builder.Services.AddHttpClient(BootstrapOAuthClient.HttpClientName)
+    .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
+
+var salesforceConfig = config.GetSection(nameof(SalesforceConfig)).Get<SalesforceConfig>() ?? new SalesforceConfig();
+
 builder.Services.AddGrpcClient<PubSub.PubSubClient>("SFPubSubClient", options => {
-    options.Address = new Uri("https://api.pubsub.salesforce.com:7443");
+    // One endpoint for production and sandbox alike; configurable only for EU data-residency orgs.
+    options.Address = new Uri(salesforceConfig.PubSubEndpoint);
 }).AddCallCredentials(async (_, metadata, serviceProvider) => {
+    // The stream runs as the Run-as User, whose permissions bound what it can see. The tenant id comes from
+    // the Org Connection's discovered org id — it is not something the user is asked for, and it is not in
+    // configuration any more.
     var tokenProvider = serviceProvider.GetRequiredService<ISalesforceTokenProvider>();
-    var authResponse = await tokenProvider.GetAuthToken();
+    var connections = serviceProvider.GetRequiredService<IOrgConnectionProvider>();
+
+    var connection = await connections.GetAsync().ConfigureAwait(false)
+                     ?? throw new NoOrgConnectionException();
+    var authResponse = await tokenProvider.GetAuthToken(SalesforceIdentity.RunAsUser).ConfigureAwait(false);
+
     metadata.Add("accesstoken", authResponse.AccessToken!);
     metadata.Add("instanceurl", authResponse.InstanceUrl!);
-    metadata.Add("tenantid", config.GetValue<string>("SalesforceConfig:OrgId")!);
+    metadata.Add("tenantid", connection.OrgId
+        ?? throw new InvalidOperationException(
+            "The Org Connection has no org id, so the Pub/Sub tenant is unknown. Verify the connection first."));
 });
 
-builder.Services.AddHttpClient<SalesforceRestClient>((serviceProvider, client) => {
-        var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
-        client.BaseAddress = new Uri(sfConfig.OrgUrl!);
+// No BaseAddress. The org's host is discovered on the first successful token exchange, so at the moment these
+// clients are constructed there may be no org to point at — and Disconnect can replace it without a restart.
+// BaseSalesforceClient resolves it per request instead.
+builder.Services.AddHttpClient<SalesforceRestClient>(client => {
         client.DefaultRequestHeaders.Add("Accept", "application/json");
     }).AddHttpMessageHandler<SalesforceAuthHandler>()
 .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
 
-builder.Services.AddHttpClient<SalesforceToolingClient>((serviceProvider, client) => {
-    var sfConfig = serviceProvider.GetRequiredService<SalesforceConfig>();
-    client.BaseAddress = new Uri(sfConfig.OrgUrl!);
+builder.Services.AddHttpClient<SalesforceToolingClient>(client => {
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 }).AddHttpMessageHandler<SalesforceAuthHandler>()
 .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
@@ -108,6 +187,10 @@ if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
 }
 
 builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<SecretProtectionStartupCheck>();
+
+builder.Services.AddHealthChecks()
+    .AddCheck<OrgConnectionHealthCheck>(OrgConnectionHealthCheck.Name);
 
 builder.Services.AddControllersWithViews();
 builder.Services.AddEndpointsApiExplorer();
@@ -124,5 +207,6 @@ if (app.Environment.IsDevelopment()) {
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 app.Run();

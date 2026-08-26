@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Connections;
 using Application.Services;
 using Database.Models;
 using Database.Repositories;
@@ -28,7 +29,8 @@ public class BindingServiceTests {
     private readonly IRepository _target = Substitute.For<IRepository>();
     private readonly IPlatformEventChannelRepository _channels = Substitute.For<IPlatformEventChannelRepository>();
     private readonly IEntitySchemaProvider _entitySchemas = Substitute.For<IEntitySchemaProvider>();
-    private readonly IBindingChangeSignal _signal = Substitute.For<IBindingChangeSignal>();
+    private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
+    private readonly IOrgConnectionProvider _connections = Substitute.For<IOrgConnectionProvider>();
 
     private const int MemberId = 5;
     private const int ChannelId = 1;
@@ -37,7 +39,7 @@ public class BindingServiceTests {
     private const string TargetTable = "salesforce.account";
 
     private BindingService NewService() =>
-        new(_meta, _avro, _target, _channels, _entitySchemas, _signal, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, _target, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 

@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Salesforce.Auth;
 using Salesforce.Dtos;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 
 namespace Salesforce.Clients;
@@ -10,49 +10,39 @@ namespace Salesforce.Clients;
 public class BaseSalesforceClient {
     protected readonly SalesforceConfig _config;
     protected readonly ILogger<BaseSalesforceClient> _logger;
-    protected readonly ISalesforceTokenProvider _tokenProvider;
+    protected readonly ISalesforceCredentialSource _credentials;
     protected readonly HttpClient _client;
 
     private static readonly JsonSerializerSettings SerializerSettings = new() {
         NullValueHandling = NullValueHandling.Ignore
     };
 
-    protected BaseSalesforceClient(HttpClient client, SalesforceConfig configuration, ILogger<BaseSalesforceClient> logger, ISalesforceTokenProvider tokenProvider) {
+    protected BaseSalesforceClient(HttpClient client, SalesforceConfig configuration,
+        ILogger<BaseSalesforceClient> logger, ISalesforceCredentialSource credentials) {
         _client = client;
         _config = configuration;
         _logger = logger;
-        _tokenProvider = tokenProvider;
-    }
-
-    /// <summary>
-    /// Forces the shared client's default Authorization header to a valid token.
-    /// </summary>
-    /// <remarks>
-    /// Prefer letting <c>SalesforceAuthHandler</c> apply the token per request — it is registered on
-    /// every typed client and already refreshes on a 401. This method mutates
-    /// <see cref="HttpClient.DefaultRequestHeaders"/> on an instance shared across concurrent
-    /// requests, so it is not safe to call from parallel code paths.
-    /// </remarks>
-    protected async Task EnsureValidTokenAsync(CancellationToken cancellationToken = default) {
-        try {
-            var token = await _tokenProvider.GetAuthToken(cancellationToken);
-            if (string.IsNullOrEmpty(token?.AccessToken)) {
-                await _tokenProvider.ForceRefreshAsync(cancellationToken);
-                token = await _tokenProvider.GetAuthToken(cancellationToken);
-            }
-            _client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", token?.AccessToken);
-        } catch (Exception ex) {
-            _logger.LogError(ex, "Failed to ensure a valid Salesforce access token");
-            throw;
-        }
+        _credentials = credentials;
     }
 
     /// <summary>
     /// Builds an absolute Tooling API URL, e.g. <c>sobjects/PlatformEventChannel/0YL...</c>.
     /// </summary>
-    protected string ToolingUrl(string relativePath) =>
-        $"{_config.OrgUrl}/services/data/v{_config.ApiVersion}/tooling/{relativePath}";
+    /// <remarks>
+    /// The org's host is resolved per request rather than baked into
+    /// <see cref="HttpClient.BaseAddress"/> at construction. It is discovered from the first successful token
+    /// exchange, so at the moment the typed client is built there may be no org to point at, and Disconnect
+    /// can replace it later without a restart.
+    /// </remarks>
+    protected async Task<string> ToolingUrlAsync(string relativePath, CancellationToken cancellationToken) {
+        var orgUrl = await _credentials.GetOrgUrlAsync(cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(orgUrl)) {
+            throw new NoOrgConnectionException();
+        }
+
+        return $"{orgUrl.TrimEnd('/')}/services/data/v{_config.ApiVersion}/tooling/{relativePath}";
+    }
 
     /// <summary>
     /// Escapes a value for safe interpolation into a single-quoted SOQL string literal.
@@ -66,7 +56,7 @@ public class BaseSalesforceClient {
     /// Runs a SOQL query against the Tooling API.
     /// </summary>
     protected async Task<ToolingQueryResponse<T>> ToolingQueryAsync<T>(string soql, CancellationToken cancellationToken = default) {
-        var url = ToolingUrl($"query?q={WebUtility.UrlEncode(soql)}");
+        var url = await ToolingUrlAsync($"query?q={WebUtility.UrlEncode(soql)}", cancellationToken).ConfigureAwait(false);
         _logger.LogDebug("Tooling query: {Soql}", soql);
 
         using var response = await _client.GetAsync(url, cancellationToken).ConfigureAwait(false);
@@ -79,7 +69,7 @@ public class BaseSalesforceClient {
     /// Retrieves a single record (or a describe result) from the Tooling API.
     /// </summary>
     protected async Task<T?> ToolingGetAsync<T>(string relativePath, CancellationToken cancellationToken = default) {
-        var url = ToolingUrl(relativePath);
+        var url = await ToolingUrlAsync(relativePath, cancellationToken).ConfigureAwait(false);
 
         using var response = await _client.GetAsync(url, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) {
@@ -94,7 +84,7 @@ public class BaseSalesforceClient {
     /// Creates a record via the Tooling API.
     /// </summary>
     protected async Task<ToolingSaveResponse> ToolingPostAsync(string relativePath, object body, CancellationToken cancellationToken = default) {
-        var url = ToolingUrl(relativePath);
+        var url = await ToolingUrlAsync(relativePath, cancellationToken).ConfigureAwait(false);
         using var content = Serialize(body);
 
         using var response = await _client.PostAsync(url, content, cancellationToken).ConfigureAwait(false);
@@ -114,7 +104,7 @@ public class BaseSalesforceClient {
     /// Updates a record via the Tooling API. Returns no content on success.
     /// </summary>
     protected async Task ToolingPatchAsync(string relativePath, object body, CancellationToken cancellationToken = default) {
-        var url = ToolingUrl(relativePath);
+        var url = await ToolingUrlAsync(relativePath, cancellationToken).ConfigureAwait(false);
         using var content = Serialize(body);
 
         using var response = await _client.PatchAsync(url, content, cancellationToken).ConfigureAwait(false);
@@ -125,7 +115,7 @@ public class BaseSalesforceClient {
     /// Deletes a record via the Tooling API.
     /// </summary>
     protected async Task ToolingDeleteAsync(string relativePath, CancellationToken cancellationToken = default) {
-        var url = ToolingUrl(relativePath);
+        var url = await ToolingUrlAsync(relativePath, cancellationToken).ConfigureAwait(false);
 
         using var response = await _client.DeleteAsync(url, cancellationToken).ConfigureAwait(false);
         await ReadOrThrowAsync(response, HttpMethod.Delete, url, cancellationToken).ConfigureAwait(false);

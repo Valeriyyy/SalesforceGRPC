@@ -26,26 +26,23 @@ public class Worker : BackgroundService {
     private readonly PubSub.PubSubClient _pubsubClient;
     private readonly EventResolver _eventResolver;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IBindingChangeSignal _changeSignal;
+    private readonly IConfigurationChangeSignal _changeSignal;
 
     private readonly IMetaRepository _metaRepo;
     private readonly IAvroSchemaRepository _avroSchemaRepo;
-    private readonly IHostApplicationLifetime _hostApplicationLifetime;
 
     private const int EventsPerFetch = 25;
 
     public Worker(
         ILogger<Worker> logger,
         PubSub.PubSubClient psClient,
-        IHostApplicationLifetime hostApplicationLifetime,
         IMetaRepository metaRepo,
         IAvroSchemaRepository avroSchemaRepo,
         IServiceScopeFactory scopeFactory,
-        IBindingChangeSignal changeSignal,
+        IConfigurationChangeSignal changeSignal,
         EventResolver eventResolver) {
         _logger = logger;
         _pubsubClient = psClient;
-        _hostApplicationLifetime = hostApplicationLifetime;
         _metaRepo = metaRepo;
         _avroSchemaRepo = avroSchemaRepo;
         _scopeFactory = scopeFactory;
@@ -56,7 +53,29 @@ public class Worker : BackgroundService {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
         try {
             while (!stoppingToken.IsCancellationRequested) {
-                var plan = await GetPlan(stoppingToken).ConfigureAwait(false);
+                SubscriptionPlan plan;
+                try {
+                    plan = await GetPlan(stoppingToken).ConfigureAwait(false);
+                } catch (Exception ex) when (ex is not OperationCanceledException) {
+                    // Re-planning reads the App Database, so an unmigrated schema or a database that is down
+                    // lands here. Letting it escape would end the supervisor loop for good — and under the
+                    // host's default BackgroundService behaviour, take the process with it — which is exactly
+                    // the shutdown-on-failure this loop exists to stop doing.
+                    _logger.LogError(ex,
+                        "Could not build a subscription plan; retrying in {Delay}s. The API stays available.",
+                        RetryDelay.TotalSeconds);
+                    await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (!plan.HasConnection) {
+                    // A fresh install has no Org Connection, and a broken one is repaired through the API
+                    // this host serves. Idling beats refusing to boot, and beats shutting down.
+                    _logger.LogWarning(
+                        "No usable Salesforce Org Connection, so there is nothing to stream. Set one up through the API and the worker will start without a restart.");
+                    await _changeSignal.WaitForChangeAsync(stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
 
                 if (!plan.HasChannel) {
                     // A fresh install has no Primary Channel. Idling beats refusing to boot.
@@ -76,14 +95,37 @@ public class Worker : BackgroundService {
             }
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
             _logger.LogInformation("Worker stopping");
-        } catch (RpcException exc) {
-            // There is no replay-ID checkpointing yet, so a dropped stream cannot be resumed without gaps.
-            // Shutting down is honest about that; silently reconnecting would lose events invisibly.
-            _logger.LogCritical(exc, "RPCException thrown with message: {message}", exc.Message);
-            _logger.LogCritical("Status: {status}", exc.StatusCode);
-            _logger.LogCritical("Shutting down application gracefully");
-            _hostApplicationLifetime.StopApplication();
         }
+    }
+
+    /// <summary>
+    /// Waits before re-planning after a failure, so a persistent fault does not become a hot loop.
+    /// </summary>
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Reports a dropped stream and pauses before reconnecting.
+    /// </summary>
+    /// <remarks>
+    /// This used to call <c>StopApplication()</c>, with a deliberate justification: there is no replay-ID
+    /// checkpointing, so a dropped stream cannot be resumed without gaps, and shutting down was honest about
+    /// that where silently reconnecting would lose events invisibly.
+    /// <para>
+    /// That reasoning is sound and is overruled knowingly. Credentials are now managed through the API this
+    /// host serves, and a service that kills itself when a credential fails cannot be repaired through the UI
+    /// that manages credentials. The cost is real and unchanged: every event between the drop and the
+    /// reconnect is lost, with no record of how many. The remedy is replay-ID checkpointing. Until it exists,
+    /// this logs loudly enough that the gap is at least visible.
+    /// </para>
+    /// </remarks>
+    private async Task ReportDropAndPause(RpcException exc, CancellationToken stoppingToken) {
+        _logger.LogCritical(exc,
+            "The Salesforce event stream dropped ({Status}): {Message}. Reconnecting in {Delay}s — " +
+            "events published during the gap will NOT be replayed, and there is no record of how many. " +
+            "Replay-ID checkpointing is the remedy and is not implemented yet.",
+            exc.StatusCode, exc.Message, RetryDelay.TotalSeconds);
+
+        await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
     }
 
     private async Task<SubscriptionPlan> GetPlan(CancellationToken cancellationToken) {
@@ -133,6 +175,8 @@ public class Worker : BackgroundService {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
         } catch (RpcException exc) when (exc.StatusCode == StatusCode.Cancelled && !stoppingToken.IsCancellationRequested) {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
+        } catch (RpcException exc) {
+            await ReportDropAndPause(exc, stoppingToken).ConfigureAwait(false);
         } finally {
             if (!planScope.IsCancellationRequested) {
                 await planScope.CancelAsync().ConfigureAwait(false);

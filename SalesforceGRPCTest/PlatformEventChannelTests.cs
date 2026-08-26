@@ -5,8 +5,9 @@ using DTO;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
-using Salesforce.Clients;
 using Salesforce;
+using Salesforce.Auth;
+using Salesforce.Clients;
 using System.ComponentModel.DataAnnotations;
 
 namespace SalesforceGRPCTest;
@@ -250,14 +251,16 @@ public class PlatformEventChannelTests {
         public Harness() {
             Repo = Substitute.For<IPlatformEventChannelRepository>();
 
-            var config = Options.Create(new SalesforceConfig {
-                OrgUrl = "https://example.my.salesforce.com",
-                ApiVersion = "61.0"
-            });
+            var config = Options.Create(new SalesforceConfig { ApiVersion = "61.0" });
+
+            // The org's host is resolved per request now, so it comes from the credential source rather than
+            // configuration. A stub value is enough: no test here is allowed to reach the wire.
+            var credentials = Substitute.For<ISalesforceCredentialSource>();
+            credentials.GetOrgUrlAsync(Arg.Any<CancellationToken>()).Returns("https://example.my.salesforce.com");
 
             var toolingClient = new SalesforceToolingClient(
                 new HttpClient(_handler),
-                Substitute.For<ISalesforceTokenProvider>(),
+                credentials,
                 config,
                 NullLogger<SalesforceToolingClient>.Instance);
 
