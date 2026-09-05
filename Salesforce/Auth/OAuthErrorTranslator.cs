@@ -113,6 +113,19 @@ public static class OAuthErrorTranslator {
                 "The assertion expired before Salesforce processed it. This normally means the clock on this " +
                 "host has drifted; check time synchronisation.",
 
+            // Salesforce reports two unrelated causes in one message here, and names the less likely one
+            // first. Both are checked because the text cannot tell them apart.
+            "invalid_request" when text.Contains("refresh_token scope is required")
+                                  || text.Contains("should be installed and preauthorized") =>
+                "The External Client App is missing something the JWT Bearer flow requires. Check, in this " +
+                "order: the app's OAuth scopes include 'Perform requests at any time' (refresh_token) — this " +
+                "flow requires that scope even though it never issues a refresh token; the JWT Bearer flow is " +
+                "enabled in the app's flow settings; the permitted-users policy is admin-approved; and a " +
+                "permission set granting the app is assigned to the user. Verification signs for the " +
+                "Administering User as well as the Run-as User, so this can be the second user failing while " +
+                "the first is fine. Policy changes propagate with a delay — retry in a minute before changing " +
+                "anything else.",
+
             "invalid_client_id" or "invalid_client" =>
                 "The Consumer Key does not match an External Client App in this org. Copy it again from the " +
                 "app in Setup, or confirm the app still exists.",

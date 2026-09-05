@@ -54,6 +54,19 @@ public class OAuthErrorTranslationTests {
     }
 
     /// <summary>
+    /// Salesforce packs two unrelated causes into one message for this one, so the guidance has to name both.
+    /// </summary>
+    [Fact]
+    public void MissingScopeOrPreAuthorization_NamesTheScopeAndThePolicy() {
+        var result = OAuthErrorTranslator.Translate(Body("invalid_request",
+            "refresh_token scope is required and the connected app should be installed and preauthorized"));
+
+        Assert.Contains("refresh_token", result.Guidance!);
+        Assert.Contains("admin-approved", result.Guidance!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Administering User", result.Guidance!);
+    }
+
+    /// <summary>
     /// The table is incomplete by construction. An unrecognised error must arrive with no explanation rather
     /// than a confident wrong one, because a wrong explanation sends the user to the wrong screen.
     /// </summary>
