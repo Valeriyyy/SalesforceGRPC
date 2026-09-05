@@ -1,35 +1,25 @@
 using Application.Services.Interfaces;
 using Database.Models;
 using Microsoft.AspNetCore.Mvc;
-using Salesforce.Clients;
-using SalesforceGrpc.Salesforce;
 
 namespace SalesforceGrpc.Controllers;
 
+/// <summary>
+/// Read-only views of stored Binding configuration.
+/// </summary>
+/// <remarks>
+/// This controller used to expose two endpoints that returned the entire <c>IConfiguration</c> — every
+/// connection string and password in it — and the whole <c>SalesforceConfig</c> including the client secret,
+/// both unauthenticated. They are gone. Salesforce credentials are now managed through
+/// <see cref="OrgConnectionController"/>, which never returns a secret.
+/// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 public class ConfigurationController : ControllerBase {
-    private readonly ILogger<ConfigurationController> _logger;
-    private readonly IConfiguration _config;
-    private readonly SalesforceConfig _sfConfig;
     private readonly ISchemaService _schemaService;
-    private readonly SalesforceToolingClient _sfToolingClient;
 
-    public ConfigurationController(IConfiguration config, SalesforceConfig sfConfig, ISchemaService schemaService, SalesforceToolingClient sfToolingClient) {
-        _config = config;
-        _sfConfig = sfConfig;
+    public ConfigurationController(ISchemaService schemaService) {
         _schemaService = schemaService;
-        _sfToolingClient = sfToolingClient;
-    }
-    
-    [HttpGet]
-    public IActionResult Get() {
-        return Ok(_config);
-    }
-    
-    [HttpGet("salesforce")]
-    public ActionResult<SalesforceConfig> GetSalesforce() {
-        return Ok(_sfConfig);
     }
 
     [HttpGet("schemas")]

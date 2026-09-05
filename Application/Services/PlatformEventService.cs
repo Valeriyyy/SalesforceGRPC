@@ -55,7 +55,10 @@ public class PlatformEventService : IPlatformEventService {
         _repo.GetChannelByIdAsync(id, cancellationToken);
 
     /// <summary>
-    /// Creates a channel in Salesforce and mirrors it locally.
+    /// Creates a channel in Salesforce and mirrors it locally. If a channel with the same developer name
+    /// already exists in Salesforce — e.g. left behind after the local mirror was deleted and the user is
+    /// re-creating the org connection — it is adopted, along with any members it already has, instead of
+    /// failing on a duplicate-value error from Salesforce.
     /// </summary>
     public async Task<PlatformEventChannelEntity> CreateChannelAsync(CreateChannelDTO request, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(request);
@@ -69,6 +72,18 @@ public class PlatformEventService : IPlatformEventService {
 
         var channelType = NormalizeChannelType(request.ChannelType);
         var eventType = NormalizeEventType(request.EventType);
+
+        var developerName = fullName[..^ChannelSuffix.Length];
+        var existing = await _toolingClient.GetChannelByDeveloperNameAsync(developerName, cancellationToken)
+            .ConfigureAwait(false);
+        if (existing is not null) {
+            _logger.LogInformation(
+                "Channel {FullName} already exists in Salesforce (Id {SfId}); adopting it and its members instead of creating a new one.",
+                fullName, existing.Id);
+            var adopted = await MirrorChannelAsync(existing, cancellationToken).ConfigureAwait(false);
+            await SyncMembersForChannelAsync(adopted.SfId, adopted.Id, cancellationToken).ConfigureAwait(false);
+            return adopted;
+        }
 
         var saveResult = await _toolingClient
             .CreateChannelAsync(fullName, request.Label.Trim(), channelType, eventType, cancellationToken)
@@ -261,24 +276,7 @@ public class PlatformEventService : IPlatformEventService {
             var mirrored = await MirrorChannelAsync(channel, cancellationToken).ConfigureAwait(false);
             seenSfIds.Add(mirrored.SfId);
 
-            var memberSummaries = await _toolingClient
-                .ListChannelMembersAsync(summary.Id, cancellationToken).ConfigureAwait(false);
-
-            var members = new List<PlatformEventChannelMemberEntity>();
-            foreach (var memberSummary in memberSummaries) {
-                if (memberSummary.Id is null) {
-                    continue;
-                }
-                var member = await _toolingClient
-                    .GetChannelMemberAsync(memberSummary.Id, cancellationToken).ConfigureAwait(false);
-                if (member is null) {
-                    continue;
-                }
-                member.Id ??= memberSummary.Id;
-                members.Add(MapMember(member, mirrored.Id, member.FullName));
-            }
-
-            await _repo.ReplaceMembersForChannelAsync(mirrored.Id, members, cancellationToken).ConfigureAwait(false);
+            await SyncMembersForChannelAsync(mirrored.SfId, mirrored.Id, cancellationToken).ConfigureAwait(false);
         }
 
         var removed = await _repo.DeleteChannelsNotInAsync(seenSfIds, cancellationToken).ConfigureAwait(false);
@@ -301,6 +299,36 @@ public class PlatformEventService : IPlatformEventService {
     private async Task<PlatformEventChannelMemberEntity> RequireMemberAsync(int id, CancellationToken cancellationToken) {
         return await _repo.GetMemberByIdAsync(id, cancellationToken).ConfigureAwait(false)
                ?? throw new KeyNotFoundException($"No platform event channel member with ID {id}.");
+    }
+
+    /// <summary>
+    /// Replaces a channel's local member mirror with the full member list read back from Salesforce.
+    /// </summary>
+    /// <remarks>
+    /// Each member is retrieved individually because the list query returns IDs rather than the readable
+    /// entity name.
+    /// </remarks>
+    private async Task<List<PlatformEventChannelMemberEntity>> SyncMembersForChannelAsync(
+        string channelSfId, int channelId, CancellationToken cancellationToken) {
+        var memberSummaries = await _toolingClient
+            .ListChannelMembersAsync(channelSfId, cancellationToken).ConfigureAwait(false);
+
+        var members = new List<PlatformEventChannelMemberEntity>();
+        foreach (var memberSummary in memberSummaries) {
+            if (memberSummary.Id is null) {
+                continue;
+            }
+            var member = await _toolingClient
+                .GetChannelMemberAsync(memberSummary.Id, cancellationToken).ConfigureAwait(false);
+            if (member is null) {
+                continue;
+            }
+            member.Id ??= memberSummary.Id;
+            members.Add(MapMember(member, channelId, member.FullName));
+        }
+
+        await _repo.ReplaceMembersForChannelAsync(channelId, members, cancellationToken).ConfigureAwait(false);
+        return members;
     }
 
     /// <summary>

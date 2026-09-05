@@ -2,7 +2,7 @@ using Polly;
 using System.Net;
 using System;
 
-namespace SalesforceGrpc.Salesforce;
+namespace Salesforce;
 
 public class SalesforcePollyPolicies {
     public static IAsyncPolicy<HttpResponseMessage> RetryWithBackoff()

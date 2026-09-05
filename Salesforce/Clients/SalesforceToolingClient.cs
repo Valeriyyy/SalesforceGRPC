@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Salesforce.Auth;
 using Salesforce.Dtos;
-using SalesforceGrpc.Salesforce;
 
 namespace Salesforce.Clients;
 
@@ -25,9 +25,9 @@ public sealed class SalesforceToolingClient : BaseSalesforceClient {
     private const string ChannelMemberListFields =
         "Id, EventChannel, MasterLabel, DeveloperName, FilterExpression, SelectedEntity, ManageableState, NamespacePrefix";
 
-    public SalesforceToolingClient(HttpClient httpClient, ISalesforceTokenProvider tokenProvider,
+    public SalesforceToolingClient(HttpClient httpClient, IOrgConnectionSource connections,
         IOptions<SalesforceConfig> config, ILogger<SalesforceToolingClient> logger)
-        : base(httpClient, config.Value, logger, tokenProvider) {
+        : base(httpClient, config.Value, logger, connections) {
     }
 
     #region Channels
