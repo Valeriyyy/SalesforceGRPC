@@ -19,9 +19,9 @@ public class TargetEngineProfileTests {
 
     /// <summary>
     /// The password that motivates using driver builders at all. Concatenated naively it would end the
-    /// password early and flip a security setting.
+    /// password early and redirect the connection to another host.
     /// </summary>
-    private const string HostilePassword = "p@ss;Trust Server Certificate=true;x=\"y\"";
+    private const string HostilePassword = "p@ss;Host=evil.example;x=\"y\"";
 
     private static PostgresEngineProfile Postgres() => new(NullLoggerFactory.Instance);
 
@@ -46,7 +46,6 @@ public class TargetEngineProfileTests {
         Assert.Equal(5433, parsed.Port);
         Assert.Equal("warehouse", parsed.Database);
         Assert.Equal("loader", parsed.Username);
-        Assert.False(parsed.TrustServerCertificate);
     }
 
     [Fact]

@@ -41,8 +41,8 @@ public abstract class TargetEngineProfile : ITargetEngineProfile {
                 case FieldKind.Bool when !bool.TryParse(value, out _):
                     errors.Add($"{field.Label} must be true or false; '{value}' is not.");
                     break;
-                case FieldKind.Choice when !field.Choices!.Contains(value, StringComparer.OrdinalIgnoreCase):
-                    errors.Add($"{field.Label} must be one of {string.Join(", ", field.Choices)}; '{value}' is not.");
+                case FieldKind.Choice when field.Choices is { } choices && !choices.Contains(value, StringComparer.OrdinalIgnoreCase):
+                    errors.Add($"{field.Label} must be one of {string.Join(", ", choices)}; '{value}' is not.");
                     break;
             }
         }
