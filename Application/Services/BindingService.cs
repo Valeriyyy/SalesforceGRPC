@@ -1,6 +1,7 @@
 using Application.Bindings;
 using Application.Connections;
 using Application.Services.Interfaces;
+using Application.Targets;
 using Avro;
 using Database.Models;
 using Database.Repositories;
@@ -29,7 +30,7 @@ public class BindingService : IBindingService {
 
     private readonly IMetaRepository _meta;
     private readonly IAvroSchemaRepository _avroSchemas;
-    private readonly IRepository _targetDb;
+    private readonly ITargetConnectionProvider _target;
     private readonly IPlatformEventChannelRepository _channels;
     private readonly IEntitySchemaProvider _entitySchemas;
     private readonly IConfigurationChangeSignal _changeSignal;
@@ -39,7 +40,7 @@ public class BindingService : IBindingService {
     public BindingService(
         IMetaRepository meta,
         IAvroSchemaRepository avroSchemas,
-        IRepository targetDb,
+        ITargetConnectionProvider target,
         IPlatformEventChannelRepository channels,
         IEntitySchemaProvider entitySchemas,
         IConfigurationChangeSignal changeSignal,
@@ -47,7 +48,7 @@ public class BindingService : IBindingService {
         ILogger<BindingService> logger) {
         _meta = meta;
         _avroSchemas = avroSchemas;
-        _targetDb = targetDb;
+        _target = target;
         _channels = channels;
         _entitySchemas = entitySchemas;
         _changeSignal = changeSignal;
@@ -100,9 +101,9 @@ public class BindingService : IBindingService {
 
     public async Task<IReadOnlyList<TargetTableDTO>> GetTargetTablesAsync(string schemaName,
         CancellationToken cancellationToken = default) {
-        EnsureDriverSupported();
+        var target = await EnsureDriverSupported(cancellationToken).ConfigureAwait(false);
 
-        var tables = await _targetDb.GetSchemaMetadata(schemaName, cancellationToken).ConfigureAwait(false);
+        var tables = await target.GetSchemaMetadata(schemaName, cancellationToken).ConfigureAwait(false);
         var bindings = await _meta.GetCachedSchemas(cancellationToken).ConfigureAwait(false);
         var boundTables = bindings
             .Where(b => !string.IsNullOrWhiteSpace(b.DbSchemaFullName))
@@ -121,9 +122,9 @@ public class BindingService : IBindingService {
 
     public async Task<IReadOnlyList<TargetColumnDTO>> GetTargetColumnsAsync(string schemaName, string tableName,
         int? bindingId = null, CancellationToken cancellationToken = default) {
-        EnsureDriverSupported();
+        var target = await EnsureDriverSupported(cancellationToken).ConfigureAwait(false);
 
-        var table = await _targetDb.GetTableMetadata(tableName, schemaName, cancellationToken).ConfigureAwait(false);
+        var table = await target.GetTableMetadata(tableName, schemaName, cancellationToken).ConfigureAwait(false);
         if (table is null) {
             throw new KeyNotFoundException($"Target Table '{schemaName}.{tableName}' does not exist in the target database.");
         }
@@ -165,7 +166,7 @@ public class BindingService : IBindingService {
     public async Task<BindingDTO> CreateBindingAsync(int memberId, CreateBindingDTO dto,
         CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(dto);
-        EnsureDriverSupported();
+        var target = await EnsureDriverSupported(cancellationToken).ConfigureAwait(false);
 
         var member = await RequireMember(memberId, cancellationToken).ConfigureAwait(false);
 
@@ -193,7 +194,7 @@ public class BindingService : IBindingService {
                 $"Target Table '{targetTable}' is already bound to '{existingForTable.EntityName}'. Two entities cannot share a table.");
         }
 
-        var table = await _targetDb.GetTableMetadata(dto.TargetTable, dto.TargetSchema, cancellationToken).ConfigureAwait(false);
+        var table = await target.GetTableMetadata(dto.TargetTable, dto.TargetSchema, cancellationToken).ConfigureAwait(false);
         if (table is null) {
             throw new ValidationException(
                 $"Target Table '{targetTable}' does not exist. This application never creates tables — create it first, then bind to it.");
@@ -277,6 +278,7 @@ public class BindingService : IBindingService {
 
         var binding = await RequireBinding(bindingId).ConfigureAwait(false);
         var table = await RequireTable(binding, cancellationToken).ConfigureAwait(false);
+        var engine = await Engine(cancellationToken).ConfigureAwait(false);
 
         var column = table.Columns.FirstOrDefault(c =>
             string.Equals(c.ColumnName, dto.TargetColumnName, StringComparison.OrdinalIgnoreCase));
@@ -286,7 +288,7 @@ public class BindingService : IBindingService {
                 $"Column '{dto.TargetColumnName}' does not exist on '{binding.DbSchemaFullName}'.");
         }
 
-        var check = TypeCompatibilityChecker.CheckKeyColumn(column, _targetDb.Engine);
+        var check = TypeCompatibilityChecker.CheckKeyColumn(column, engine);
         if (check.Level is CompatibilityLevel.Error) {
             throw new ValidationException(check.Message);
         }
@@ -323,6 +325,7 @@ public class BindingService : IBindingService {
             }
 
             var table = await RequireTable(binding, cancellationToken).ConfigureAwait(false);
+            var engine = await Engine(cancellationToken).ConfigureAwait(false);
             var column = table.Columns.FirstOrDefault(c =>
                 string.Equals(c.ColumnName, dto.ColumnName, StringComparison.OrdinalIgnoreCase));
 
@@ -331,7 +334,7 @@ public class BindingService : IBindingService {
                     $"Column '{dto.ColumnName}' does not exist on '{binding.DbSchemaFullName}'.");
             }
 
-            var check = TypeCompatibilityChecker.CheckSoftDeleteColumn(column, _targetDb.Engine);
+            var check = TypeCompatibilityChecker.CheckSoftDeleteColumn(column, engine);
             if (check.Level is CompatibilityLevel.Error) {
                 throw new ValidationException(check.Message);
             }
@@ -472,6 +475,7 @@ public class BindingService : IBindingService {
     private async Task<BindingValidationDTO> Validate(CDCSchema binding, List<MappedField> mappings,
         CancellationToken cancellationToken) {
         var result = new BindingValidationDTO { BindingId = binding.Id };
+        var engine = await Engine(cancellationToken).ConfigureAwait(false);
 
         var table = await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false);
         if (table is null) {
@@ -499,7 +503,7 @@ public class BindingService : IBindingService {
         } else if (!columns.TryGetValue(keyMapping.TargetFieldName, out var keyColumn)) {
             result.Blockers.Add($"Key Mapping column '{keyMapping.TargetFieldName}' no longer exists on '{binding.DbSchemaFullName}'.");
         } else {
-            result.Results.Add(ToDto(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, _targetDb.Engine)));
+            result.Results.Add(ToDto(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, engine)));
         }
 
         var fieldMappings = mappings.Where(m => m.SalesforceFieldName != KeyMappingFieldName).ToList();
@@ -521,7 +525,7 @@ public class BindingService : IBindingService {
             }
 
             result.Results.Add(ToDto(TypeCompatibilityChecker.Check(
-                field.Name, field.FieldType, column, _targetDb.Engine)));
+                field.Name, field.FieldType, column, engine)));
         }
 
         AddUnmappedNotNullWarnings(result, table, mappings, binding);
@@ -533,7 +537,7 @@ public class BindingService : IBindingService {
                 result.Blockers.Add(
                     $"Soft delete column '{binding.SoftDeleteColumnName}' no longer exists on '{binding.DbSchemaFullName}'.");
             } else {
-                result.Results.Add(ToDto(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, _targetDb.Engine)));
+                result.Results.Add(ToDto(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, engine)));
             }
         }
 
@@ -605,11 +609,17 @@ public class BindingService : IBindingService {
 
     #region Helpers
 
-    private void EnsureDriverSupported() {
-        if (_targetDb.Engine is TargetDatabaseEngine.SqlServer or TargetDatabaseEngine.MySql) {
+    private async Task<TargetDatabaseEngine> Engine(CancellationToken cancellationToken) =>
+        (await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false)).Engine;
+
+    /// <summary>The Target Database repository, refusing the engines whose driver is a stub.</summary>
+    private async Task<IRepository> EnsureDriverSupported(CancellationToken cancellationToken) {
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
+        if (target.Engine is TargetDatabaseEngine.SqlServer or TargetDatabaseEngine.MySql) {
             throw new ValidationException(
-                $"The {_targetDb.Engine} driver is not implemented, so target tables cannot be read and Bindings cannot be configured against it.");
+                $"The {target.Engine} driver is not implemented, so target tables cannot be read and Bindings cannot be configured against it.");
         }
+        return target;
     }
 
     private async Task<PlatformEventChannelMemberEntity> RequireMember(int memberId, CancellationToken cancellationToken) =>
@@ -625,9 +635,10 @@ public class BindingService : IBindingService {
         ?? throw new ValidationException(
             $"Target Table '{binding.DbSchemaFullName}' does not exist in the target database.");
 
-    private Task<TableMetadata?> LoadTable(string fullName, CancellationToken cancellationToken) {
+    private async Task<TableMetadata?> LoadTable(string fullName, CancellationToken cancellationToken) {
         var (schemaName, tableName) = SplitFullName(fullName);
-        return _targetDb.GetTableMetadata(tableName, schemaName, cancellationToken);
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
+        return await target.GetTableMetadata(tableName, schemaName, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<List<MappedField>> ReadMappings(int bindingId) =>

@@ -57,10 +57,10 @@ public class SoftDeleteStrategyTests {
     }
 
     private DeleteStrategy NewDeleteStrategy() =>
-        new(NullLogger<DeleteStrategy>.Instance, _target, _meta);
+        new(NullLogger<DeleteStrategy>.Instance, TargetProviders.Of(_target), _meta);
 
     private UndeleteStrategy NewUndeleteStrategy() =>
-        new(NullLogger<UndeleteStrategy>.Instance, _target, _meta);
+        new(NullLogger<UndeleteStrategy>.Instance, TargetProviders.Of(_target), _meta);
 
     [Fact]
     public async Task WithSoftDeleteOff_ADeleteRemovesTheRow() {

@@ -44,7 +44,7 @@ public class UpdateEventTest {
             { "Phone", "phone"},
             { "MappedSFKey", "sf_id" }
         });
-        var updateStrategy = new UpdateStrategy(mockLogger, mockMetaRepo, mockDataRepo);
+        var updateStrategy = new UpdateStrategy(mockLogger, mockMetaRepo, TargetProviders.Of(mockDataRepo));
         
         var changeEventHeaderSchema = (RecordSchema)Schema.Parse(await File.ReadAllTextAsync(ChangeEventHeaderPath, TestContext.Current.CancellationToken));
         var changeEventHeader = new GenericRecord(changeEventHeaderSchema);

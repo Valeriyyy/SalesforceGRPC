@@ -2,10 +2,12 @@ using Application.Bindings;
 using Application.Connections;
 using Application.Services;
 using Application.Services.Interfaces;
+using Application.Targets;
 using Dapper;
 using Database.DataProtection;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Database.Targets;
 using Database.Utilities;
 using GrpcClient;
 using Microsoft.AspNetCore.DataProtection;
@@ -115,12 +117,18 @@ builder.Services.AddSingleton<IOrgSelfConfigurator, ManualRegistrationConfigurat
 builder.Services.AddScoped<IOrgConnectionService, OrgConnectionService>();
 
 
-// TODO: Set this behind a db configuration that is saved in the db as a configuration that will be managed through a UI
-builder.Services.AddSingleton<IRepository>(sp => {
-     var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
-         ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
-     return RepositoryFactory.Create(targetingDbType, sp);
- });
+#region Target Connection
+// The Target Database is reached through the stored Target Connection, never through configuration. One
+// profile per engine; the catalog refuses to construct if any engine is missing a profile.
+var debugQuery = config.GetValue<bool>("DebugQuery");
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new PostgresEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new SqlServerEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new MySqlEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new SqliteEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineCatalog, TargetEngineCatalog>();
+builder.Services.AddSingleton<ITargetConnectionRepository, TargetConnectionRepository>();
+builder.Services.AddSingleton<ITargetConnectionProvider, TargetConnectionProvider>();
+#endregion
 
 builder.Services.AddTransient<IEventStrategy, CreateStrategy>();
 builder.Services.AddTransient<IEventStrategy, UpdateStrategy>();

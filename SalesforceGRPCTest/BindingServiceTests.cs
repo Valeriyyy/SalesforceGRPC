@@ -39,7 +39,7 @@ public class BindingServiceTests {
     private const string TargetTable = "salesforce.account";
 
     private BindingService NewService() =>
-        new(_meta, _avro, _target, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, TargetProviders.Of(_target), _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 

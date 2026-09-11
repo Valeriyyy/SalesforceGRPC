@@ -43,7 +43,7 @@ public class CreateEventTest {
             { "MappedSFKey", "sf_id" },
             { "MobilePhone", "mobile_phone" }
         });
-        var createStrategy = new CreateStrategy(mockLogger, mockMetaRepo, mockDataRepo);
+        var createStrategy = new CreateStrategy(mockLogger, mockMetaRepo, TargetProviders.Of(mockDataRepo));
         
         var changeEventHeaderSchema = (RecordSchema)Schema.Parse(await File.ReadAllTextAsync(ChangeEventHeaderPath, TestContext.Current.CancellationToken));
         var changeEventHeader = new GenericRecord(changeEventHeaderSchema);

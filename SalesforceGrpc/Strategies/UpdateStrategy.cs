@@ -1,3 +1,4 @@
+using Application.Targets;
 using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
@@ -18,16 +19,17 @@ public class UpdateStrategy : IEventStrategy {
     public ChangeType ChangeType => ChangeType.UPDATE;
     private readonly ILogger<UpdateStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IRepository _dataRepo;
+    private readonly ITargetConnectionProvider _target;
 
-    public UpdateStrategy(ILogger<UpdateStrategy> logger, IMetaRepository db, IRepository dataRepo) {
+    public UpdateStrategy(ILogger<UpdateStrategy> logger, IMetaRepository db, ITargetConnectionProvider target) {
         _logger = logger;
         _db = db;
-        _dataRepo = dataRepo;
+        _target = target;
     }
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema,
         CancellationToken cancellationToken) {
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
         // Extract change event header efficiently
         if (!record.TryGetValue("ChangeEventHeader", out var changeEventHeaderObj) ||
             changeEventHeaderObj is not GenericRecord changeEventHeader) {
@@ -72,7 +74,7 @@ public class UpdateStrategy : IEventStrategy {
         if (data.Count == 0) return;
 
         try {
-            var updatedCount = await _dataRepo.Update(dbSchema.DbSchemaFullName, sfMappedKey, recordIdStrings, data);
+            var updatedCount = await target.Update(dbSchema.DbSchemaFullName, sfMappedKey, recordIdStrings, data);
             _logger.LogInformation("Updated {UpdatedCount} records from {ObjectType}", updatedCount, dbSchema.EntityName);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to update record {Data}", StringExtensions.ToJson(data));

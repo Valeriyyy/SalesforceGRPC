@@ -1,3 +1,4 @@
+using Application.Targets;
 using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
@@ -13,15 +14,16 @@ public class DeleteStrategy : IEventStrategy {
     
     private readonly ILogger<DeleteStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IRepository _dataRepo;
+    private readonly ITargetConnectionProvider _target;
 
-    public DeleteStrategy(ILogger<DeleteStrategy> logger, IRepository dataRepo, IMetaRepository db) {
+    public DeleteStrategy(ILogger<DeleteStrategy> logger, ITargetConnectionProvider target, IMetaRepository db) {
         _logger = logger;
-        _dataRepo = dataRepo;
+        _target = target;
         _db = db;
     }
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema, CancellationToken cancellationToken) {
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
         if (!record.TryGetValue("ChangeEventHeader", out var changeEventHeaderObj) ||
             changeEventHeaderObj is not GenericRecord changeEventHeader) {
             _logger.LogWarning("No ChangeEventHeader found in record");
@@ -48,11 +50,11 @@ public class DeleteStrategy : IEventStrategy {
             // For DELETE events, we only need the record IDs — a delete carries no field values.
             // Whether the row goes or is only marked is the Binding's decision, not this strategy's.
             if (dbSchema.SoftDeleteEnabled && !string.IsNullOrWhiteSpace(dbSchema.SoftDeleteColumnName)) {
-                var markedCount = await _dataRepo.SoftDelete(dbSchema.DbSchemaFullName, sfKeyFieldName,
+                var markedCount = await target.SoftDelete(dbSchema.DbSchemaFullName, sfKeyFieldName,
                     dbSchema.SoftDeleteColumnName, recordIdStrings).ConfigureAwait(false);
                 _logger.LogInformation("Marked {MarkedCount} records deleted in {ObjectType}", markedCount, dbSchema.EntityName);
             } else {
-                var deletedCount = await _dataRepo.Delete(dbSchema.DbSchemaFullName, sfKeyFieldName, recordIdStrings).ConfigureAwait(false);
+                var deletedCount = await target.Delete(dbSchema.DbSchemaFullName, sfKeyFieldName, recordIdStrings).ConfigureAwait(false);
                 _logger.LogInformation("Deleted {DeletedCount} records from {ObjectType}", deletedCount, dbSchema.EntityName);
             }
         } catch (Exception e) {
