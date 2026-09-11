@@ -1,11 +1,10 @@
 using Database.Models;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Database.Repositories;
 
 public class MySqlRepository : RepositoryBase {
-    public MySqlRepository(ILogger<MySqlRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
+    public MySqlRepository(ILogger<MySqlRepository> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.MySql;
 

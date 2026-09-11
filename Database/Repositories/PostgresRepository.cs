@@ -7,7 +7,7 @@ using Npgsql;
 namespace Database.Repositories;
 
 public class PostgresRepository : RepositoryBase {
-    public PostgresRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
+    public PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
 

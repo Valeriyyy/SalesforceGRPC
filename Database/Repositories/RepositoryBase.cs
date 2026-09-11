@@ -1,6 +1,5 @@
 using Database.Models;
 using Database.Repositories.Interfaces;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Database.Repositories;
@@ -8,15 +7,18 @@ namespace Database.Repositories;
 public abstract class RepositoryBase : IRepository {
     protected readonly ILogger<RepositoryBase> _logger;
     protected readonly string _connectionString;
-    protected readonly bool _debugQuery = false;
+    protected readonly bool _debugQuery;
 
-    protected RepositoryBase(ILogger<RepositoryBase> logger, IConfiguration configuration) {
+    /// <remarks>
+    /// Takes the assembled connection string rather than <c>IConfiguration</c>: the Target Connection is
+    /// stored in the App Database and assembled by an engine profile, so a repository never knows where its
+    /// string came from and never reads configuration itself.
+    /// </remarks>
+    protected RepositoryBase(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         _logger = logger;
-        if (configuration.GetConnectionString("targetingDatabase") is null) {
-            throw new InvalidOperationException("Db connection string is not configured.");
-        }
-        _connectionString = configuration.GetConnectionString("targetingDatabase")!;
-        _debugQuery = configuration.GetValue<bool>("DebugQuery");
+        _connectionString = connectionString;
+        _debugQuery = debugQuery;
     }
     
     public abstract TargetDatabaseEngine Engine { get; }

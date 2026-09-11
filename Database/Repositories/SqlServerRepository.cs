@@ -1,11 +1,10 @@
 using Database.Models;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Database.Repositories;
 
 public class SqlServerRepository : RepositoryBase {
-    public SqlServerRepository(ILogger<SqlServerRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
+    public SqlServerRepository(ILogger<SqlServerRepository> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.SqlServer;
 

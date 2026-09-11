@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace Database.Repositories;
 
 public class SqliteRepository : RepositoryBase {
-    public SqliteRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
+    public SqliteRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Sqlite;
 
