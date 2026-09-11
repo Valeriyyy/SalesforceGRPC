@@ -131,3 +131,16 @@ public sealed class TargetConnectionProvider : ITargetConnectionProvider {
         _logger.LogDebug("Target Connection invalidated; the next read will come from the database");
     }
 }
+
+/// <summary>
+/// A write to the Target Database failed at the driver.
+/// </summary>
+/// <remarks>
+/// Distinct from every other failure inside the worker's batch so it can escape the per-event isolation. A
+/// bad record is skipped and the batch continues; a database that will not accept writes ends the stream,
+/// because consuming events into a database that cannot store them loses them with no record of how many.
+/// </remarks>
+public sealed class TargetDatabaseWriteException : Exception {
+    public TargetDatabaseWriteException(string table, System.Data.Common.DbException inner)
+        : base($"The Target Database refused a write to {table}: {inner.Message}", inner) { }
+}

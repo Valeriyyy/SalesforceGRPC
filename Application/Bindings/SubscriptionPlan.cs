@@ -44,6 +44,19 @@ public sealed record SubscriptionPlan {
     /// <summary>True when there is a Primary Channel to subscribe to.</summary>
     public bool HasChannel => !string.IsNullOrWhiteSpace(TopicName);
 
+    /// <summary>
+    /// The Target Connection's state, or null when none is configured.
+    /// </summary>
+    /// <remarks>
+    /// The state rather than a boolean, because the worker treats the three non-streaming situations
+    /// differently: absent and Incomplete wait for the user, since nothing will change without them; Failed
+    /// retries on its own, since a database that went away usually comes back.
+    /// </remarks>
+    public ConnectionState? TargetConnectionState { get; init; }
+
+    /// <summary>True when the Target Connection has been proved and nothing has failed since.</summary>
+    public bool HasTargetDatabase => TargetConnectionState == ConnectionState.Connected;
+
     /// <summary>Builds the plan the worker uses when nothing is configured yet.</summary>
     public static SubscriptionPlan Empty => new();
 }

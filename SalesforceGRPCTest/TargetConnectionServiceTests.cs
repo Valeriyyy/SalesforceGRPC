@@ -164,6 +164,26 @@ public class TargetConnectionServiceTests {
         await _repository.DidNotReceive().RecordFailureAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 
+    /// <summary>The worker is where the connection is genuinely exercised, so its failures write state.</summary>
+    [Fact]
+    public async Task AWriteFailureReportedByTheWorker_MovesAConnectedConnectionToFailed() {
+        WithStored(Stored(ConnectionState.Connected));
+
+        await NewService().RecordWriteFailureAsync(new Npgsql.NpgsqlException("connection refused"), Ct);
+
+        await _repository.Received(1).RecordFailureAsync(Arg.Any<string>(), "connection refused", _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+        _provider.Received().Invalidate();
+    }
+
+    [Fact]
+    public async Task Retest_RecoversAFailedConnection_WhenTheDatabaseIsBack() {
+        WithStored(Stored(ConnectionState.Failed));
+
+        var dto = await NewService().RetestAsync(Ct);
+
+        await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Retest_WithNothingConfigured_ThrowsANamedException() {
         WithStored(null);

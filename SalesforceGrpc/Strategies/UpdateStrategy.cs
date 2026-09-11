@@ -76,6 +76,10 @@ public class UpdateStrategy : IEventStrategy {
         try {
             var updatedCount = await target.Update(dbSchema.DbSchemaFullName, sfMappedKey, recordIdStrings, data);
             _logger.LogInformation("Updated {UpdatedCount} records from {ObjectType}", updatedCount, dbSchema.EntityName);
+        } catch (System.Data.Common.DbException e) {
+            // The database, not the record. Escapes the per-event isolation so the worker drops the stream
+            // rather than consuming events into a database that cannot store them.
+            throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to update record {Data}", StringExtensions.ToJson(data));
         }

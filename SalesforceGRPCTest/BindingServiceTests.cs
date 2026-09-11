@@ -1,6 +1,7 @@
 using Application.Bindings;
 using Application.Connections;
 using Application.Services;
+using Application.Targets;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
@@ -27,6 +28,7 @@ public class BindingServiceTests {
     private readonly IMetaRepository _meta = Substitute.For<IMetaRepository>();
     private readonly IAvroSchemaRepository _avro = Substitute.For<IAvroSchemaRepository>();
     private readonly IRepository _target = Substitute.For<IRepository>();
+    private readonly ITargetConnectionProvider _targetConnections;
     private readonly IPlatformEventChannelRepository _channels = Substitute.For<IPlatformEventChannelRepository>();
     private readonly IEntitySchemaProvider _entitySchemas = Substitute.For<IEntitySchemaProvider>();
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
@@ -38,8 +40,12 @@ public class BindingServiceTests {
     private const string Entity = "AccountChangeEvent";
     private const string TargetTable = "salesforce.account";
 
+    public BindingServiceTests() {
+        _targetConnections = TargetProviders.Of(_target);
+    }
+
     private BindingService NewService() =>
-        new(_meta, _avro, TargetProviders.Of(_target), _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, _targetConnections, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 
@@ -691,6 +697,24 @@ public class BindingServiceTests {
         Assert.False(plan.HasChannel);
         Assert.Null(plan.TopicName);
         Assert.Empty(plan.ActiveBindingsBySchemaId);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(ConnectionState.Incomplete, false)]
+    [InlineData(ConnectionState.Failed, false)]
+    [InlineData(ConnectionState.Connected, true)]
+    public async Task GetSubscriptionPlan_CarriesTheTargetConnectionState_AndStreamsOnlyWhenConnected(
+        ConnectionState? state, bool expectedHasTargetDatabase) {
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        _targetConnections.GetAsync(Arg.Any<CancellationToken>()).Returns(state is null
+            ? null
+            : new TargetConnection { Engine = TargetDatabaseEngine.Postgres, ConnectionState = state.Value });
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(state, plan.TargetConnectionState);
+        Assert.Equal(expectedHasTargetDatabase, plan.HasTargetDatabase);
     }
 
     [Fact]

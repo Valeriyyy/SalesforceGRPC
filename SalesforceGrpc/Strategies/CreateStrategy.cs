@@ -75,6 +75,10 @@ public class CreateStrategy : IEventStrategy {
         try {
             var createdCount = await target.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
+        } catch (System.Data.Common.DbException e) {
+            // The database, not the record. Escapes the per-event isolation so the worker drops the stream
+            // rather than consuming events into a database that cannot store them.
+            throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to insert record {Data}", StringExtensions.ToJson(data));
         }

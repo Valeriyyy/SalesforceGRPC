@@ -53,6 +53,15 @@ public interface ITargetConnectionService {
     /// <summary>Proves the stored Target Connection again and records the outcome. The user's repair button.</summary>
     Task<TargetConnectionDTO> RetestAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Records that a write to the Target Database failed, moving the connection to Failed.
+    /// </summary>
+    /// <remarks>
+    /// Called by the worker, which is where the connection is genuinely exercised. Does not raise the change
+    /// signal: the worker is the thing that would be woken, and it already knows.
+    /// </remarks>
+    Task RecordWriteFailureAsync(Exception failure, CancellationToken cancellationToken = default);
+
     /// <summary>What a repoint would destroy. Call this before confirming one.</summary>
     Task<RepointPreviewDTO> PreviewRepointAsync(CancellationToken cancellationToken = default);
 
@@ -145,6 +154,14 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         return await GetAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task RecordWriteFailureAsync(Exception failure, CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(failure);
+
+        await _repository.RecordFailureAsync(Summarise(failure), failure.Message, _time.GetUtcNow().UtcDateTime, cancellationToken)
+            .ConfigureAwait(false);
+        _provider.Invalidate();
+    }
+
     public async Task<RepointPreviewDTO> PreviewRepointAsync(CancellationToken cancellationToken = default) {
         var counts = await _repository.CountBindingsAsync(cancellationToken).ConfigureAwait(false);
         return new RepointPreviewDTO { Bindings = counts.Bindings, FieldMappings = counts.FieldMappings };
@@ -204,7 +221,17 @@ public sealed class TargetConnectionService : ITargetConnectionService {
             await repository.GetSchemaMetadata(cancellationToken: cancellationToken).ConfigureAwait(false);
 
             await _repository.RecordSuccessAsync(now, cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("Target Connection proved against {Engine} at {Address}", details.Engine, details.Host ?? details.FilePath);
+
+            if (stateBefore is ConnectionState.Failed) {
+                // Loud on purpose. The recovery is automatic so a transient outage needs no one, but the
+                // outage still happened, and the operator should go and find out why.
+                _logger.LogWarning(
+                    "The Target Connection to {Engine} at {Address} has RECOVERED. It was Failed; events published " +
+                    "while it was down were not written and will not be replayed. Investigate why the database was unreachable.",
+                    details.Engine, details.Host ?? details.FilePath);
+            } else {
+                _logger.LogInformation("Target Connection proved against {Engine} at {Address}", details.Engine, details.Host ?? details.FilePath);
+            }
         } catch (Exception ex) when (ex is not OperationCanceledException) {
             // Never proved is not the same as broken. A connection that has never worked stays Incomplete
             // ("what you typed did not work"); one that used to work becomes Failed ("something changed").

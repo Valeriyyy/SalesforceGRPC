@@ -1,5 +1,6 @@
 using Application.Bindings;
 using Application.Services.Interfaces;
+using Application.Targets;
 using Avro;
 using Avro.Generic;
 using Avro.IO;
@@ -77,6 +78,31 @@ public class Worker : BackgroundService {
                     continue;
                 }
 
+                if (!plan.HasTargetDatabase) {
+                    // Three situations, treated two ways. Absent and Incomplete wait for the user, because
+                    // nothing will change without them. Failed retries on its own, because a database that
+                    // went away usually comes back — and the retry is a proof, so the recovery is recorded.
+                    switch (plan.TargetConnectionState) {
+                        case ConnectionState.Failed:
+                            _logger.LogError(
+                                "The Target Connection is Failed, so events are not being consumed. Retrying in {Delay}s.",
+                                RetryDelay.TotalSeconds);
+                            await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
+                            await RetestTargetAsync(stoppingToken).ConfigureAwait(false);
+                            continue;
+                        case ConnectionState.Incomplete:
+                            _logger.LogWarning(
+                                "The Target Connection has never been proved, so there is nowhere to write events. Correct it through the API and the worker will start without a restart.");
+                            break;
+                        default:
+                            _logger.LogWarning(
+                                "No Target Connection is configured, so there is nowhere to write events. Set one up through the API and the worker will start without a restart.");
+                            break;
+                    }
+                    await _changeSignal.WaitForChangeAsync(stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (!plan.HasChannel) {
                     // A fresh install has no Primary Channel. Idling beats refusing to boot.
                     _logger.LogWarning(
@@ -128,6 +154,41 @@ public class Worker : BackgroundService {
         await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Records the write failure on the Target Connection and ends the stream.
+    /// </summary>
+    /// <remarks>
+    /// Dropping rather than holding the stream open and logging per event. Holding it open consumes every
+    /// event in the outage window into a database that cannot store them, with no record of how many, while
+    /// hammering that database. Dropping loses the same events — there is still no replay-ID checkpointing —
+    /// but stops the hammering and makes the health check tell the truth. The plan loop then retries.
+    /// </remarks>
+    private async Task ReportTargetFailureAndDrop(TargetDatabaseWriteException exc, CancellationToken stoppingToken) {
+        _logger.LogCritical(exc,
+            "The Target Database refused a write, so the stream has been dropped: {Message}. Events published until it " +
+            "recovers will NOT be replayed, and there is no record of how many. Retrying in {Delay}s.",
+            exc.Message, RetryDelay.TotalSeconds);
+
+        try {
+            using var scope = _scopeFactory.CreateScope();
+            var targets = scope.ServiceProvider.GetRequiredService<ITargetConnectionService>();
+            await targets.RecordWriteFailureAsync(exc.InnerException ?? exc, stoppingToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogError(ex, "Could not record the Target Connection failure; the state may still read Connected");
+        }
+    }
+
+    /// <summary>Proves the Failed Target Connection again. Success is recorded, and logged loudly, by the service.</summary>
+    private async Task RetestTargetAsync(CancellationToken stoppingToken) {
+        try {
+            using var scope = _scopeFactory.CreateScope();
+            var targets = scope.ServiceProvider.GetRequiredService<ITargetConnectionService>();
+            await targets.RetestAsync(stoppingToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogError(ex, "Could not re-test the Target Connection; will retry");
+        }
+    }
+
     private async Task<SubscriptionPlan> GetPlan(CancellationToken cancellationToken) {
         // The service is scoped; the worker is not, so a scope per re-plan rather than a captured instance.
         using var scope = _scopeFactory.CreateScope();
@@ -177,6 +238,8 @@ public class Worker : BackgroundService {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
         } catch (RpcException exc) {
             await ReportDropAndPause(exc, stoppingToken).ConfigureAwait(false);
+        } catch (TargetDatabaseWriteException exc) {
+            await ReportTargetFailureAndDrop(exc, stoppingToken).ConfigureAwait(false);
         } finally {
             if (!planScope.IsCancellationRequested) {
                 await planScope.CancelAsync().ConfigureAwait(false);
@@ -241,6 +304,9 @@ public class Worker : BackgroundService {
             var strategy = _eventResolver.Resolve(changeTypeEnum);
             await strategy.ProcessEvent(record, schema, binding, cancellationToken).ConfigureAwait(false);
         } catch (OperationCanceledException) {
+            throw;
+        } catch (TargetDatabaseWriteException) {
+            // The database, not this event. Escapes the batch so the stream is dropped.
             throw;
         } catch (Exception ex) {
             _logger.LogError(ex, "Failed to apply event with Schema Id {SchemaId}; continuing with the rest of the batch",

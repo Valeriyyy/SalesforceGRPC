@@ -199,7 +199,8 @@ builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<SecretProtectionStartupCheck>();
 
 builder.Services.AddHealthChecks()
-    .AddCheck<OrgConnectionHealthCheck>(OrgConnectionHealthCheck.Name);
+    .AddCheck<OrgConnectionHealthCheck>(OrgConnectionHealthCheck.Name)
+    .AddCheck<TargetConnectionHealthCheck>(TargetConnectionHealthCheck.Name);
 
 builder.Services.AddControllersWithViews();
 builder.Services.AddEndpointsApiExplorer();

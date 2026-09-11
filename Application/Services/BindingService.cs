@@ -437,9 +437,12 @@ public class BindingService : IBindingService {
         var connection = await _connections.GetAsync(cancellationToken).ConfigureAwait(false);
         var hasConnection = connection?.IsUsable == true;
 
+        var target = await _target.GetAsync(cancellationToken).ConfigureAwait(false);
+        var targetState = target?.ConnectionState;
+
         var channel = await _channels.GetPrimaryChannelAsync(cancellationToken).ConfigureAwait(false);
         if (channel is null) {
-            return SubscriptionPlan.Empty with { HasConnection = hasConnection };
+            return SubscriptionPlan.Empty with { HasConnection = hasConnection, TargetConnectionState = targetState };
         }
 
         var entityNames = channel.Members
@@ -461,6 +464,7 @@ public class BindingService : IBindingService {
 
         return new SubscriptionPlan {
             HasConnection = hasConnection,
+            TargetConnectionState = targetState,
             TopicName = $"/data/{channel.FullName}",
             ChannelFullName = channel.FullName,
             ActiveBindingsBySchemaId = active,
