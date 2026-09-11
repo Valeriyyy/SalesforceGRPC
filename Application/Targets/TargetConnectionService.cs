@@ -52,6 +52,18 @@ public interface ITargetConnectionService {
 
     /// <summary>Proves the stored Target Connection again and records the outcome. The user's repair button.</summary>
     Task<TargetConnectionDTO> RetestAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>What a repoint would destroy. Call this before confirming one.</summary>
+    Task<RepointPreviewDTO> PreviewRepointAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Points the application at a different database, destroying every Binding.
+    /// </summary>
+    /// <remarks>
+    /// All or nothing, unlike save: the new details are proved <em>before</em> anything is destroyed, because
+    /// destroying Bindings and then discovering the new database is unreachable leaves the user with neither.
+    /// </remarks>
+    Task<TargetConnectionDTO> RepointAsync(RepointTargetConnectionDTO request, CancellationToken cancellationToken = default);
 }
 
 /// <inheritdoc />
@@ -129,6 +141,49 @@ public sealed class TargetConnectionService : ITargetConnectionService {
 
         _provider.Invalidate();
         _changeSignal.Signal();
+
+        return await GetAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<RepointPreviewDTO> PreviewRepointAsync(CancellationToken cancellationToken = default) {
+        var counts = await _repository.CountBindingsAsync(cancellationToken).ConfigureAwait(false);
+        return new RepointPreviewDTO { Bindings = counts.Bindings, FieldMappings = counts.FieldMappings };
+    }
+
+    public async Task<TargetConnectionDTO> RepointAsync(RepointTargetConnectionDTO request, CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(request);
+
+        _ = await _provider.GetAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new NoTargetDatabaseException();
+
+        var (profile, details) = Validate(request);
+
+        // The confirmation names counts so a caller that has not looked at what it is destroying cannot
+        // satisfy it by accident, and so a Binding created since the preview aborts rather than vanishes.
+        var counts = await _repository.CountBindingsAsync(cancellationToken).ConfigureAwait(false);
+        if (request.ExpectedBindings != counts.Bindings || request.ExpectedFieldMappings != counts.FieldMappings) {
+            throw new ValidationException(
+                $"The repoint was confirmed for {request.ExpectedBindings} Binding(s) and " +
+                $"{request.ExpectedFieldMappings} Field Mapping(s), but there are now {counts.Bindings} " +
+                $"and {counts.FieldMappings}. Nothing has been destroyed. Review the preview and confirm again.");
+        }
+
+        try {
+            var repository = profile.CreateRepository(profile.BuildConnectionString(details));
+            await repository.GetSchemaMetadata(cancellationToken: cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            throw new ValidationException(
+                $"{Summarise(ex)} Nothing has been destroyed. The database said: {ex.Message}");
+        }
+
+        var (_, destroyed) = await _repository.RepointAsync(ToModel(details), cancellationToken).ConfigureAwait(false);
+        await _repository.RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, cancellationToken).ConfigureAwait(false);
+
+        _provider.Invalidate();
+        _changeSignal.Signal();
+
+        _logger.LogWarning("Repointed the Target Connection; {Bindings} Binding(s) and {Mappings} Field Mapping(s) were destroyed",
+            destroyed.Bindings, destroyed.FieldMappings);
 
         return await GetAsync(cancellationToken).ConfigureAwait(false);
     }

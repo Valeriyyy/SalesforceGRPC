@@ -292,6 +292,83 @@ public class TargetConnectionServiceTests {
         Assert.Equal("The MySQL driver is not implemented yet.", unavailable.UnavailableReason);
     }
 
+    #region Repoint
+
+    private void WithBindings(int bindings, int fieldMappings) =>
+        _repository.CountBindingsAsync(Arg.Any<CancellationToken>())
+            .Returns(new BindingCounts { Bindings = bindings, FieldMappings = fieldMappings });
+
+    private static RepointTargetConnectionDTO RepointRequest(int expectedBindings, int expectedFieldMappings) => new() {
+        Engine = "Postgres", Host = "other-db.internal", Port = 5432, DatabaseName = "warehouse", Username = "loader",
+        Password = "s3cret", ExpectedBindings = expectedBindings, ExpectedFieldMappings = expectedFieldMappings
+    };
+
+    [Fact]
+    public async Task TheRepointPreview_ReportsWhatWouldBeDestroyed() {
+        WithStored(Stored());
+        WithBindings(3, 12);
+
+        var preview = await NewService().PreviewRepointAsync(Ct);
+
+        Assert.Equal(3, preview.Bindings);
+        Assert.Equal(12, preview.FieldMappings);
+    }
+
+    [Fact]
+    public async Task RepointingWithAMatchingConfirmation_DestroysBindings_StoresTheNewTarget_AndRecordsConnected() {
+        WithStored(Stored());
+        WithBindings(3, 12);
+        _repository.RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>())
+            .Returns(call => { var c = call.Arg<TargetConnection>(); c.Id = 1; return (c, new BindingCounts { Bindings = 3, FieldMappings = 12 }); });
+
+        await NewService().RepointAsync(RepointRequest(3, 12), Ct);
+
+        await _repository.Received(1).RepointAsync(Arg.Is<TargetConnection>(c => c.Host == "other-db.internal"), Arg.Any<CancellationToken>());
+        await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+        _provider.Received().Invalidate();
+        _signal.Received().Signal();
+    }
+
+    /// <summary>A Binding created since the preview aborts the repoint rather than vanishing.</summary>
+    [Fact]
+    public async Task RepointingWithAStaleConfirmation_DestroysNothing() {
+        WithStored(Stored());
+        WithBindings(4, 12);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().RepointAsync(RepointRequest(3, 12), Ct));
+
+        Assert.Contains("Nothing has been destroyed", ex.Message);
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Destroying Bindings and then discovering the new database is unreachable would leave the user with
+    /// neither.
+    /// </summary>
+    [Fact]
+    public async Task RepointingToADatabaseThatFailsItsProof_DestroysNothing() {
+        WithStored(Stored());
+        WithBindings(3, 12);
+        _provedRepository.GetSchemaMetadata(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new Npgsql.NpgsqlException("no route to host"));
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().RepointAsync(RepointRequest(3, 12), Ct));
+
+        Assert.Contains("no route to host", ex.Message);
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RecordFailureAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RepointingWithNothingConfigured_ThrowsANamedException() {
+        WithStored(null);
+
+        await Assert.ThrowsAsync<NoTargetDatabaseException>(() => NewService().RepointAsync(RepointRequest(0, 0), Ct));
+    }
+
+    #endregion
+
     [Fact]
     public async Task OnAFreshInstall_TheReadModel_SaysSoWithoutThrowing() {
         WithStored(null);

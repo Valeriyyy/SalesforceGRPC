@@ -41,6 +41,27 @@ public interface ITargetConnectionRepository {
     /// </remarks>
     Task RecordIncompleteAsync(string error, string? rawResponse, DateTime at, CancellationToken cancellationToken = default);
 
+    /// <summary>How many Bindings and Field Mappings a repoint would destroy.</summary>
+    Task<BindingCounts> CountBindingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Destroys every Binding and replaces the Target Connection, in one transaction.
+    /// </summary>
+    /// <remarks>
+    /// One transaction because a half-repoint leaves the application describing Bindings against a database
+    /// it is no longer pointed at. Field Mappings go through the cascade; Channel Members keep their rows and
+    /// lose their Binding reference, because the Mirror records what exists in Salesforce and a repoint says
+    /// nothing about that. See docs/adr/0004.
+    /// </remarks>
+    Task<(TargetConnection Connection, BindingCounts Destroyed)> RepointAsync(TargetConnection connection,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Deletes the Target Connection. Used by Disconnect.</summary>
     Task DeleteAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>What a repoint destroys, so the user can be told before they lose it.</summary>
+public sealed record BindingCounts {
+    public int Bindings { get; init; }
+    public int FieldMappings { get; init; }
 }

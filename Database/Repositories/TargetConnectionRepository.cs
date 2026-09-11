@@ -101,11 +101,9 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         return row?.ToModel();
     }
 
-    /// <inheritdoc />
-    public async Task<TargetConnection> UpsertAsync(TargetConnection targetConnection, CancellationToken cancellationToken = default) {
-        // ON CONFLICT on is_singleton rather than on id: the caller creating a connection has no id to
-        // supply, and the unique constraint is what makes "the one row" a fact rather than an assumption.
-        var sql = $@"
+    // ON CONFLICT on is_singleton rather than on id: the caller creating a connection has no id to supply,
+    // and the unique constraint is what makes "the one row" a fact rather than an assumption.
+    private const string UpsertSql = $@"
             INSERT INTO salesforce.target_connection (
                 is_singleton, engine, host, port, database_name, username, password_encrypted, file_path,
                 options, connection_state)
@@ -131,19 +129,24 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
                 date_updated = now()
             RETURNING {ConnectionColumns}";
 
-        LogQuery("UPSERT", sql);
+    private static object UpsertParameters(TargetConnection targetConnection) => new {
+        Engine = targetConnection.Engine.ToString(),
+        targetConnection.Host,
+        targetConnection.Port,
+        targetConnection.DatabaseName,
+        targetConnection.Username,
+        targetConnection.PasswordEncrypted,
+        targetConnection.FilePath,
+        OptionsJson = JsonSerializer.Serialize(targetConnection.Options)
+    };
+
+    /// <inheritdoc />
+    public async Task<TargetConnection> UpsertAsync(TargetConnection targetConnection, CancellationToken cancellationToken = default) {
+        LogQuery("UPSERT", UpsertSql);
 
         await using var connection = new NpgsqlConnection(_connectionString);
-        var row = await connection.QuerySingleAsync<Row>(new CommandDefinition(sql, new {
-            Engine = targetConnection.Engine.ToString(),
-            targetConnection.Host,
-            targetConnection.Port,
-            targetConnection.DatabaseName,
-            targetConnection.Username,
-            targetConnection.PasswordEncrypted,
-            targetConnection.FilePath,
-            OptionsJson = JsonSerializer.Serialize(targetConnection.Options)
-        }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        var row = await connection.QuerySingleAsync<Row>(new CommandDefinition(UpsertSql,
+            UpsertParameters(targetConnection), cancellationToken: cancellationToken)).ConfigureAwait(false);
         return row.ToModel();
     }
 
@@ -188,6 +191,56 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         await connection.ExecuteAsync(new CommandDefinition(sql,
             new { State = state, Error = error, RawResponse = rawResponse, At = at },
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    public async Task<BindingCounts> CountBindingsAsync(CancellationToken cancellationToken = default) {
+        const string sql = @"
+            SELECT
+                (SELECT count(*) FROM salesforce.cdc_schemas) AS Bindings,
+                (SELECT count(*) FROM salesforce.mapped_fields) AS FieldMappings";
+
+        LogQuery("SELECT", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        return await connection.QuerySingleAsync<BindingCounts>(
+            new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    public async Task<(TargetConnection Connection, BindingCounts Destroyed)> RepointAsync(
+        TargetConnection targetConnection, CancellationToken cancellationToken = default) {
+        // Deleted in dependency order rather than leaning on ON DELETE CASCADE, so the statements read as the
+        // list of what a repoint destroys. Channel Members are not touched: their cdc_schema_id is
+        // ON DELETE SET NULL, which is exactly the outcome wanted.
+        const string destroy = @"
+            DELETE FROM salesforce.mapped_fields;
+            DELETE FROM salesforce.cdc_schemas;";
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        var counts = await connection.QuerySingleAsync<BindingCounts>(new CommandDefinition(@"
+            SELECT
+                (SELECT count(*) FROM salesforce.cdc_schemas) AS Bindings,
+                (SELECT count(*) FROM salesforce.mapped_fields) AS FieldMappings",
+            transaction: transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        LogQuery("DELETE", destroy);
+        await connection.ExecuteAsync(new CommandDefinition(destroy, transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        LogQuery("UPSERT", UpsertSql);
+        var row = await connection.QuerySingleAsync<Row>(new CommandDefinition(UpsertSql,
+            UpsertParameters(targetConnection), transaction: transaction, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        _logger.LogWarning(
+            "Repointed the Target Connection to {Engine} {Address}. Destroyed {Bindings} Binding(s) and {Mappings} Field Mapping(s).",
+            row.Engine, row.Host ?? row.FilePath, counts.Bindings, counts.FieldMappings);
+
+        return (row.ToModel(), counts);
     }
 
     public async Task DeleteAsync(CancellationToken cancellationToken = default) {
