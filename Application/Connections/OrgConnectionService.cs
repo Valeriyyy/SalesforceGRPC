@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Targets;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using DTO;
@@ -53,6 +54,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
     private readonly IBootstrapStateStore _stateStore;
     private readonly IOrgSelfConfigurator _selfConfigurator;
     private readonly IConfigurationChangeSignal _changeSignal;
+    private readonly ITargetConnectionProvider _targetConnections;
     private readonly SalesforceConfig _config;
     private readonly ILogger<OrgConnectionService> _logger;
     private readonly TimeProvider _time;
@@ -60,8 +62,8 @@ public sealed class OrgConnectionService : IOrgConnectionService {
     public OrgConnectionService(IOrgConnectionRepository repository, IOrgConnectionProvider provider,
         ISecretProtector protector, ISalesforceTokenProvider tokenProvider, IBootstrapOAuthClient bootstrap,
         IBootstrapStateStore stateStore, IOrgSelfConfigurator selfConfigurator,
-        IConfigurationChangeSignal changeSignal, IOptions<SalesforceConfig> config,
-        ILogger<OrgConnectionService> logger, TimeProvider time) {
+        IConfigurationChangeSignal changeSignal, ITargetConnectionProvider targetConnections,
+        IOptions<SalesforceConfig> config, ILogger<OrgConnectionService> logger, TimeProvider time) {
         _repository = repository;
         _provider = provider;
         _protector = protector;
@@ -70,6 +72,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         _stateStore = stateStore;
         _selfConfigurator = selfConfigurator;
         _changeSignal = changeSignal;
+        _targetConnections = targetConnections;
         _config = config.Value;
         _logger = logger;
         _time = time;
@@ -251,9 +254,19 @@ public sealed class OrgConnectionService : IOrgConnectionService {
                 $"and {counts.FieldMappings}. Nothing has been destroyed. Review the preview and confirm again.");
         }
 
+        // The Target Connection is the one thing a Salesforce Disconnect destroys that a user might not expect
+        // it to, so its loss has to be confirmed as explicitly as the counts are.
+        if (confirmation.ExpectedTargetConnection != (counts.TargetConnection is not null)) {
+            throw new ValidationException(counts.TargetConnection is null
+                ? "Disconnect was confirmed as destroying a Target Connection, but none is configured. Nothing has been destroyed."
+                : $"Disconnect will also destroy the Target Connection ({counts.TargetConnection}), and the confirmation " +
+                  "did not acknowledge that. Nothing has been destroyed. Review the preview and confirm again.");
+        }
+
         var destroyed = await _repository.DeleteConnectionAndOrgScopedStateAsync(cancellationToken).ConfigureAwait(false);
 
         _provider.Invalidate();
+        _targetConnections.Invalidate();
         _tokenProvider.ClearCache();
         _changeSignal.Signal();
 
@@ -297,6 +310,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         AvroSchemas = counts.AvroSchemas,
         Channels = counts.Channels,
         ChannelMembers = counts.ChannelMembers,
+        TargetConnection = counts.TargetConnection,
         LeftInSalesforce = [
             "The External Client App you created, along with its Consumer Key and Secret",
             "The permission set granting access to it, and its assignment to the Run-as User",

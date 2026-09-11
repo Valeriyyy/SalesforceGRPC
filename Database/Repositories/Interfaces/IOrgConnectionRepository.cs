@@ -12,6 +12,12 @@ public sealed record OrgScopedStateCounts {
     public int AvroSchemas { get; init; }
     public int Channels { get; init; }
     public int ChannelMembers { get; init; }
+
+    /// <summary>
+    /// The Target Connection that will go too, described as engine and address, or null when none is
+    /// configured. Named in the preview so its loss is disclosed rather than discovered; see docs/adr/0004.
+    /// </summary>
+    public string? TargetConnection { get; init; }
 }
 
 /// <summary>
@@ -65,8 +71,8 @@ public interface IOrgConnectionRepository {
     Task<OrgScopedStateCounts> CountOrgScopedStateAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Deletes the Org Connection and every piece of state that only means anything in the context of that
-    /// org, in one transaction.
+    /// Deletes the Org Connection, the Target Connection, and every piece of state that only means anything
+    /// in the context of that org, in one transaction.
     /// </summary>
     /// <remarks>
     /// One transaction because a half-wipe leaves the application describing Bindings for an org it is no

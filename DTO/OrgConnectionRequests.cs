@@ -41,4 +41,7 @@ public record ConfirmDisconnectDTO {
 
     /// <summary>Must match the Field Mapping count reported by the Disconnect preview.</summary>
     public int ExpectedFieldMappings { get; set; }
+
+    /// <summary>Must be true when the preview named a Target Connection, and false when it did not.</summary>
+    public bool ExpectedTargetConnection { get; set; }
 }
