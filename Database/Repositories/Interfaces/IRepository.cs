@@ -10,7 +10,7 @@ public interface IRepository {
     /// Which dialect this repository speaks. Type Compatibility is keyed by it, and the Binding API uses it to
     /// report a clear error for a driver that is not implemented rather than surfacing NotImplementedException.
     /// </summary>
-    DbType DatabaseType { get; }
+    TargetDatabaseEngine Engine { get; }
 
     #region Data Queries
     Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default);

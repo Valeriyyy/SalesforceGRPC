@@ -7,7 +7,7 @@ namespace Database.Repositories;
 public class SqlServerRepository : RepositoryBase {
     public SqlServerRepository(ILogger<SqlServerRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
 
-    public override DbType DatabaseType => DbType.SqlServer;
+    public override TargetDatabaseEngine Engine => TargetDatabaseEngine.SqlServer;
 
     public override Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         throw new NotImplementedException();

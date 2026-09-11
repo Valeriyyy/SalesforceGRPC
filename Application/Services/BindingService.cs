@@ -286,7 +286,7 @@ public class BindingService : IBindingService {
                 $"Column '{dto.TargetColumnName}' does not exist on '{binding.DbSchemaFullName}'.");
         }
 
-        var check = TypeCompatibilityChecker.CheckKeyColumn(column, _targetDb.DatabaseType);
+        var check = TypeCompatibilityChecker.CheckKeyColumn(column, _targetDb.Engine);
         if (check.Level is CompatibilityLevel.Error) {
             throw new ValidationException(check.Message);
         }
@@ -331,7 +331,7 @@ public class BindingService : IBindingService {
                     $"Column '{dto.ColumnName}' does not exist on '{binding.DbSchemaFullName}'.");
             }
 
-            var check = TypeCompatibilityChecker.CheckSoftDeleteColumn(column, _targetDb.DatabaseType);
+            var check = TypeCompatibilityChecker.CheckSoftDeleteColumn(column, _targetDb.Engine);
             if (check.Level is CompatibilityLevel.Error) {
                 throw new ValidationException(check.Message);
             }
@@ -499,7 +499,7 @@ public class BindingService : IBindingService {
         } else if (!columns.TryGetValue(keyMapping.TargetFieldName, out var keyColumn)) {
             result.Blockers.Add($"Key Mapping column '{keyMapping.TargetFieldName}' no longer exists on '{binding.DbSchemaFullName}'.");
         } else {
-            result.Results.Add(ToDto(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, _targetDb.DatabaseType)));
+            result.Results.Add(ToDto(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, _targetDb.Engine)));
         }
 
         var fieldMappings = mappings.Where(m => m.SalesforceFieldName != KeyMappingFieldName).ToList();
@@ -521,7 +521,7 @@ public class BindingService : IBindingService {
             }
 
             result.Results.Add(ToDto(TypeCompatibilityChecker.Check(
-                field.Name, field.FieldType, column, _targetDb.DatabaseType)));
+                field.Name, field.FieldType, column, _targetDb.Engine)));
         }
 
         AddUnmappedNotNullWarnings(result, table, mappings, binding);
@@ -533,7 +533,7 @@ public class BindingService : IBindingService {
                 result.Blockers.Add(
                     $"Soft delete column '{binding.SoftDeleteColumnName}' no longer exists on '{binding.DbSchemaFullName}'.");
             } else {
-                result.Results.Add(ToDto(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, _targetDb.DatabaseType)));
+                result.Results.Add(ToDto(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, _targetDb.Engine)));
             }
         }
 
@@ -606,9 +606,9 @@ public class BindingService : IBindingService {
     #region Helpers
 
     private void EnsureDriverSupported() {
-        if (_targetDb.DatabaseType is DbType.SqlServer or DbType.MySql) {
+        if (_targetDb.Engine is TargetDatabaseEngine.SqlServer or TargetDatabaseEngine.MySql) {
             throw new ValidationException(
-                $"The {_targetDb.DatabaseType} driver is not implemented, so target tables cannot be read and Bindings cannot be configured against it.");
+                $"The {_targetDb.Engine} driver is not implemented, so target tables cannot be read and Bindings cannot be configured against it.");
         }
     }
 

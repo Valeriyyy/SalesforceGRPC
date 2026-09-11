@@ -100,14 +100,14 @@ public class BindingServiceTests {
             new MappedField { SchemaId = BindingId, SalesforceFieldName = "Phone", TargetFieldName = "phone" },
             new MappedField { SchemaId = BindingId, SalesforceFieldName = "AnnualRevenue", TargetFieldName = "annual_revenue" }
         ]);
-        _target.DatabaseType.Returns(DbType.Postgres);
+        _target.Engine.Returns(TargetDatabaseEngine.Postgres);
         _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(AccountTable());
         _entitySchemas.GetSchemaForEntityAsync(Entity, Arg.Any<CancellationToken>()).Returns(AvroSchema());
         _channels.GetMembersByBindingIdAsync(BindingId, Arg.Any<CancellationToken>()).Returns([Member(BindingId)]);
     }
 
     private void ArrangeMemberWithoutBinding(string channelType = "data") {
-        _target.DatabaseType.Returns(DbType.Postgres);
+        _target.Engine.Returns(TargetDatabaseEngine.Postgres);
         _channels.GetMemberByIdAsync(MemberId, Arg.Any<CancellationToken>()).Returns(Member());
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel(channelType));
         _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(AccountTable());
@@ -237,11 +237,11 @@ public class BindingServiceTests {
     }
 
     [Theory]
-    [InlineData(DbType.SqlServer)]
-    [InlineData(DbType.MySql)]
-    public async Task CreateBinding_AgainstADriverThatIsNotImplemented_ReportsThatClearly(DbType dbType) {
+    [InlineData(TargetDatabaseEngine.SqlServer)]
+    [InlineData(TargetDatabaseEngine.MySql)]
+    public async Task CreateBinding_AgainstADriverThatIsNotImplemented_ReportsThatClearly(TargetDatabaseEngine dbType) {
         ArrangeMemberWithoutBinding();
-        _target.DatabaseType.Returns(dbType);
+        _target.Engine.Returns(dbType);
 
         var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct));

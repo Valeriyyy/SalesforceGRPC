@@ -6,10 +6,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Database.Repositories;
 
-public class SqlLiteRepository : RepositoryBase {
-    public SqlLiteRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
+public class SqliteRepository : RepositoryBase {
+    public SqliteRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
-    public override DbType DatabaseType => DbType.SqlLite;
+    public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Sqlite;
 
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);

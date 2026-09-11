@@ -7,7 +7,7 @@ namespace Database.Repositories;
 public class MySqlRepository : RepositoryBase {
     public MySqlRepository(ILogger<MySqlRepository> logger, IConfiguration configuration) : base(logger, configuration) { }
 
-    public override DbType DatabaseType => DbType.MySql;
+    public override TargetDatabaseEngine Engine => TargetDatabaseEngine.MySql;
 
     public override Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         throw new NotImplementedException();

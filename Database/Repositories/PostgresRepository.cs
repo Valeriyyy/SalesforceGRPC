@@ -9,7 +9,7 @@ namespace Database.Repositories;
 public class PostgresRepository : RepositoryBase {
     public PostgresRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
 
-    public override DbType DatabaseType => DbType.Postgres;
+    public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
 
     #region Data Queries
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {

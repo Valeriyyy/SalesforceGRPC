@@ -19,7 +19,7 @@ public abstract class RepositoryBase : IRepository {
         _debugQuery = configuration.GetValue<bool>("DebugQuery");
     }
     
-    public abstract DbType DatabaseType { get; }
+    public abstract TargetDatabaseEngine Engine { get; }
 
     #region Data Queries
 
