@@ -128,6 +128,7 @@ builder.Services.AddSingleton<ITargetEngineProfile>(sp => new SqliteEngineProfil
 builder.Services.AddSingleton<ITargetEngineCatalog, TargetEngineCatalog>();
 builder.Services.AddSingleton<ITargetConnectionRepository, TargetConnectionRepository>();
 builder.Services.AddSingleton<ITargetConnectionProvider, TargetConnectionProvider>();
+builder.Services.AddScoped<ITargetConnectionService, TargetConnectionService>();
 #endregion
 
 builder.Services.AddTransient<IEventStrategy, CreateStrategy>();

@@ -370,6 +370,31 @@ public class TargetConnectionServiceTests {
     #endregion
 
     [Fact]
+    public async Task TheReadModel_ReportsSecretProtectionAsReady_WhenAKeyIsPresent() {
+        WithStored(null);
+        _protector.ProtectingKeyDescription.Returns("environment variable SALESFORCEGRPC_PROTECTING_CERT");
+
+        var dto = await NewService().GetAsync(Ct);
+
+        Assert.Equal("Ready", dto.SecretProtection.Status);
+        Assert.Contains("SALESFORCEGRPC_PROTECTING_CERT", dto.SecretProtection.ProtectingKey);
+    }
+
+    /// <summary>
+    /// A lost protecting key must not present as "not configured", or the user re-enters the password when
+    /// what they need to do is restore the key.
+    /// </summary>
+    [Fact]
+    public async Task TheReadModel_ReportsSecretProtectionAsUnreadable_WhenTheStoredPasswordWillNotDecrypt() {
+        WithStored(Stored());
+        _protector.TryUnprotect("enc:s3cret", out Arg.Any<string>()).Returns(false);
+
+        var dto = await NewService().GetAsync(Ct);
+
+        Assert.Equal("Unreadable", dto.SecretProtection.Status);
+    }
+
+    [Fact]
     public async Task OnAFreshInstall_TheReadModel_SaysSoWithoutThrowing() {
         WithStored(null);
 

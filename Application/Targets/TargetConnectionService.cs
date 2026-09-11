@@ -290,13 +290,16 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         Options = new Dictionary<string, string>(details.Options, StringComparer.Ordinal)
     };
 
-    private static TargetConnectionDTO ToDto(TargetConnection? connection) {
+    private TargetConnectionDTO ToDto(TargetConnection? connection) {
+        var secretProtection = DescribeSecretProtection(connection);
+
         if (connection is null) {
-            return new TargetConnectionDTO { Exists = false };
+            return new TargetConnectionDTO { Exists = false, SecretProtection = secretProtection };
         }
 
         return new TargetConnectionDTO {
             Exists = true,
+            SecretProtection = secretProtection,
             ConnectionState = connection.ConnectionState.ToString(),
             Engine = connection.Engine.ToString(),
             Host = connection.Host,
@@ -312,6 +315,33 @@ public sealed class TargetConnectionService : ITargetConnectionService {
                 RawResponse = connection.LastErrorRaw ?? "",
                 OccurredAt = connection.LastErrorAt
             }
+        };
+    }
+
+    private SecretProtectionDTO DescribeSecretProtection(TargetConnection? connection) {
+        if (_protector.IsAvailable) {
+            // A stored password that will not decrypt is the case that must never read as "not configured".
+            if (connection?.PasswordEncrypted is { } cipher && !_protector.TryUnprotect(cipher, out _)) {
+                return new SecretProtectionDTO {
+                    Status = "Unreadable",
+                    ProtectingKey = _protector.ProtectingKeyDescription,
+                    Guidance = "A database password is stored but cannot be decrypted with the protecting key " +
+                               "that is present. Restore the original protecting certificate and key ring, " +
+                               "or save the connection again with the password re-entered."
+                };
+            }
+
+            return new SecretProtectionDTO { Status = "Ready", ProtectingKey = _protector.ProtectingKeyDescription };
+        }
+
+        return new SecretProtectionDTO {
+            Status = connection?.PasswordEncrypted is null ? "NotConfigured" : "Unreadable",
+            ProtectingKey = _protector.ProtectingKeyDescription,
+            Guidance = connection?.PasswordEncrypted is null
+                ? "No protecting certificate is configured, so no database password can be stored yet. Supply " +
+                  "one through DataProtection:ProtectingCertificate and restart."
+                : "A database password is stored but no protecting key is available to read it. Restore the " +
+                  "protecting certificate."
         };
     }
 }
