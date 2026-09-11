@@ -3,6 +3,7 @@ using Database.Models;
 using Database.Repositories.Interfaces;
 using Database.Targets;
 using Microsoft.Extensions.Logging;
+using System.Data.Common;
 
 namespace Application.Targets;
 
@@ -88,7 +89,7 @@ public sealed class TargetConnectionProvider : ITargetConnectionProvider {
             }
 
             var profile = _engines.For(connection.Engine);
-            var connectionString = profile.BuildConnectionString(Decrypt(connection));
+            var connectionString = profile.BuildConnectionString(connection.Decrypt(_protector));
             loaded.Repository = profile.CreateRepository(connectionString);
             return loaded.Repository;
         } finally {
@@ -115,17 +116,6 @@ public sealed class TargetConnectionProvider : ITargetConnectionProvider {
         }
     }
 
-    private TargetConnectionDetails Decrypt(TargetConnection connection) => new() {
-        Engine = connection.Engine,
-        Host = connection.Host,
-        Port = connection.Port,
-        DatabaseName = connection.DatabaseName,
-        Username = connection.Username,
-        Password = connection.PasswordEncrypted is { } cipher ? _protector.Unprotect(cipher) : null,
-        FilePath = connection.FilePath,
-        Options = connection.Options
-    };
-
     public void Invalidate() {
         Volatile.Write(ref _loaded, null);
         _logger.LogDebug("Target Connection invalidated; the next read will come from the database");
@@ -133,14 +123,49 @@ public sealed class TargetConnectionProvider : ITargetConnectionProvider {
 }
 
 /// <summary>
-/// A write to the Target Database failed at the driver.
+/// The Target Database could not be reached, or refused the connection, during a write.
 /// </summary>
 /// <remarks>
 /// Distinct from every other failure inside the worker's batch so it can escape the per-event isolation. A
-/// bad record is skipped and the batch continues; a database that will not accept writes ends the stream,
-/// because consuming events into a database that cannot store them loses them with no record of how many.
+/// bad record — a constraint violation, a type mismatch, a missing column — is that record's problem: it is
+/// logged and skipped and the batch continues, as it always has. A database that cannot be reached is
+/// everyone's problem: it ends the stream, because consuming events into a database that cannot store them
+/// loses them with no record of how many. <see cref="IsDatabaseUnavailable"/> draws that line.
 /// </remarks>
 public sealed class TargetDatabaseWriteException : Exception {
-    public TargetDatabaseWriteException(string table, System.Data.Common.DbException inner)
-        : base($"The Target Database refused a write to {table}: {inner.Message}", inner) { }
+    public TargetDatabaseWriteException(string table, DbException inner)
+        : base($"The Target Database could not be reached while writing to {table}: {inner.Message}", inner) { }
+
+    /// <summary>
+    /// Whether a driver failure is about the database rather than the data.
+    /// </summary>
+    /// <remarks>
+    /// Engine-agnostic on purpose, using only what <see cref="DbException"/> itself exposes. A null SQLSTATE
+    /// is a client-side failure (no route, refused, timed out) that never reached a server. Class 08 is the
+    /// SQL standard's "connection exception" and class 28 its "invalid authorization", and every supported
+    /// engine reports those the same way. Everything else — 22 data, 23 integrity, 42 syntax or access — is
+    /// one record's fault and stays inside the batch.
+    /// </remarks>
+    public static bool IsDatabaseUnavailable(DbException ex) =>
+        ex.IsTransient
+        || ex.SqlState is null
+        || ex.SqlState.StartsWith("08", StringComparison.Ordinal)
+        || ex.SqlState.StartsWith("28", StringComparison.Ordinal);
+}
+
+/// <summary>
+/// The one place a stored Target Connection becomes plaintext details.
+/// </summary>
+public static class TargetConnectionDecryption {
+    /// <exception cref="SecretsUnreadableException">The stored password will not decrypt.</exception>
+    public static TargetConnectionDetails Decrypt(this TargetConnection connection, ISecretProtector protector) => new() {
+        Engine = connection.Engine,
+        Host = connection.Host,
+        Port = connection.Port,
+        DatabaseName = connection.DatabaseName,
+        Username = connection.Username,
+        Password = connection.PasswordEncrypted is { } cipher ? protector.Unprotect(cipher) : null,
+        FilePath = connection.FilePath,
+        Options = connection.Options
+    };
 }

@@ -150,8 +150,7 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         return row.ToModel();
     }
 
-    public async Task RecordSuccessAsync(DateTime at, CancellationToken cancellationToken = default) {
-        const string sql = @"
+    private const string RecordSuccessSql = @"
             UPDATE salesforce.target_connection SET
                 connection_state = 'Connected',
                 last_connected_at = @At,
@@ -160,10 +159,11 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
                 last_error_at = NULL,
                 date_updated = now()";
 
-        LogQuery("UPDATE", sql);
+    public async Task RecordSuccessAsync(DateTime at, CancellationToken cancellationToken = default) {
+        LogQuery("UPDATE", RecordSuccessSql);
 
         await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.ExecuteAsync(new CommandDefinition(sql, new { At = at }, cancellationToken: cancellationToken))
+        await connection.ExecuteAsync(new CommandDefinition(RecordSuccessSql, new { At = at }, cancellationToken: cancellationToken))
             .ConfigureAwait(false);
     }
 
@@ -193,21 +193,21 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
             cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
-    public async Task<BindingCounts> CountBindingsAsync(CancellationToken cancellationToken = default) {
-        const string sql = @"
+    private const string CountBindingsSql = @"
             SELECT
                 (SELECT count(*) FROM salesforce.cdc_schemas) AS Bindings,
                 (SELECT count(*) FROM salesforce.mapped_fields) AS FieldMappings";
 
-        LogQuery("SELECT", sql);
+    public async Task<BindingCounts> CountBindingsAsync(CancellationToken cancellationToken = default) {
+        LogQuery("SELECT", CountBindingsSql);
 
         await using var connection = new NpgsqlConnection(_connectionString);
         return await connection.QuerySingleAsync<BindingCounts>(
-            new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
+            new CommandDefinition(CountBindingsSql, cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
     public async Task<(TargetConnection Connection, BindingCounts Destroyed)> RepointAsync(
-        TargetConnection targetConnection, CancellationToken cancellationToken = default) {
+        TargetConnection targetConnection, DateTime provedAt, CancellationToken cancellationToken = default) {
         // Deleted in dependency order rather than leaning on ON DELETE CASCADE, so the statements read as the
         // list of what a repoint destroys. Channel Members are not touched: their cdc_schema_id is
         // ON DELETE SET NULL, which is exactly the outcome wanted.
@@ -219,10 +219,7 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-        var counts = await connection.QuerySingleAsync<BindingCounts>(new CommandDefinition(@"
-            SELECT
-                (SELECT count(*) FROM salesforce.cdc_schemas) AS Bindings,
-                (SELECT count(*) FROM salesforce.mapped_fields) AS FieldMappings",
+        var counts = await connection.QuerySingleAsync<BindingCounts>(new CommandDefinition(CountBindingsSql,
             transaction: transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
 
         LogQuery("DELETE", destroy);
@@ -234,6 +231,12 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
             UpsertParameters(targetConnection), transaction: transaction, cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 
+        // Proved before this was called, so it is Connected from the moment it exists.
+        await connection.ExecuteAsync(new CommandDefinition(RecordSuccessSql, new { At = provedAt },
+            transaction: transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        row.ConnectionState = ConnectionState.Connected;
+        row.LastConnectedAt = provedAt;
+
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         _logger.LogWarning(
@@ -241,19 +244,6 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
             row.Engine, row.Host ?? row.FilePath, counts.Bindings, counts.FieldMappings);
 
         return (row.ToModel(), counts);
-    }
-
-    public async Task DeleteAsync(CancellationToken cancellationToken = default) {
-        const string sql = "DELETE FROM salesforce.target_connection";
-        LogQuery("DELETE", sql);
-
-        await using var connection = new NpgsqlConnection(_connectionString);
-        var deleted = await connection.ExecuteAsync(new CommandDefinition(sql, cancellationToken: cancellationToken))
-            .ConfigureAwait(false);
-
-        if (deleted > 0) {
-            _logger.LogWarning("Deleted the Target Connection");
-        }
     }
 
     private void LogQuery(string operation, string sql) {

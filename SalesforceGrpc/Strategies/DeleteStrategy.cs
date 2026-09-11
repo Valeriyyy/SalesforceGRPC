@@ -57,9 +57,7 @@ public class DeleteStrategy : IEventStrategy {
                 var deletedCount = await target.Delete(dbSchema.DbSchemaFullName, sfKeyFieldName, recordIdStrings).ConfigureAwait(false);
                 _logger.LogInformation("Deleted {DeletedCount} records from {ObjectType}", deletedCount, dbSchema.EntityName);
             }
-        } catch (System.Data.Common.DbException e) {
-            // The database, not the record. Escapes the per-event isolation so the worker drops the stream
-            // rather than consuming events into a database that cannot store them.
+        } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to delete the following {ObjectType} records: {recordIds}", dbSchema.EntityName, string.Join(",", recordIdStrings));

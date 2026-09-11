@@ -2,8 +2,8 @@
 --
 -- Brings an existing App Database up to the shape in Definitions/schemas. Safe to re-run.
 --
--- Adds the one table the Target Connection needs and nothing else. It does not migrate the target database
--- settings out of appsettings.json, for the same reason 002 did not migrate Salesforce credentials: seeding
+-- Adds the one table the Target Connection needs and nothing else. It does not migrate the Target
+-- Connection out of appsettings.json, for the same reason 002 did not migrate Salesforce credentials: seeding
 -- an encrypted store from a plaintext file, unattended at startup, is the exact path this feature exists to
 -- close. Enter the Target Connection through the API after applying this, then delete TargetingDatabaseType
 -- and ConnectionStrings:targetingDatabase from appsettings.json.

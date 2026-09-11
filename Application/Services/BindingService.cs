@@ -6,6 +6,7 @@ using Avro;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Database.Targets;
 using DTO;
 using Microsoft.Extensions.Logging;
 using Salesforce.Avro;
@@ -31,6 +32,7 @@ public class BindingService : IBindingService {
     private readonly IMetaRepository _meta;
     private readonly IAvroSchemaRepository _avroSchemas;
     private readonly ITargetConnectionProvider _target;
+    private readonly ITargetEngineCatalog _engines;
     private readonly IPlatformEventChannelRepository _channels;
     private readonly IEntitySchemaProvider _entitySchemas;
     private readonly IConfigurationChangeSignal _changeSignal;
@@ -41,6 +43,7 @@ public class BindingService : IBindingService {
         IMetaRepository meta,
         IAvroSchemaRepository avroSchemas,
         ITargetConnectionProvider target,
+        ITargetEngineCatalog engines,
         IPlatformEventChannelRepository channels,
         IEntitySchemaProvider entitySchemas,
         IConfigurationChangeSignal changeSignal,
@@ -49,6 +52,7 @@ public class BindingService : IBindingService {
         _meta = meta;
         _avroSchemas = avroSchemas;
         _target = target;
+        _engines = engines;
         _channels = channels;
         _entitySchemas = entitySchemas;
         _changeSignal = changeSignal;
@@ -101,7 +105,7 @@ public class BindingService : IBindingService {
 
     public async Task<IReadOnlyList<TargetTableDTO>> GetTargetTablesAsync(string schemaName,
         CancellationToken cancellationToken = default) {
-        var target = await EnsureDriverSupported(cancellationToken).ConfigureAwait(false);
+        var target = await EnsureEngineSupported(cancellationToken).ConfigureAwait(false);
 
         var tables = await target.GetSchemaMetadata(schemaName, cancellationToken).ConfigureAwait(false);
         var bindings = await _meta.GetCachedSchemas(cancellationToken).ConfigureAwait(false);
@@ -122,7 +126,7 @@ public class BindingService : IBindingService {
 
     public async Task<IReadOnlyList<TargetColumnDTO>> GetTargetColumnsAsync(string schemaName, string tableName,
         int? bindingId = null, CancellationToken cancellationToken = default) {
-        var target = await EnsureDriverSupported(cancellationToken).ConfigureAwait(false);
+        var target = await EnsureEngineSupported(cancellationToken).ConfigureAwait(false);
 
         var table = await target.GetTableMetadata(tableName, schemaName, cancellationToken).ConfigureAwait(false);
         if (table is null) {
@@ -166,7 +170,7 @@ public class BindingService : IBindingService {
     public async Task<BindingDTO> CreateBindingAsync(int memberId, CreateBindingDTO dto,
         CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(dto);
-        var target = await EnsureDriverSupported(cancellationToken).ConfigureAwait(false);
+        var target = await EnsureEngineSupported(cancellationToken).ConfigureAwait(false);
 
         var member = await RequireMember(memberId, cancellationToken).ConfigureAwait(false);
 
@@ -613,17 +617,21 @@ public class BindingService : IBindingService {
 
     #region Helpers
 
+    /// <summary>The stored Target Database Engine, without building a repository or decrypting anything.</summary>
     private async Task<TargetDatabaseEngine> Engine(CancellationToken cancellationToken) =>
-        (await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false)).Engine;
+        (await _target.GetAsync(cancellationToken).ConfigureAwait(false) ?? throw new NoTargetDatabaseException()).Engine;
 
-    /// <summary>The Target Database repository, refusing the engines whose driver is a stub.</summary>
-    private async Task<IRepository> EnsureDriverSupported(CancellationToken cancellationToken) {
-        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
-        if (target.Engine is TargetDatabaseEngine.SqlServer or TargetDatabaseEngine.MySql) {
+    /// <summary>
+    /// The Target Database repository, refusing an engine whose profile says it cannot be used yet. The
+    /// profile is the one source of truth for that; nothing here lists engines by name.
+    /// </summary>
+    private async Task<IRepository> EnsureEngineSupported(CancellationToken cancellationToken) {
+        var profile = _engines.For(await Engine(cancellationToken).ConfigureAwait(false));
+        if (!profile.IsAvailable) {
             throw new ValidationException(
-                $"The {target.Engine} driver is not implemented, so target tables cannot be read and Bindings cannot be configured against it.");
+                $"{profile.UnavailableReason} Target tables cannot be read and Bindings cannot be configured against {profile.Engine}.");
         }
-        return target;
+        return await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<PlatformEventChannelMemberEntity> RequireMember(int memberId, CancellationToken cancellationToken) =>

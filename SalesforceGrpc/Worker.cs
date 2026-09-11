@@ -306,7 +306,6 @@ public class Worker : BackgroundService {
         } catch (OperationCanceledException) {
             throw;
         } catch (TargetDatabaseWriteException) {
-            // The database, not this event. Escapes the batch so the stream is dropped.
             throw;
         } catch (Exception ex) {
             _logger.LogError(ex, "Failed to apply event with Schema Id {SchemaId}; continuing with the rest of the batch",

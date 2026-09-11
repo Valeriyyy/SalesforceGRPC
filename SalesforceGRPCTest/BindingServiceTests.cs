@@ -5,6 +5,7 @@ using Application.Targets;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Database.Targets;
 using DTO;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -29,6 +30,7 @@ public class BindingServiceTests {
     private readonly IAvroSchemaRepository _avro = Substitute.For<IAvroSchemaRepository>();
     private readonly IRepository _target = Substitute.For<IRepository>();
     private readonly ITargetConnectionProvider _targetConnections;
+    private readonly ITargetEngineCatalog _engines = Substitute.For<ITargetEngineCatalog>();
     private readonly IPlatformEventChannelRepository _channels = Substitute.For<IPlatformEventChannelRepository>();
     private readonly IEntitySchemaProvider _entitySchemas = Substitute.For<IEntitySchemaProvider>();
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
@@ -42,10 +44,22 @@ public class BindingServiceTests {
 
     public BindingServiceTests() {
         _targetConnections = TargetProviders.Of(_target);
+        WithStoredEngine(TargetDatabaseEngine.Postgres, available: true);
+    }
+
+    /// <summary>A stored Target Connection on the given engine, and a profile that says whether it can be used.</summary>
+    private void WithStoredEngine(TargetDatabaseEngine engine, bool available) {
+        _targetConnections.GetAsync(Arg.Any<CancellationToken>())
+            .Returns(new TargetConnection { Engine = engine, ConnectionState = ConnectionState.Connected });
+        var profile = Substitute.For<ITargetEngineProfile>();
+        profile.Engine.Returns(engine);
+        profile.IsAvailable.Returns(available);
+        profile.UnavailableReason.Returns(available ? null : $"Support for {engine} is not implemented yet.");
+        _engines.For(engine).Returns(profile);
     }
 
     private BindingService NewService() =>
-        new(_meta, _avro, _targetConnections, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 
@@ -245,14 +259,14 @@ public class BindingServiceTests {
     [Theory]
     [InlineData(TargetDatabaseEngine.SqlServer)]
     [InlineData(TargetDatabaseEngine.MySql)]
-    public async Task CreateBinding_AgainstADriverThatIsNotImplemented_ReportsThatClearly(TargetDatabaseEngine dbType) {
+    public async Task CreateBinding_AgainstAnEngineThatIsNotSupported_ReportsThatClearly(TargetDatabaseEngine engine) {
         ArrangeMemberWithoutBinding();
-        _target.Engine.Returns(dbType);
+        WithStoredEngine(engine, available: false);
 
         var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct));
 
-        Assert.Contains(dbType.ToString(), ex.Message, StringComparison.Ordinal);
+        Assert.Contains(engine.ToString(), ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

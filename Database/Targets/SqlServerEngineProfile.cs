@@ -18,7 +18,7 @@ public sealed class SqlServerEngineProfile : TargetEngineProfile {
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.SqlServer;
 
     public override bool IsAvailable => false;
-    public override string? UnavailableReason => "The SQL Server driver is not implemented yet.";
+    public override string? UnavailableReason => "Support for SQL Server is not implemented yet.";
 
     public override IReadOnlyList<FieldDefinition> Fields { get; } = [
         new() { Name = FieldNames.Host, Label = "Server", Kind = FieldKind.String, Required = true },

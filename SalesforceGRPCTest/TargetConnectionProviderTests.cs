@@ -103,4 +103,25 @@ public class TargetConnectionProviderTests {
 
         await Assert.ThrowsAsync<SecretsUnreadableException>(() => NewProvider().GetRepositoryAsync(Ct));
     }
+
+    /// <summary>
+    /// The line between one bad record and a database that is gone. A constraint violation must never end
+    /// the stream; a refused connection must never be skipped as if it were a bad row.
+    /// </summary>
+    [Theory]
+    [InlineData("23505", false)] // unique violation: that record's problem
+    [InlineData("22P02", false)] // invalid text representation: that record's problem
+    [InlineData("42703", false)] // undefined column: the Binding's problem, not the database's
+    [InlineData("08006", true)]  // connection failure
+    [InlineData("28P01", true)]  // password authentication failed
+    public void ADriverFailure_IsAboutTheDatabase_OnlyForConnectionAndAuthorisationClasses(string sqlState, bool expected) {
+        var ex = new Npgsql.PostgresException("msg", "ERROR", "ERROR", sqlState);
+
+        Assert.Equal(expected, TargetDatabaseWriteException.IsDatabaseUnavailable(ex));
+    }
+
+    [Fact]
+    public void AClientSideFailureWithNoSqlState_IsAboutTheDatabase() {
+        Assert.True(TargetDatabaseWriteException.IsDatabaseUnavailable(new Npgsql.NpgsqlException("No route to host")));
+    }
 }

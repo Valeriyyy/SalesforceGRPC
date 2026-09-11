@@ -146,7 +146,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
                      ?? throw new NoTargetDatabaseException();
 
         var profile = _engines.For(stored.Engine);
-        await ProveAsync(profile, Decrypt(stored), stored.ConnectionState, cancellationToken).ConfigureAwait(false);
+        await ProveAsync(profile, stored.Decrypt(_protector), stored.ConnectionState, cancellationToken).ConfigureAwait(false);
 
         _provider.Invalidate();
         _changeSignal.Signal();
@@ -170,10 +170,17 @@ public sealed class TargetConnectionService : ITargetConnectionService {
     public async Task<TargetConnectionDTO> RepointAsync(RepointTargetConnectionDTO request, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(request);
 
-        _ = await _provider.GetAsync(cancellationToken).ConfigureAwait(false)
-            ?? throw new NoTargetDatabaseException();
+        var existing = await _provider.GetAsync(cancellationToken).ConfigureAwait(false)
+                       ?? throw new NoTargetDatabaseException();
 
         var (profile, details) = Validate(request);
+        var model = ToModel(details);
+
+        if (existing.Identity == model.Identity) {
+            throw new ValidationException(
+                "These details point at the same database as the current Target Connection, so there is nothing " +
+                "to repoint to and no reason to destroy any Binding. Use save to edit credentials or options.");
+        }
 
         // The confirmation names counts so a caller that has not looked at what it is destroying cannot
         // satisfy it by accident, and so a Binding created since the preview aborts rather than vanishes.
@@ -186,15 +193,14 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         }
 
         try {
-            var repository = profile.CreateRepository(profile.BuildConnectionString(details));
-            await repository.GetSchemaMetadata(cancellationToken: cancellationToken).ConfigureAwait(false);
+            await ReadSchemaAsync(profile, details, cancellationToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
             throw new ValidationException(
                 $"{Summarise(ex)} Nothing has been destroyed. The database said: {ex.Message}");
         }
 
-        var (_, destroyed) = await _repository.RepointAsync(ToModel(details), cancellationToken).ConfigureAwait(false);
-        await _repository.RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, cancellationToken).ConfigureAwait(false);
+        var (_, destroyed) = await _repository.RepointAsync(model, _time.GetUtcNow().UtcDateTime, cancellationToken)
+            .ConfigureAwait(false);
 
         _provider.Invalidate();
         _changeSignal.Signal();
@@ -217,8 +223,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         var now = _time.GetUtcNow().UtcDateTime;
 
         try {
-            var repository = profile.CreateRepository(profile.BuildConnectionString(details));
-            await repository.GetSchemaMetadata(cancellationToken: cancellationToken).ConfigureAwait(false);
+            await ReadSchemaAsync(profile, details, cancellationToken).ConfigureAwait(false);
 
             await _repository.RecordSuccessAsync(now, cancellationToken).ConfigureAwait(false);
 
@@ -247,11 +252,19 @@ public sealed class TargetConnectionService : ITargetConnectionService {
     }
 
     /// <summary>
+    /// The proof itself: a repository built from these details must be able to read schema metadata.
+    /// </summary>
+    private static Task ReadSchemaAsync(ITargetEngineProfile profile, TargetConnectionDetails details,
+        CancellationToken cancellationToken) =>
+        profile.CreateRepository(profile.BuildConnectionString(details))
+            .GetSchemaMetadata(cancellationToken: cancellationToken);
+
+    /// <summary>
     /// A one-line summary for the read model. The driver's own message is stored separately and shown
     /// alongside it, so this does not have to be complete — only useful.
     /// </summary>
     private static string Summarise(Exception ex) => ex switch {
-        NotImplementedException => "The driver for this engine is not implemented.",
+        NotImplementedException => "This engine is not supported yet.",
         _ => "The Target Database could not be reached, or its schema could not be read, with these details."
     };
 
@@ -294,17 +307,6 @@ public sealed class TargetConnectionService : ITargetConnectionService {
 
         return (profile, details);
     }
-
-    private TargetConnectionDetails Decrypt(TargetConnection connection) => new() {
-        Engine = connection.Engine,
-        Host = connection.Host,
-        Port = connection.Port,
-        DatabaseName = connection.DatabaseName,
-        Username = connection.Username,
-        Password = connection.PasswordEncrypted is { } cipher ? _protector.Unprotect(cipher) : null,
-        FilePath = connection.FilePath,
-        Options = connection.Options
-    };
 
     private TargetConnection ToModel(TargetConnectionDetails details) => new() {
         Engine = details.Engine,

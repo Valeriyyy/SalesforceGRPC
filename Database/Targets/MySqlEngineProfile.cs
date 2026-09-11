@@ -16,7 +16,7 @@ public sealed class MySqlEngineProfile : TargetEngineProfile {
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.MySql;
 
     public override bool IsAvailable => false;
-    public override string? UnavailableReason => "The MySQL driver is not implemented yet.";
+    public override string? UnavailableReason => "Support for MySQL is not implemented yet.";
 
     public override IReadOnlyList<FieldDefinition> Fields { get; } = [
         new() { Name = FieldNames.Host, Label = "Host", Kind = FieldKind.String, Required = true },

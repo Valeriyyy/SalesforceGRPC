@@ -247,6 +247,7 @@ public class TargetConnectionServiceTests {
         await NewService().SaveAsync(PostgresRequest(password: "rotated"), Ct);
 
         await _repository.Received(1).UpsertAsync(Arg.Is<TargetConnection>(c => c.PasswordEncrypted == "enc:rotated"), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -274,6 +275,31 @@ public class TargetConnectionServiceTests {
 
         await Assert.ThrowsAsync<TargetConnectionIdentityChangedException>(() =>
             NewService().SaveAsync(new SaveTargetConnectionDTO { Engine = "Sqlite", FilePath = "/x.db" }, Ct));
+    }
+
+    [Fact]
+    public async Task EditingOnlyTheOptions_Applies_AndDestroysNothing() {
+        WithStored(Stored());
+        var request = PostgresRequest();
+        request.Options["sslMode"] = "Require";
+
+        await NewService().SaveAsync(request, Ct);
+
+        await _repository.Received(1).UpsertAsync(Arg.Is<TargetConnection>(c => c.Options["sslMode"] == "Require"), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ChangingTheFilePathThroughSave_IsRefused() {
+        var sqlite = Substitute.For<ITargetEngineProfile>();
+        sqlite.Engine.Returns(TargetDatabaseEngine.Sqlite);
+        sqlite.IsAvailable.Returns(true);
+        sqlite.Validate(Arg.Any<TargetConnectionDetails>()).Returns([]);
+        _engines.For(TargetDatabaseEngine.Sqlite).Returns(sqlite);
+        WithStored(new TargetConnection { Id = 1, Engine = TargetDatabaseEngine.Sqlite, FilePath = "/a.db", ConnectionState = ConnectionState.Connected });
+
+        await Assert.ThrowsAsync<TargetConnectionIdentityChangedException>(() =>
+            NewService().SaveAsync(new SaveTargetConnectionDTO { Engine = "Sqlite", FilePath = "/b.db" }, Ct));
     }
 
     /// <summary>A host differing only in case is the same host. DNS is case-insensitive.</summary>
@@ -338,13 +364,13 @@ public class TargetConnectionServiceTests {
     public async Task RepointingWithAMatchingConfirmation_DestroysBindings_StoresTheNewTarget_AndRecordsConnected() {
         WithStored(Stored());
         WithBindings(3, 12);
-        _repository.RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>())
+        _repository.RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
             .Returns(call => { var c = call.Arg<TargetConnection>(); c.Id = 1; return (c, new BindingCounts { Bindings = 3, FieldMappings = 12 }); });
 
         await NewService().RepointAsync(RepointRequest(3, 12), Ct);
 
-        await _repository.Received(1).RepointAsync(Arg.Is<TargetConnection>(c => c.Host == "other-db.internal"), Arg.Any<CancellationToken>());
-        await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+        await _repository.Received(1).RepointAsync(Arg.Is<TargetConnection>(c => c.Host == "other-db.internal"),
+            _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
         _provider.Received().Invalidate();
         _signal.Received().Signal();
     }
@@ -358,7 +384,7 @@ public class TargetConnectionServiceTests {
         var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().RepointAsync(RepointRequest(3, 12), Ct));
 
         Assert.Contains("Nothing has been destroyed", ex.Message);
-        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
     }
 
@@ -376,8 +402,21 @@ public class TargetConnectionServiceTests {
         var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().RepointAsync(RepointRequest(3, 12), Ct));
 
         Assert.Contains("no route to host", ex.Message);
-        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RecordFailureAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>Destroying every Binding to arrive at the same database would be destruction for nothing.</summary>
+    [Fact]
+    public async Task RepointingToTheSameDatabase_IsRefused_AndDestroysNothing() {
+        WithStored(Stored());
+        WithBindings(3, 12);
+        var sameIdentity = RepointRequest(3, 12) with { Host = "db.internal" };
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().RepointAsync(sameIdentity, Ct));
+
+        Assert.Contains("same database", ex.Message);
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
