@@ -4,7 +4,6 @@ using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using System.Text.Json;
 
 namespace Database.Repositories;
 
@@ -32,7 +31,7 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
                 username AS Username,
                 password_encrypted AS PasswordEncrypted,
                 file_path AS FilePath,
-                options::text AS OptionsJson,
+                options::text AS Options,
                 connection_state AS ConnectionState,
                 last_connected_at AS LastConnectedAt,
                 last_error AS LastError,
@@ -40,49 +39,6 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
                 last_error_at AS LastErrorAt,
                 date_created AS DateCreated,
                 date_updated AS DateUpdated";
-
-    /// <summary>
-    /// What Dapper materialises. Differs from the model only in carrying the options document as text, since
-    /// jsonb has no natural CLR mapping and a global type handler for a dictionary would reach every query in
-    /// the process.
-    /// </summary>
-    private sealed class Row {
-        public int Id { get; set; }
-        public TargetDatabaseEngine Engine { get; set; }
-        public string? Host { get; set; }
-        public int? Port { get; set; }
-        public string? DatabaseName { get; set; }
-        public string? Username { get; set; }
-        public string? PasswordEncrypted { get; set; }
-        public string? FilePath { get; set; }
-        public string OptionsJson { get; set; } = "{}";
-        public ConnectionState ConnectionState { get; set; }
-        public DateTime? LastConnectedAt { get; set; }
-        public string? LastError { get; set; }
-        public string? LastErrorRaw { get; set; }
-        public DateTime? LastErrorAt { get; set; }
-        public DateTime DateCreated { get; set; }
-        public DateTime? DateUpdated { get; set; }
-
-        public TargetConnection ToModel() => new() {
-            Id = Id,
-            Engine = Engine,
-            Host = Host,
-            Port = Port,
-            DatabaseName = DatabaseName,
-            Username = Username,
-            PasswordEncrypted = PasswordEncrypted,
-            FilePath = FilePath,
-            Options = JsonSerializer.Deserialize<Dictionary<string, string>>(OptionsJson) ?? new(StringComparer.Ordinal),
-            ConnectionState = ConnectionState,
-            LastConnectedAt = LastConnectedAt,
-            LastError = LastError,
-            LastErrorRaw = LastErrorRaw,
-            LastErrorAt = LastErrorAt,
-            DateCreated = DateCreated,
-            DateUpdated = DateUpdated
-        };
-    }
 
     public TargetConnectionRepository(ILogger<TargetConnectionRepository> logger, IConfiguration configuration) {
         _logger = logger;
@@ -96,9 +52,8 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         LogQuery("SELECT", sql);
 
         await using var connection = new NpgsqlConnection(_connectionString);
-        var row = await connection.QuerySingleOrDefaultAsync<Row>(
+        return await connection.QuerySingleOrDefaultAsync<TargetConnection>(
             new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
-        return row?.ToModel();
     }
 
     // ON CONFLICT on is_singleton rather than on id: the caller creating a connection has no id to supply,
@@ -109,7 +64,7 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
                 options, connection_state)
             VALUES (
                 true, @Engine, @Host, @Port, @DatabaseName, @Username, @PasswordEncrypted, @FilePath,
-                @OptionsJson::jsonb, 'Incomplete')
+                @Options::jsonb, 'Incomplete')
             ON CONFLICT (is_singleton) DO UPDATE SET
                 engine = EXCLUDED.engine,
                 host = EXCLUDED.host,
@@ -137,7 +92,7 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         targetConnection.Username,
         targetConnection.PasswordEncrypted,
         targetConnection.FilePath,
-        OptionsJson = JsonSerializer.Serialize(targetConnection.Options)
+        targetConnection.Options
     };
 
     /// <inheritdoc />
@@ -145,9 +100,8 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         LogQuery("UPSERT", UpsertSql);
 
         await using var connection = new NpgsqlConnection(_connectionString);
-        var row = await connection.QuerySingleAsync<Row>(new CommandDefinition(UpsertSql,
+        return await connection.QuerySingleAsync<TargetConnection>(new CommandDefinition(UpsertSql,
             UpsertParameters(targetConnection), cancellationToken: cancellationToken)).ConfigureAwait(false);
-        return row.ToModel();
     }
 
     private const string RecordSuccessSql = @"
@@ -227,23 +181,23 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
         LogQuery("UPSERT", UpsertSql);
-        var row = await connection.QuerySingleAsync<Row>(new CommandDefinition(UpsertSql,
+        var saved = await connection.QuerySingleAsync<TargetConnection>(new CommandDefinition(UpsertSql,
             UpsertParameters(targetConnection), transaction: transaction, cancellationToken: cancellationToken))
             .ConfigureAwait(false);
 
         // Proved before this was called, so it is Connected from the moment it exists.
         await connection.ExecuteAsync(new CommandDefinition(RecordSuccessSql, new { At = provedAt },
             transaction: transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
-        row.ConnectionState = ConnectionState.Connected;
-        row.LastConnectedAt = provedAt;
+        saved.ConnectionState = ConnectionState.Connected;
+        saved.LastConnectedAt = provedAt;
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         _logger.LogWarning(
             "Repointed the Target Connection to {Engine} {Address}. Destroyed {Bindings} Binding(s) and {Mappings} Field Mapping(s).",
-            row.Engine, row.Host ?? row.FilePath, counts.Bindings, counts.FieldMappings);
+            saved.Engine, saved.Host ?? saved.FilePath, counts.Bindings, counts.FieldMappings);
 
-        return (row.ToModel(), counts);
+        return (saved, counts);
     }
 
     private void LogQuery(string operation, string sql) {

@@ -60,6 +60,7 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddMemoryCache();
 SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
+SqlMapper.AddTypeHandler(new JsonStringDictionaryTypeHandler());
 builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
