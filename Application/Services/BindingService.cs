@@ -68,7 +68,7 @@ public class BindingService : IBindingService {
         var fields = await ReadEntityFields(member.SelectedEntity, cancellationToken).ConfigureAwait(false);
 
         // Without a Binding there is no Target Table to map against, so the fields stand alone.
-        if (member.CdcSchemaId is not int bindingId) {
+        if (member.CdcSchemaId is not { } bindingId) {
             return fields.Select(f => ToDto(f, null, null)).ToList();
         }
 
@@ -86,16 +86,16 @@ public class BindingService : IBindingService {
             .Select(m => m.TargetFieldName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Suggestions are matched on a normalised name, so BillingAddressCity finds billing_address_city.
+        // Suggestions are matched on a normalized name, so BillingAddressCity finds billing_address_city.
         var columnsByNormalisedName = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var column in columns) {
-            columnsByNormalisedName.TryAdd(Normalise(column.ColumnName), column.ColumnName);
+            columnsByNormalisedName.TryAdd(Normalize(column.ColumnName), column.ColumnName);
         }
 
         return fields.Select(f => {
             var mapped = mappedByField.GetValueOrDefault(f.Name);
             string? suggestion = null;
-            if (mapped is null && columnsByNormalisedName.TryGetValue(Normalise(f.Name), out var candidate)
+            if (mapped is null && columnsByNormalisedName.TryGetValue(Normalize(f.Name), out var candidate)
                 && !takenColumns.Contains(candidate)) {
                 suggestion = candidate;
             }
@@ -694,12 +694,13 @@ public class BindingService : IBindingService {
             : await _avroSchemas.InsertSchemaAsync(avro, cancellationToken).ConfigureAwait(false);
     }
 
-    private static string BuildFullName(string schemaName, string tableName) {
+    private static string BuildFullName(string? schemaName, string tableName) {
         if (string.IsNullOrWhiteSpace(tableName)) {
             throw new ValidationException("A Binding needs the name of the Target Table it writes to.");
         }
-        var schema = string.IsNullOrWhiteSpace(schemaName) ? "public" : schemaName.Trim();
-        return $"{schema}.{tableName.Trim()}";
+
+        // databases like sqlite do not have schemas, so a schema name is optional. The table name is required.
+        return string.IsNullOrWhiteSpace(schemaName) ? tableName.Trim() : $"{schemaName.Trim()}.{tableName.Trim()}";
     }
 
     private static (string SchemaName, string TableName) SplitFullName(string fullName) {
@@ -712,7 +713,7 @@ public class BindingService : IBindingService {
     /// <summary>
     /// Reduces a name to letters and digits so BillingAddressCity and billing_address_city match.
     /// </summary>
-    private static string Normalise(string name) {
+    private static string Normalize(string name) {
         var trimmed = name.EndsWith("__c", StringComparison.OrdinalIgnoreCase) ? name[..^3] : name;
         return new string(trimmed.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
     }
