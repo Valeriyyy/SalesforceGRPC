@@ -5,9 +5,10 @@ namespace Database.Models;
 /// </summary>
 public class TableMetadata {
     /// <summary>
-    /// The schema name the table belongs to (e.g., 'public').
+    /// The schema name the table belongs to (e.g., 'public'), or null for an engine with no
+    /// schema concept (e.g. SQLite).
     /// </summary>
-    public required string SchemaName { get; set; }
+    public required string? SchemaName { get; set; }
 
     /// <summary>
     /// The name of the table.

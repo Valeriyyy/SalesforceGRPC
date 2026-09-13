@@ -34,10 +34,10 @@ public abstract class RepositoryBase : IRepository {
     #endregion
     
     #region Metadata Queries
-    public abstract Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public",
+    public abstract Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null,
         CancellationToken cancellationToken = default);
-    public abstract Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public",
+    public abstract Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null,
         CancellationToken cancellationToken = default);
-    public abstract Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public");
+    public abstract Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null);
     #endregion
 }

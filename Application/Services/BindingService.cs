@@ -103,7 +103,7 @@ public class BindingService : IBindingService {
         }).ToList();
     }
 
-    public async Task<IReadOnlyList<TargetTableDTO>> GetTargetTablesAsync(string schemaName,
+    public async Task<IReadOnlyList<TargetTableDTO>> GetTargetTablesAsync(string? schemaName,
         CancellationToken cancellationToken = default) {
         var target = await EnsureEngineSupported(cancellationToken).ConfigureAwait(false);
 
@@ -114,7 +114,10 @@ public class BindingService : IBindingService {
             .ToDictionary(b => b.DbSchemaFullName, b => b.EntityName, StringComparer.OrdinalIgnoreCase);
 
         return tables.Select(t => {
-            var fullName = $"{t.SchemaName}.{t.TableName}";
+            // Built the same way a Binding's own full name is built, so a schema-less table's identity
+            // agrees with what CreateBindingAsync stored for it — an inline "{schema}.{table}" here would
+            // always insert a dot, even for an engine with no schema, and never match.
+            var fullName = BuildFullName(t.SchemaName, t.TableName);
             return new TargetTableDTO {
                 SchemaName = t.SchemaName,
                 TableName = t.TableName,
@@ -124,13 +127,13 @@ public class BindingService : IBindingService {
         }).ToList();
     }
 
-    public async Task<IReadOnlyList<TargetColumnDTO>> GetTargetColumnsAsync(string schemaName, string tableName,
+    public async Task<IReadOnlyList<TargetColumnDTO>> GetTargetColumnsAsync(string? schemaName, string tableName,
         int? bindingId = null, CancellationToken cancellationToken = default) {
         var target = await EnsureEngineSupported(cancellationToken).ConfigureAwait(false);
 
         var table = await target.GetTableMetadata(tableName, schemaName, cancellationToken).ConfigureAwait(false);
         if (table is null) {
-            throw new KeyNotFoundException($"Target Table '{schemaName}.{tableName}' does not exist in the target database.");
+            throw new KeyNotFoundException($"Target Table '{BuildFullName(schemaName, tableName)}' does not exist in the target database.");
         }
 
         var mappings = bindingId is int id ? await ReadMappings(id).ConfigureAwait(false) : [];
@@ -703,10 +706,10 @@ public class BindingService : IBindingService {
         return string.IsNullOrWhiteSpace(schemaName) ? tableName.Trim() : $"{schemaName.Trim()}.{tableName.Trim()}";
     }
 
-    private static (string SchemaName, string TableName) SplitFullName(string fullName) {
+    private static (string? SchemaName, string TableName) SplitFullName(string fullName) {
         var separator = fullName.LastIndexOf('.');
         return separator <= 0
-            ? ("public", fullName)
+            ? (null, fullName)
             : (fullName[..separator], fullName[(separator + 1)..]);
     }
 

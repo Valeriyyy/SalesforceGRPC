@@ -90,8 +90,8 @@ public class BindingServiceTests {
         return column;
     }
 
-    private static TableMetadata AccountTable() => new() {
-        SchemaName = "salesforce",
+    private static TableMetadata AccountTable(string? schemaName = "salesforce") => new() {
+        SchemaName = schemaName,
         TableName = "account",
         Columns = [
             Col("sf_id", "character varying", nullable: false, maxLength: 18, unique: true),
@@ -126,11 +126,12 @@ public class BindingServiceTests {
         _channels.GetMembersByBindingIdAsync(BindingId, Arg.Any<CancellationToken>()).Returns([Member(BindingId)]);
     }
 
-    private void ArrangeMemberWithoutBinding(string channelType = "data") {
-        _target.Engine.Returns(TargetDatabaseEngine.Postgres);
+    private void ArrangeMemberWithoutBinding(string channelType = "data",
+        TargetDatabaseEngine engine = TargetDatabaseEngine.Postgres, string? schemaName = "salesforce") {
+        _target.Engine.Returns(engine);
         _channels.GetMemberByIdAsync(MemberId, Arg.Any<CancellationToken>()).Returns(Member());
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel(channelType));
-        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(AccountTable());
+        _target.GetTableMetadata("account", schemaName, Arg.Any<CancellationToken>()).Returns(AccountTable(schemaName));
         _entitySchemas.GetSchemaForEntityAsync(Entity, Arg.Any<CancellationToken>()).Returns(AvroSchema());
         _meta.CreateNewSchemaWithAvroLink(Arg.Any<CDCSchema>(), Arg.Any<int>())
             .Returns(call => Binding(((CDCSchema)call[0]).BindingState));
@@ -279,6 +280,63 @@ public class BindingServiceTests {
         await _target.DidNotReceive().Create(Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
         await _target.DidNotReceive().Update(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>(), Arg.Any<Dictionary<string, object>>());
         await _target.DidNotReceive().Delete(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>());
+    }
+
+    /// <summary>
+    /// SQLite has no schema concept. Leaving TargetSchema unset — the natural thing to do for it — must
+    /// produce a dot-free stored name, not "public.account": SQLite would read "public" as an attached
+    /// database that does not exist and fail every write.
+    /// </summary>
+    [Fact]
+    public async Task CreateBinding_AgainstASqliteTarget_WithNoSchemaSpecified_ProducesADotFreeFullName() {
+        ArrangeMemberWithoutBinding(engine: TargetDatabaseEngine.Sqlite, schemaName: null);
+        WithStoredEngine(TargetDatabaseEngine.Sqlite, available: true);
+
+        await NewService().CreateBindingAsync(MemberId, new CreateBindingDTO { TargetTable = "account" }, Ct);
+
+        await _meta.Received(1).CreateNewSchemaWithAvroLink(
+            Arg.Is<CDCSchema>(s => s.DbSchemaFullName == "account"), Arg.Any<int>());
+    }
+
+    /// <summary>
+    /// BindingService must never inject "public" itself — that is Postgres's own convention and belongs to
+    /// PostgresRepository. Leaving TargetSchema unset against a Postgres target should still ask the
+    /// repository for schema null, trusting the repository to resolve its own default.
+    /// </summary>
+    [Fact]
+    public async Task CreateBinding_AgainstAPostgresTarget_WithNoSchemaSpecified_PassesNullThrough_NeverPublic() {
+        ArrangeMemberWithoutBinding(schemaName: null);
+
+        await NewService().CreateBindingAsync(MemberId, new CreateBindingDTO { TargetTable = "account" }, Ct);
+
+        await _target.Received(1).GetTableMetadata("account", null, Arg.Any<CancellationToken>());
+        await _target.DidNotReceive().GetTableMetadata("account", "public", Arg.Any<CancellationToken>());
+    }
+
+    #endregion
+
+    #region Target table discovery
+
+    /// <summary>
+    /// A SQLite Binding is correctly stored with a dot-free full name (e.g. "account"). Listing tables must
+    /// build each candidate's full name the exact same way a Binding stores it, or a bound table looks free.
+    /// </summary>
+    [Fact]
+    public async Task GetTargetTables_AgainstASqliteTarget_ReportsADotFreeBoundTableAsBound() {
+        WithStoredEngine(TargetDatabaseEngine.Sqlite, available: true);
+        _target.Engine.Returns(TargetDatabaseEngine.Sqlite);
+        _target.GetSchemaMetadata(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = null, TableName = "account", Columns = [], Constraints = [] }]);
+
+        var boundBinding = Binding();
+        boundBinding.DbSchemaFullName = "account";
+        _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([boundBinding]);
+
+        var tables = await NewService().GetTargetTablesAsync(null, Ct);
+
+        var account = Assert.Single(tables, t => t.TableName == "account");
+        Assert.Equal("account", account.FullName);
+        Assert.Equal(Entity, account.BoundEntityName);
     }
 
     #endregion

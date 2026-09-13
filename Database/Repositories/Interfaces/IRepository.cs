@@ -33,10 +33,14 @@ public interface IRepository {
     #endregion
 
     #region Meta Queries
-    Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public",
+    /// <summary>
+    /// Null means the caller expressed no schema. What that means is up to the implementation: an engine
+    /// with schemas resolves it to its own default (Postgres: "public"); an engine without them ignores it.
+    /// </summary>
+    Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null,
         CancellationToken cancellationToken = default);
-    Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public",
+    Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null,
         CancellationToken cancellationToken = default);
-    Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public");
+    Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null);
     #endregion
 }

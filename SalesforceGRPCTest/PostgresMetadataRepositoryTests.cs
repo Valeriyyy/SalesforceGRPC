@@ -58,13 +58,39 @@ public class PostgresMetadataRepositoryTests {
     [Fact(DisplayName = "Column metadata contains required fields")]
     public async Task GetTableMetadata_ColumnMetadataIsComplete() {
         var metadata = await Repository().GetTableMetadata("salesforce_mapped_fields", "public");
-        
+
         if (metadata?.Columns.Any() == true) {
             var column = metadata.Columns.First();
-            
+
             Assert.NotNull(column.ColumnName);
             Assert.NotNull(column.DataType);
             Assert.True(column.OrdinalPosition > 0);
         }
+    }
+
+    /// <summary>
+    /// A caller that expresses "no schema" (null) must reach the same table Postgres's own default schema
+    /// does — the shared IRepository interface no longer defaults to "public" itself; PostgresRepository does.
+    /// </summary>
+    [Fact(DisplayName = "Null schema defaults to public for table metadata")]
+    public async Task GetTableMetadata_WithNullSchema_DefaultsToPublic() {
+        var repository = Repository();
+
+        var withNull = await repository.GetTableMetadata("salesforce_mapped_fields", null);
+        var withPublic = await repository.GetTableMetadata("salesforce_mapped_fields", "public");
+
+        Assert.Equal(withPublic?.TableName, withNull?.TableName);
+        Assert.Equal(withPublic?.Columns.Count, withNull?.Columns.Count);
+    }
+
+    [Fact(DisplayName = "Null schema defaults to public for schema metadata")]
+    public async Task GetSchemaMetadata_WithNullSchema_DefaultsToPublic() {
+        var repository = Repository();
+
+        var withNull = await repository.GetSchemaMetadata(null);
+        var withPublic = await repository.GetSchemaMetadata("public");
+
+        Assert.Equal(withPublic.Select(t => t.TableName).OrderBy(n => n),
+            withNull.Select(t => t.TableName).OrderBy(n => n));
     }
 }

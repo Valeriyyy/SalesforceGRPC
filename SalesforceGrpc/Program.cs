@@ -11,7 +11,7 @@ using Database.Targets;
 using Database.Utilities;
 using GrpcClient;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -23,8 +23,6 @@ using SalesforceGrpc.Health;
 using SalesforceGrpc.Schemas;
 using SalesforceGrpc.Strategies;
 using Serilog;
-using System.Net.Http.Headers;
-using static System.Console;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -98,7 +96,7 @@ builder.Services.AddSingleton<ISecretProtector>(sp => {
         .SetApplicationName("SalesforceGrpc")
         .ProtectKeysWithCertificate(resolution.Certificate!)
         .Services
-        .AddSingleton<Microsoft.AspNetCore.DataProtection.Repositories.IXmlRepository>(
+        .AddSingleton<IXmlRepository>(
             _ => sp.GetRequiredService<DapperXmlRepository>())
         .BuildServiceProvider();
 

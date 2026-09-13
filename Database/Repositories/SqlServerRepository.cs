@@ -28,15 +28,15 @@ public class SqlServerRepository : RepositoryBase {
         throw new NotImplementedException();
     }
 
-    public override Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null, CancellationToken cancellationToken = default) {
         throw new NotImplementedException();
     }
 
-    public override Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null, CancellationToken cancellationToken = default) {
         throw new NotImplementedException();
     }
 
-    public override Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public") {
+    public override Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null) {
         throw new NotImplementedException();
     }
 }

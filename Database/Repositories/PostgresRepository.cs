@@ -11,6 +11,9 @@ public class PostgresRepository : RepositoryBase {
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
 
+    /// <summary>Postgres's own convention for "no schema was specified." Not shared with any other engine.</summary>
+    private const string DefaultSchema = "public";
+
     #region Data Queries
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
@@ -89,7 +92,9 @@ public class PostgresRepository : RepositoryBase {
     /// <summary>
     /// Retrieves complete metadata for a specific table including columns and constraints.
     /// </summary>
-    public override async Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override async Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null, CancellationToken cancellationToken = default) {
+        schemaName ??= DefaultSchema;
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
@@ -111,7 +116,9 @@ public class PostgresRepository : RepositoryBase {
     /// <summary>
     /// Retrieves metadata for all tables in a schema.
     /// </summary>
-    public override async Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override async Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null, CancellationToken cancellationToken = default) {
+        schemaName ??= DefaultSchema;
+
         await using var connection = new NpgsqlConnection(_connectionString);
 
         const string sql = @"
@@ -246,7 +253,9 @@ public class PostgresRepository : RepositoryBase {
     /// <summary>
     /// Retrieves only the foreign key relationships for a table.
     /// </summary>
-    public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public") {
+    public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null) {
+        schemaName ??= DefaultSchema;
+
         await using var connection = new NpgsqlConnection(_connectionString);
 
         const string sql = @"
