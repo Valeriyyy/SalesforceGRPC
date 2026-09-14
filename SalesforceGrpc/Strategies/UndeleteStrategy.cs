@@ -1,3 +1,4 @@
+using Application.Targets;
 using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
@@ -19,16 +20,17 @@ public class UndeleteStrategy : IEventStrategy {
 
     private readonly ILogger<UndeleteStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IRepository _dataRepo;
+    private readonly ITargetConnectionProvider _target;
 
-    public UndeleteStrategy(ILogger<UndeleteStrategy> logger, IRepository dataRepo, IMetaRepository db) {
+    public UndeleteStrategy(ILogger<UndeleteStrategy> logger, ITargetConnectionProvider target, IMetaRepository db) {
         _logger = logger;
-        _dataRepo = dataRepo;
+        _target = target;
         _db = db;
     }
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema,
         CancellationToken cancellationToken) {
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
         if (!record.TryGetValue("ChangeEventHeader", out var changeEventHeaderObj) ||
             changeEventHeaderObj is not GenericRecord changeEventHeader) {
             _logger.LogWarning("No ChangeEventHeader found in record");
@@ -57,9 +59,11 @@ public class UndeleteStrategy : IEventStrategy {
         }
 
         try {
-            var restoredCount = await _dataRepo.UnDelete(dbSchema.DbSchemaFullName, sfKeyFieldName,
+            var restoredCount = await target.UnDelete(dbSchema.DbSchemaFullName, sfKeyFieldName,
                 dbSchema.SoftDeleteColumnName, recordIdStrings).ConfigureAwait(false);
             _logger.LogInformation("Restored {RestoredCount} records in {ObjectType}", restoredCount, dbSchema.EntityName);
+        } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
+            throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to restore the following {ObjectType} records: {recordIds}",
                 dbSchema.EntityName, string.Join(",", recordIdStrings));

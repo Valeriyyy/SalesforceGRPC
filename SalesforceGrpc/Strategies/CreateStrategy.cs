@@ -1,3 +1,4 @@
+using Application.Targets;
 using Avro;
 using Avro.Generic;
 using com.sforce.eventbus;
@@ -17,16 +18,17 @@ public class CreateStrategy : IEventStrategy {
 
     private readonly ILogger<CreateStrategy> _logger;
     private readonly IMetaRepository _db;
-    private readonly IRepository _dataRepo;
+    private readonly ITargetConnectionProvider _target;
 
-    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db, IRepository dataRepo) {
+    public CreateStrategy(ILogger<CreateStrategy> logger, IMetaRepository db, ITargetConnectionProvider target) {
         _logger = logger;
         _db = db;
-        _dataRepo = dataRepo;
+        _target = target;
     }
 
     public async Task ProcessEvent(GenericRecord record, Schema schema, CDCSchema dbSchema,
         CancellationToken cancellationToken) {
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
         // Extract change event header efficiently
         if (!record.TryGetValue("ChangeEventHeader", out var changeEventHeaderObj) ||
             changeEventHeaderObj is not GenericRecord changeEventHeader) {
@@ -71,8 +73,10 @@ public class CreateStrategy : IEventStrategy {
         var data = changeSet.ToDataObject();
 
         try {
-            var createdCount = await _dataRepo.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
+            var createdCount = await target.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
+        } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
+            throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
         } catch (Exception e) {
             _logger.LogCritical(e, "Failed to insert record {Data}", StringExtensions.ToJson(data));
         }

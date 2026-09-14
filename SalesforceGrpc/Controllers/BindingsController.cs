@@ -34,13 +34,19 @@ public class BindingsController : ControllerBase {
     /// <summary>Tables in the Target Database, each marked with the Entity already bound to it.</summary>
     [HttpGet("target-tables")]
     public Task<ActionResult<IReadOnlyList<TargetTableDTO>>> GetTargetTables(
-        [FromQuery] string schema, CancellationToken ct) =>
+        [FromQuery] string? schema, CancellationToken ct) =>
         Execute(() => _bindings.GetTargetTablesAsync(schema, ct));
 
-    /// <summary>Columns of one Target Table, each marked with the Salesforce field mapped to it.</summary>
-    [HttpGet("target-tables/{schema}/{table}/columns")]
+    /// <summary>
+    /// Columns of one Target Table, each marked with the Salesforce field mapped to it.
+    /// </summary>
+    /// <remarks>
+    /// Schema is a query parameter, not a route segment, precisely so it can be omitted — an empty route
+    /// segment between two slashes cannot represent "no schema" for an engine with no schema concept.
+    /// </remarks>
+    [HttpGet("target-tables/{table}/columns")]
     public Task<ActionResult<IReadOnlyList<TargetColumnDTO>>> GetTargetColumns(
-        string schema, string table, [FromQuery] int? bindingId, CancellationToken ct) =>
+        string table, [FromQuery] string? schema, [FromQuery] int? bindingId, CancellationToken ct) =>
         Execute(() => _bindings.GetTargetColumnsAsync(schema, table, bindingId, ct));
 
     #endregion

@@ -52,11 +52,11 @@ public static class TypeCompatibilityChecker {
     }
 
     public static FieldCompatibility Check(string salesforceFieldName, SalesforceFieldType fieldType,
-        ColumnMetadata column, DbType dbType) {
+        ColumnMetadata column, TargetDatabaseEngine engine) {
         ArgumentNullException.ThrowIfNull(column);
 
-        var family = Classify(column.DataType, dbType);
-        var (level, message) = Evaluate(fieldType, family, column, dbType);
+        var family = Classify(column.DataType, engine);
+        var (level, message) = Evaluate(fieldType, family, column, engine);
 
         return new FieldCompatibility {
             SalesforceFieldName = salesforceFieldName,
@@ -72,10 +72,10 @@ public static class TypeCompatibilityChecker {
     /// Checks the column nominated as the Key Mapping. Stricter than an ordinary text mapping: a truncated
     /// record ID does not lose a detail, it makes every UPDATE and DELETE match the wrong row or none.
     /// </summary>
-    public static FieldCompatibility CheckKeyColumn(ColumnMetadata column, DbType dbType) {
+    public static FieldCompatibility CheckKeyColumn(ColumnMetadata column, TargetDatabaseEngine engine) {
         ArgumentNullException.ThrowIfNull(column);
 
-        var family = Classify(column.DataType, dbType);
+        var family = Classify(column.DataType, engine);
 
         var (level, message) = family switch {
             ColumnFamily.Text when column.MaxLength is int len && len < SalesforceIdLength =>
@@ -104,10 +104,10 @@ public static class TypeCompatibilityChecker {
     /// <summary>
     /// Checks the column nominated to carry the soft delete flag.
     /// </summary>
-    public static FieldCompatibility CheckSoftDeleteColumn(ColumnMetadata column, DbType dbType) {
+    public static FieldCompatibility CheckSoftDeleteColumn(ColumnMetadata column, TargetDatabaseEngine engine) {
         ArgumentNullException.ThrowIfNull(column);
 
-        var family = Classify(column.DataType, dbType);
+        var family = Classify(column.DataType, engine);
 
         var (level, message) = family switch {
             ColumnFamily.Boolean =>
@@ -131,7 +131,7 @@ public static class TypeCompatibilityChecker {
     }
 
     private static (CompatibilityLevel, string) Evaluate(SalesforceFieldType fieldType, ColumnFamily family,
-        ColumnMetadata column, DbType dbType) {
+        ColumnMetadata column, TargetDatabaseEngine engine) {
         var col = column.ColumnName;
         var type = column.DataType;
 
@@ -151,7 +151,7 @@ public static class TypeCompatibilityChecker {
         }
 
         if (fieldType.IsTemporal()) {
-            return EvaluateTemporal(fieldType, family, col, type, dbType);
+            return EvaluateTemporal(fieldType, family, col, type, engine);
         }
 
         if (fieldType.IsNumeric()) {
@@ -178,10 +178,10 @@ public static class TypeCompatibilityChecker {
     }
 
     private static (CompatibilityLevel, string) EvaluateTemporal(SalesforceFieldType fieldType,
-        ColumnFamily family, string col, string type, DbType dbType) {
+        ColumnFamily family, string col, string type, TargetDatabaseEngine engine) {
         // SQLite has no temporal type; an epoch in an INTEGER column is the idiom there, so blocking it would
         // make the dialect unusable.
-        if (dbType is DbType.SqlLite && family is ColumnFamily.Integer) {
+        if (engine is TargetDatabaseEngine.Sqlite && family is ColumnFamily.Integer) {
             return (CompatibilityLevel.Warning,
                 $"{fieldType} into '{type}' on column '{col}' will be stored as a number, which is how SQLite holds dates.");
         }
@@ -240,7 +240,7 @@ public static class TypeCompatibilityChecker {
     /// Maps a dialect's type name onto a shape. The families overlap heavily across dialects, so one shared
     /// table does most of the work and each dialect only overrides where it genuinely differs.
     /// </summary>
-    private static ColumnFamily Classify(string dataType, DbType dbType) {
+    private static ColumnFamily Classify(string dataType, TargetDatabaseEngine engine) {
         var name = dataType.Trim().ToLowerInvariant();
 
         // Strip any declared size — SQLite and some drivers report "varchar(50)" rather than "varchar".
@@ -250,7 +250,7 @@ public static class TypeCompatibilityChecker {
         }
 
         // SQL Server's bit is the only dialect-specific boolean; every other name below is shared.
-        if (dbType is DbType.SqlServer && name is "bit") {
+        if (engine is TargetDatabaseEngine.SqlServer && name is "bit") {
             return ColumnFamily.Boolean;
         }
 

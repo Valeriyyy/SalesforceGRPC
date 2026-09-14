@@ -105,6 +105,15 @@ public record DisconnectPreviewDTO {
     public int ChannelMembers { get; set; }
 
     /// <summary>
+    /// The Target Connection that will be destroyed too, as engine and address, or null when none is set up.
+    /// </summary>
+    /// <remarks>
+    /// Where data lands is orthogonal to which org it comes from, so this is the one piece of state a user
+    /// might not expect a Salesforce Disconnect to take. It is named here so it is disclosed, not discovered.
+    /// </remarks>
+    public string? TargetConnection { get; set; }
+
+    /// <summary>
     /// What is left standing inside Salesforce, for the user to remove themselves if they want to.
     /// </summary>
     /// <remarks>

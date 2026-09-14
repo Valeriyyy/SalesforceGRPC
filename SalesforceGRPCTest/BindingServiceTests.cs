@@ -1,9 +1,11 @@
 using Application.Bindings;
 using Application.Connections;
 using Application.Services;
+using Application.Targets;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Database.Targets;
 using DTO;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -27,6 +29,8 @@ public class BindingServiceTests {
     private readonly IMetaRepository _meta = Substitute.For<IMetaRepository>();
     private readonly IAvroSchemaRepository _avro = Substitute.For<IAvroSchemaRepository>();
     private readonly IRepository _target = Substitute.For<IRepository>();
+    private readonly ITargetConnectionProvider _targetConnections;
+    private readonly ITargetEngineCatalog _engines = Substitute.For<ITargetEngineCatalog>();
     private readonly IPlatformEventChannelRepository _channels = Substitute.For<IPlatformEventChannelRepository>();
     private readonly IEntitySchemaProvider _entitySchemas = Substitute.For<IEntitySchemaProvider>();
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
@@ -38,8 +42,24 @@ public class BindingServiceTests {
     private const string Entity = "AccountChangeEvent";
     private const string TargetTable = "salesforce.account";
 
+    public BindingServiceTests() {
+        _targetConnections = TargetProviders.Of(_target);
+        WithStoredEngine(TargetDatabaseEngine.Postgres, available: true);
+    }
+
+    /// <summary>A stored Target Connection on the given engine, and a profile that says whether it can be used.</summary>
+    private void WithStoredEngine(TargetDatabaseEngine engine, bool available) {
+        _targetConnections.GetAsync(Arg.Any<CancellationToken>())
+            .Returns(new TargetConnection { Engine = engine, ConnectionState = ConnectionState.Connected });
+        var profile = Substitute.For<ITargetEngineProfile>();
+        profile.Engine.Returns(engine);
+        profile.IsAvailable.Returns(available);
+        profile.UnavailableReason.Returns(available ? null : $"Support for {engine} is not implemented yet.");
+        _engines.For(engine).Returns(profile);
+    }
+
     private BindingService NewService() =>
-        new(_meta, _avro, _target, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 
@@ -70,8 +90,8 @@ public class BindingServiceTests {
         return column;
     }
 
-    private static TableMetadata AccountTable() => new() {
-        SchemaName = "salesforce",
+    private static TableMetadata AccountTable(string? schemaName = "salesforce") => new() {
+        SchemaName = schemaName,
         TableName = "account",
         Columns = [
             Col("sf_id", "character varying", nullable: false, maxLength: 18, unique: true),
@@ -100,17 +120,18 @@ public class BindingServiceTests {
             new MappedField { SchemaId = BindingId, SalesforceFieldName = "Phone", TargetFieldName = "phone" },
             new MappedField { SchemaId = BindingId, SalesforceFieldName = "AnnualRevenue", TargetFieldName = "annual_revenue" }
         ]);
-        _target.DatabaseType.Returns(DbType.Postgres);
+        _target.Engine.Returns(TargetDatabaseEngine.Postgres);
         _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(AccountTable());
         _entitySchemas.GetSchemaForEntityAsync(Entity, Arg.Any<CancellationToken>()).Returns(AvroSchema());
         _channels.GetMembersByBindingIdAsync(BindingId, Arg.Any<CancellationToken>()).Returns([Member(BindingId)]);
     }
 
-    private void ArrangeMemberWithoutBinding(string channelType = "data") {
-        _target.DatabaseType.Returns(DbType.Postgres);
+    private void ArrangeMemberWithoutBinding(string channelType = "data",
+        TargetDatabaseEngine engine = TargetDatabaseEngine.Postgres, string? schemaName = "salesforce") {
+        _target.Engine.Returns(engine);
         _channels.GetMemberByIdAsync(MemberId, Arg.Any<CancellationToken>()).Returns(Member());
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel(channelType));
-        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(AccountTable());
+        _target.GetTableMetadata("account", schemaName, Arg.Any<CancellationToken>()).Returns(AccountTable(schemaName));
         _entitySchemas.GetSchemaForEntityAsync(Entity, Arg.Any<CancellationToken>()).Returns(AvroSchema());
         _meta.CreateNewSchemaWithAvroLink(Arg.Any<CDCSchema>(), Arg.Any<int>())
             .Returns(call => Binding(((CDCSchema)call[0]).BindingState));
@@ -237,16 +258,16 @@ public class BindingServiceTests {
     }
 
     [Theory]
-    [InlineData(DbType.SqlServer)]
-    [InlineData(DbType.MySql)]
-    public async Task CreateBinding_AgainstADriverThatIsNotImplemented_ReportsThatClearly(DbType dbType) {
+    [InlineData(TargetDatabaseEngine.SqlServer)]
+    [InlineData(TargetDatabaseEngine.MySql)]
+    public async Task CreateBinding_AgainstAnEngineThatIsNotSupported_ReportsThatClearly(TargetDatabaseEngine engine) {
         ArrangeMemberWithoutBinding();
-        _target.DatabaseType.Returns(dbType);
+        WithStoredEngine(engine, available: false);
 
         var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct));
 
-        Assert.Contains(dbType.ToString(), ex.Message, StringComparison.Ordinal);
+        Assert.Contains(engine.ToString(), ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -259,6 +280,63 @@ public class BindingServiceTests {
         await _target.DidNotReceive().Create(Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
         await _target.DidNotReceive().Update(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>(), Arg.Any<Dictionary<string, object>>());
         await _target.DidNotReceive().Delete(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>());
+    }
+
+    /// <summary>
+    /// SQLite has no schema concept. Leaving TargetSchema unset — the natural thing to do for it — must
+    /// produce a dot-free stored name, not "public.account": SQLite would read "public" as an attached
+    /// database that does not exist and fail every write.
+    /// </summary>
+    [Fact]
+    public async Task CreateBinding_AgainstASqliteTarget_WithNoSchemaSpecified_ProducesADotFreeFullName() {
+        ArrangeMemberWithoutBinding(engine: TargetDatabaseEngine.Sqlite, schemaName: null);
+        WithStoredEngine(TargetDatabaseEngine.Sqlite, available: true);
+
+        await NewService().CreateBindingAsync(MemberId, new CreateBindingDTO { TargetTable = "account" }, Ct);
+
+        await _meta.Received(1).CreateNewSchemaWithAvroLink(
+            Arg.Is<CDCSchema>(s => s.DbSchemaFullName == "account"), Arg.Any<int>());
+    }
+
+    /// <summary>
+    /// BindingService must never inject "public" itself — that is Postgres's own convention and belongs to
+    /// PostgresRepository. Leaving TargetSchema unset against a Postgres target should still ask the
+    /// repository for schema null, trusting the repository to resolve its own default.
+    /// </summary>
+    [Fact]
+    public async Task CreateBinding_AgainstAPostgresTarget_WithNoSchemaSpecified_PassesNullThrough_NeverPublic() {
+        ArrangeMemberWithoutBinding(schemaName: null);
+
+        await NewService().CreateBindingAsync(MemberId, new CreateBindingDTO { TargetTable = "account" }, Ct);
+
+        await _target.Received(1).GetTableMetadata("account", null, Arg.Any<CancellationToken>());
+        await _target.DidNotReceive().GetTableMetadata("account", "public", Arg.Any<CancellationToken>());
+    }
+
+    #endregion
+
+    #region Target table discovery
+
+    /// <summary>
+    /// A SQLite Binding is correctly stored with a dot-free full name (e.g. "account"). Listing tables must
+    /// build each candidate's full name the exact same way a Binding stores it, or a bound table looks free.
+    /// </summary>
+    [Fact]
+    public async Task GetTargetTables_AgainstASqliteTarget_ReportsADotFreeBoundTableAsBound() {
+        WithStoredEngine(TargetDatabaseEngine.Sqlite, available: true);
+        _target.Engine.Returns(TargetDatabaseEngine.Sqlite);
+        _target.GetSchemaMetadata(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = null, TableName = "account", Columns = [], Constraints = [] }]);
+
+        var boundBinding = Binding();
+        boundBinding.DbSchemaFullName = "account";
+        _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([boundBinding]);
+
+        var tables = await NewService().GetTargetTablesAsync(null, Ct);
+
+        var account = Assert.Single(tables, t => t.TableName == "account");
+        Assert.Equal("account", account.FullName);
+        Assert.Equal(Entity, account.BoundEntityName);
     }
 
     #endregion
@@ -691,6 +769,24 @@ public class BindingServiceTests {
         Assert.False(plan.HasChannel);
         Assert.Null(plan.TopicName);
         Assert.Empty(plan.ActiveBindingsBySchemaId);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(ConnectionState.Incomplete, false)]
+    [InlineData(ConnectionState.Failed, false)]
+    [InlineData(ConnectionState.Connected, true)]
+    public async Task GetSubscriptionPlan_CarriesTheTargetConnectionState_AndStreamsOnlyWhenConnected(
+        ConnectionState? state, bool expectedHasTargetDatabase) {
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        _targetConnections.GetAsync(Arg.Any<CancellationToken>()).Returns(state is null
+            ? null
+            : new TargetConnection { Engine = TargetDatabaseEngine.Postgres, ConnectionState = state.Value });
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(state, plan.TargetConnectionState);
+        Assert.Equal(expectedHasTargetDatabase, plan.HasTargetDatabase);
     }
 
     [Fact]

@@ -6,10 +6,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Database.Repositories;
 
-public class SqlLiteRepository : RepositoryBase {
-    public SqlLiteRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
+public class SqliteRepository : RepositoryBase {
+    public SqliteRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
 
-    public override DbType DatabaseType => DbType.SqlLite;
+    public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Sqlite;
 
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
@@ -83,7 +83,13 @@ public class SqlLiteRepository : RepositoryBase {
     /// <summary>
     /// Retrieves complete metadata for a specific table including columns and constraints.
     /// </summary>
-    public override async Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public", CancellationToken cancellationToken = default) {
+    /// <remarks>
+    /// SQLite has no schema concept, so <paramref name="schemaName"/> is accepted only for interface
+    /// conformance and never queried against, and the returned metadata always reports a null schema
+    /// regardless of what was passed in — echoing the caller's value back would let a stray non-null
+    /// argument get schema-qualified again later.
+    /// </remarks>
+    public override async Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null, CancellationToken cancellationToken = default) {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
@@ -95,7 +101,7 @@ public class SqlLiteRepository : RepositoryBase {
         }
 
         return new TableMetadata {
-            SchemaName = schemaName,
+            SchemaName = null,
             TableName = tableName,
             Columns = columns,
             Constraints = constraints
@@ -106,7 +112,7 @@ public class SqlLiteRepository : RepositoryBase {
     /// Retrieves metadata for all tables in the database.
     /// Note: SQLite doesn't support schemas, so schemaName is ignored.
     /// </summary>
-    public override async Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override async Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null, CancellationToken cancellationToken = default) {
         await using var connection = new SqliteConnection(_connectionString);
 
         const string sql = @"
@@ -209,7 +215,7 @@ public class SqlLiteRepository : RepositoryBase {
     /// <summary>
     /// Retrieves only the foreign key relationships for a table.
     /// </summary>
-    public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public") {
+    public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null) {
         await using var connection = new SqliteConnection(_connectionString);
 
         const string sql = "PRAGMA foreign_key_list({0})";

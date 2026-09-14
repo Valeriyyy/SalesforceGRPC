@@ -196,7 +196,9 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
                 (SELECT count(*) FROM salesforce.mapped_fields) AS FieldMappings,
                 (SELECT count(*) FROM salesforce.avro_schemas) AS AvroSchemas,
                 (SELECT count(*) FROM salesforce.platform_event_channels) AS Channels,
-                (SELECT count(*) FROM salesforce.platform_event_channel_members) AS ChannelMembers";
+                (SELECT count(*) FROM salesforce.platform_event_channel_members) AS ChannelMembers,
+                (SELECT engine || ' ' || coalesce(host || '/' || database_name, file_path)
+                   FROM salesforce.target_connection LIMIT 1) AS TargetConnection";
 
         LogQuery("SELECT", sql);
 
@@ -216,6 +218,7 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
             DELETE FROM salesforce.mapped_fields;
             DELETE FROM salesforce.cdc_schemas;
             DELETE FROM salesforce.avro_schemas;
+            DELETE FROM salesforce.target_connection;
             DELETE FROM salesforce.org_connection;";
 
         LogQuery("DELETE", sql);
@@ -229,9 +232,9 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         _logger.LogWarning(
-            "Disconnected. Destroyed {Bindings} Binding(s), {Mappings} Field Mapping(s), {Schemas} Avro Schema(s) " +
-            "and {Channels} mirrored Channel(s). Nothing was changed inside Salesforce.",
-            counts.Bindings, counts.FieldMappings, counts.AvroSchemas, counts.Channels);
+            "Disconnected. Destroyed {Bindings} Binding(s), {Mappings} Field Mapping(s), {Schemas} Avro Schema(s), " +
+            "{Channels} mirrored Channel(s) and the Target Connection ({Target}). Nothing was changed inside Salesforce.",
+            counts.Bindings, counts.FieldMappings, counts.AvroSchemas, counts.Channels, counts.TargetConnection ?? "none");
 
         return counts;
     }

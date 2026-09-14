@@ -20,7 +20,7 @@ public class TypeCompatibilityCheckerTests {
         new() { ColumnName = "target_col", DataType = dataType, IsNullable = nullable, MaxLength = maxLength };
 
     private static CompatibilityLevel Level(SalesforceFieldType type, string dataType,
-        DbType db = DbType.Postgres, int? maxLength = null) =>
+        TargetDatabaseEngine db = TargetDatabaseEngine.Postgres, int? maxLength = null) =>
         TypeCompatibilityChecker.Check("SomeField", type, Column(dataType, maxLength: maxLength), db).Level;
 
     #region Temporal
@@ -38,7 +38,7 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void DateTime_IntoADateColumn_WarnsThatTheTimeIsLost() {
         var result = TypeCompatibilityChecker.Check("CreatedDate", SalesforceFieldType.DateTime,
-            Column("date"), DbType.Postgres);
+            Column("date"), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Warning, result.Level);
         Assert.Contains("time", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -58,7 +58,7 @@ public class TypeCompatibilityCheckerTests {
     public void Temporal_IntoASqliteIntegerColumn_IsOnlyAWarning() {
         // SQLite has no temporal type at all; storing an epoch in an INTEGER column is the idiom, so blocking
         // it would make the dialect unusable.
-        Assert.Equal(CompatibilityLevel.Warning, Level(SalesforceFieldType.DateTime, "INTEGER", DbType.SqlLite));
+        Assert.Equal(CompatibilityLevel.Warning, Level(SalesforceFieldType.DateTime, "INTEGER", TargetDatabaseEngine.Sqlite));
     }
 
     #endregion
@@ -79,7 +79,7 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void Currency_IntoAnIntegerColumn_WarnsThatTheFractionIsLost() {
         var result = TypeCompatibilityChecker.Check("AnnualRevenue", SalesforceFieldType.Currency,
-            Column("integer"), DbType.Postgres);
+            Column("integer"), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Warning, result.Level);
         Assert.Contains("integer", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -122,7 +122,7 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void Text_IntoATextColumnShorterThanSalesforcesMaximum_WarnsAboutTruncation() {
         var result = TypeCompatibilityChecker.Check("Some_Email__c", SalesforceFieldType.Email,
-            Column("character varying", maxLength: 20), DbType.Postgres);
+            Column("character varying", maxLength: 20), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Warning, result.Level);
         Assert.Contains("truncat", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -166,7 +166,7 @@ public class TypeCompatibilityCheckerTests {
     [InlineData(SalesforceFieldType.PersonName)]
     public void Compound_MappedAsAWhole_IsAlwaysAnError(SalesforceFieldType type) {
         // Even into a text column: a compound arrives as a nested record with no single value to write.
-        var result = TypeCompatibilityChecker.Check("BillingAddress", type, Column("text"), DbType.Postgres);
+        var result = TypeCompatibilityChecker.Check("BillingAddress", type, Column("text"), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Error, result.Level);
         Assert.Contains("compound", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -175,7 +175,7 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void UnknownFieldType_IsAWarningSoANewSalesforceTypeDoesNotBlockTheUser() {
         var result = TypeCompatibilityChecker.Check("Whatever", SalesforceFieldType.Unknown,
-            Column("text"), DbType.Postgres);
+            Column("text"), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Warning, result.Level);
     }
@@ -191,25 +191,25 @@ public class TypeCompatibilityCheckerTests {
     #region Dialects
 
     [Theory]
-    [InlineData(DbType.SqlServer, "nvarchar")]
-    [InlineData(DbType.SqlServer, "varchar")]
-    [InlineData(DbType.MySql, "longtext")]
-    [InlineData(DbType.SqlLite, "TEXT")]
-    public void TextColumnsAreRecognisedAcrossDialects(DbType db, string dataType) {
+    [InlineData(TargetDatabaseEngine.SqlServer, "nvarchar")]
+    [InlineData(TargetDatabaseEngine.SqlServer, "varchar")]
+    [InlineData(TargetDatabaseEngine.MySql, "longtext")]
+    [InlineData(TargetDatabaseEngine.Sqlite, "TEXT")]
+    public void TextColumnsAreRecognisedAcrossDialects(TargetDatabaseEngine db, string dataType) {
         Assert.Equal(CompatibilityLevel.Compatible, Level(SalesforceFieldType.Text, dataType, db));
     }
 
     [Theory]
-    [InlineData(DbType.SqlServer, "datetime2")]
-    [InlineData(DbType.SqlServer, "datetimeoffset")]
-    [InlineData(DbType.MySql, "datetime")]
-    public void TimestampColumnsAreRecognisedAcrossDialects(DbType db, string dataType) {
+    [InlineData(TargetDatabaseEngine.SqlServer, "datetime2")]
+    [InlineData(TargetDatabaseEngine.SqlServer, "datetimeoffset")]
+    [InlineData(TargetDatabaseEngine.MySql, "datetime")]
+    public void TimestampColumnsAreRecognisedAcrossDialects(TargetDatabaseEngine db, string dataType) {
         Assert.Equal(CompatibilityLevel.Compatible, Level(SalesforceFieldType.DateTime, dataType, db));
     }
 
     [Fact]
     public void SqlServerBitIsABooleanColumn() {
-        Assert.Equal(CompatibilityLevel.Compatible, Level(SalesforceFieldType.Boolean, "bit", DbType.SqlServer));
+        Assert.Equal(CompatibilityLevel.Compatible, Level(SalesforceFieldType.Boolean, "bit", TargetDatabaseEngine.SqlServer));
     }
 
     #endregion
@@ -219,7 +219,7 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void TheResultNamesBothTypesSoTheUserKnowsWhatToChange() {
         var result = TypeCompatibilityChecker.Check("Some_Date_Time__c", SalesforceFieldType.DateTime,
-            Column("integer"), DbType.Postgres);
+            Column("integer"), TargetDatabaseEngine.Postgres);
 
         Assert.Equal("Some_Date_Time__c", result.SalesforceFieldName);
         Assert.Equal("target_col", result.TargetColumnName);
@@ -236,12 +236,12 @@ public class TypeCompatibilityCheckerTests {
         var column = Column("character varying", nullable: false, maxLength: 18);
         column.ColumnConstraints.Add(new ColumnConstraint { ConstraintType = "UNIQUE" });
 
-        Assert.Equal(CompatibilityLevel.Compatible, TypeCompatibilityChecker.CheckKeyColumn(column, DbType.Postgres).Level);
+        Assert.Equal(CompatibilityLevel.Compatible, TypeCompatibilityChecker.CheckKeyColumn(column, TargetDatabaseEngine.Postgres).Level);
     }
 
     [Fact]
     public void CheckKeyColumn_WithoutAUniqueConstraint_WarnsThatUpdatesCouldTouchExtraRows() {
-        var result = TypeCompatibilityChecker.CheckKeyColumn(Column("text"), DbType.Postgres);
+        var result = TypeCompatibilityChecker.CheckKeyColumn(Column("text"), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Warning, result.Level);
         Assert.Contains("unique", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -250,13 +250,13 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void CheckKeyColumn_OnANonTextColumn_IsAnError() {
         // A Salesforce record ID is an 18-character string; nothing else can hold it.
-        Assert.Equal(CompatibilityLevel.Error, TypeCompatibilityChecker.CheckKeyColumn(Column("integer"), DbType.Postgres).Level);
+        Assert.Equal(CompatibilityLevel.Error, TypeCompatibilityChecker.CheckKeyColumn(Column("integer"), TargetDatabaseEngine.Postgres).Level);
     }
 
     [Fact]
     public void CheckKeyColumn_TooShortForASalesforceId_IsAnError() {
         // Truncating a record ID does not warn, it corrupts: every WHERE clause would then match the wrong row.
-        var result = TypeCompatibilityChecker.CheckKeyColumn(Column("character varying", maxLength: 10), DbType.Postgres);
+        var result = TypeCompatibilityChecker.CheckKeyColumn(Column("character varying", maxLength: 10), TargetDatabaseEngine.Postgres);
 
         Assert.Equal(CompatibilityLevel.Error, result.Level);
         Assert.Contains("18", result.Message, StringComparison.Ordinal);
@@ -269,26 +269,26 @@ public class TypeCompatibilityCheckerTests {
     [Fact]
     public void CheckSoftDeleteColumn_OnABooleanColumn_IsCompatible() {
         Assert.Equal(CompatibilityLevel.Compatible,
-            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("boolean"), DbType.Postgres).Level);
+            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("boolean"), TargetDatabaseEngine.Postgres).Level);
     }
 
     [Fact]
     public void CheckSoftDeleteColumn_OnAnIntegerColumn_IsAWarning() {
         Assert.Equal(CompatibilityLevel.Warning,
-            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("integer"), DbType.Postgres).Level);
+            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("integer"), TargetDatabaseEngine.Postgres).Level);
     }
 
     [Fact]
     public void CheckSoftDeleteColumn_OnATextColumn_IsAnError() {
         Assert.Equal(CompatibilityLevel.Error,
-            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("text"), DbType.Postgres).Level);
+            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("text"), TargetDatabaseEngine.Postgres).Level);
     }
 
     [Fact]
     public void CheckSoftDeleteColumn_ThatIsNotNullable_IsStillCompatible() {
         // NOT NULL DEFAULT false is the ideal shape for this column, not a problem with it.
         Assert.Equal(CompatibilityLevel.Compatible,
-            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("boolean", nullable: false), DbType.Postgres).Level);
+            TypeCompatibilityChecker.CheckSoftDeleteColumn(Column("boolean", nullable: false), TargetDatabaseEngine.Postgres).Level);
     }
 
     #endregion

@@ -2,14 +2,16 @@ using Application.Bindings;
 using Application.Connections;
 using Application.Services;
 using Application.Services.Interfaces;
+using Application.Targets;
 using Dapper;
 using Database.DataProtection;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Database.Targets;
 using Database.Utilities;
 using GrpcClient;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -21,8 +23,6 @@ using SalesforceGrpc.Health;
 using SalesforceGrpc.Schemas;
 using SalesforceGrpc.Strategies;
 using Serilog;
-using System.Net.Http.Headers;
-using static System.Console;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -58,6 +58,7 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddMemoryCache();
 SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());
+SqlMapper.AddTypeHandler(new JsonStringDictionaryTypeHandler());
 builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
@@ -95,7 +96,7 @@ builder.Services.AddSingleton<ISecretProtector>(sp => {
         .SetApplicationName("SalesforceGrpc")
         .ProtectKeysWithCertificate(resolution.Certificate!)
         .Services
-        .AddSingleton<Microsoft.AspNetCore.DataProtection.Repositories.IXmlRepository>(
+        .AddSingleton<IXmlRepository>(
             _ => sp.GetRequiredService<DapperXmlRepository>())
         .BuildServiceProvider();
 
@@ -115,12 +116,19 @@ builder.Services.AddSingleton<IOrgSelfConfigurator, ManualRegistrationConfigurat
 builder.Services.AddScoped<IOrgConnectionService, OrgConnectionService>();
 
 
-// TODO: Set this behind a db configuration that is saved in the db as a configuration that will be managed through a UI
-builder.Services.AddSingleton<IRepository>(sp => {
-     var targetingDbType = config.GetValue<string>("TargetingDatabaseType") 
-         ?? throw new InvalidOperationException("TargetingDatabaseType is not configured in appsettings.json");
-     return RepositoryFactory.Create(targetingDbType, sp);
- });
+#region Target Connection
+// The Target Database is reached through the stored Target Connection, never through configuration. One
+// profile per engine; the catalog refuses to construct if any engine is missing a profile.
+var debugQuery = config.GetValue<bool>("DebugQuery");
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new PostgresEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new SqlServerEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new MySqlEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineProfile>(sp => new SqliteEngineProfile(sp.GetRequiredService<ILoggerFactory>(), debugQuery));
+builder.Services.AddSingleton<ITargetEngineCatalog, TargetEngineCatalog>();
+builder.Services.AddSingleton<ITargetConnectionRepository, TargetConnectionRepository>();
+builder.Services.AddSingleton<ITargetConnectionProvider, TargetConnectionProvider>();
+builder.Services.AddScoped<ITargetConnectionService, TargetConnectionService>();
+#endregion
 
 builder.Services.AddTransient<IEventStrategy, CreateStrategy>();
 builder.Services.AddTransient<IEventStrategy, UpdateStrategy>();
@@ -190,7 +198,8 @@ builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<SecretProtectionStartupCheck>();
 
 builder.Services.AddHealthChecks()
-    .AddCheck<OrgConnectionHealthCheck>(OrgConnectionHealthCheck.Name);
+    .AddCheck<OrgConnectionHealthCheck>(OrgConnectionHealthCheck.Name)
+    .AddCheck<TargetConnectionHealthCheck>(TargetConnectionHealthCheck.Name);
 
 builder.Services.AddControllersWithViews();
 builder.Services.AddEndpointsApiExplorer();

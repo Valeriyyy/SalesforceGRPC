@@ -31,7 +31,7 @@ public class DeleteEventTest {
         mockMetaRepo.GetCachedMapping(dbSchema.Id, CancellationToken.None).Returns(new Dictionary<string, string> {
             { "MappedSFKey", "sf_id" }
         });
-        var deleteStrategy = new DeleteStrategy(mockLogger, mockDataRepo, mockMetaRepo);
+        var deleteStrategy = new DeleteStrategy(mockLogger, TargetProviders.Of(mockDataRepo), mockMetaRepo);
         
         var changeEventHeaderSchema = (RecordSchema)Schema.Parse(await File.ReadAllTextAsync(ChangeEventHeaderPath, TestContext.Current.CancellationToken));
         var changeEventHeader = new GenericRecord(changeEventHeaderSchema);

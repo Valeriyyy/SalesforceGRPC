@@ -7,9 +7,12 @@ using Npgsql;
 namespace Database.Repositories;
 
 public class PostgresRepository : RepositoryBase {
-    public PostgresRepository(ILogger<RepositoryBase> logger, IConfiguration configuration) : base(logger, configuration) { }
+    public PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
 
-    public override DbType DatabaseType => DbType.Postgres;
+    public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
+
+    /// <summary>Postgres's own convention for "no schema was specified." Not shared with any other engine.</summary>
+    private const string DefaultSchema = "public";
 
     #region Data Queries
     public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
@@ -53,9 +56,8 @@ public class PostgresRepository : RepositoryBase {
         var parameters = new DynamicParameters();
         parameters.Add("RecordIds", recordIds.ToArray());
 
-        using var result = new NpgsqlConnection(_connectionString)
-            .ExecuteAsync(sql, parameters);
-        return result.Result;
+        await using var connection = new NpgsqlConnection(_connectionString);
+        return await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
 
     public override async Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) {
@@ -89,7 +91,9 @@ public class PostgresRepository : RepositoryBase {
     /// <summary>
     /// Retrieves complete metadata for a specific table including columns and constraints.
     /// </summary>
-    public override async Task<TableMetadata?> GetTableMetadata(string tableName, string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override async Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null, CancellationToken cancellationToken = default) {
+        schemaName ??= DefaultSchema;
+
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
@@ -111,7 +115,9 @@ public class PostgresRepository : RepositoryBase {
     /// <summary>
     /// Retrieves metadata for all tables in a schema.
     /// </summary>
-    public override async Task<List<TableMetadata>> GetSchemaMetadata(string schemaName = "public", CancellationToken cancellationToken = default) {
+    public override async Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null, CancellationToken cancellationToken = default) {
+        schemaName ??= DefaultSchema;
+
         await using var connection = new NpgsqlConnection(_connectionString);
 
         const string sql = @"
@@ -246,7 +252,9 @@ public class PostgresRepository : RepositoryBase {
     /// <summary>
     /// Retrieves only the foreign key relationships for a table.
     /// </summary>
-    public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string schemaName = "public") {
+    public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null) {
+        schemaName ??= DefaultSchema;
+
         await using var connection = new NpgsqlConnection(_connectionString);
 
         const string sql = @"
