@@ -91,7 +91,7 @@ public class TargetConnectionController : ControllerBase {
         } catch (NoTargetDatabaseException ex) {
             return NotFound(new { error = ex.Message });
         } catch (TargetConnectionIdentityChangedException ex) {
-            // A conflict rather than a bad request: the request was well formed and the refusal is about what
+            // A conflict rather than a bad request: the request was well-formed and the refusal is about what
             // it would destroy. The message names the repoint operation, which is where the caller goes next.
             _logger.LogWarning(ex.Message);
             return Conflict(new { error = ex.Message });

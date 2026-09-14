@@ -1,7 +1,9 @@
 using Database.Models;
 using Database.Targets;
 using Microsoft.Data.Sqlite;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging.Abstractions;
+using MySqlConnector;
 using Npgsql;
 
 namespace SalesforceGRPCTest;
@@ -116,11 +118,97 @@ public class TargetEngineProfileTests {
     [Theory]
     [InlineData(TargetDatabaseEngine.SqlServer)]
     [InlineData(TargetDatabaseEngine.MySql)]
-    public void EnginesWithoutADriver_AreUnavailableWithAReason(TargetDatabaseEngine engine) {
+    public void SqlServerAndMySql_AreAvailable(TargetDatabaseEngine engine) {
         var profile = new TargetEngineCatalog(AllProfiles()).For(engine);
 
-        Assert.False(profile.IsAvailable);
-        Assert.Contains("not implemented", profile.UnavailableReason);
+        Assert.True(profile.IsAvailable);
+        Assert.Null(profile.UnavailableReason);
+    }
+
+    private static SqlServerEngineProfile SqlServer() => new(NullLoggerFactory.Instance);
+
+    private static TargetConnectionDetails SqlServerDetails(string password = HostilePassword,
+        IReadOnlyDictionary<string, string>? options = null) => new() {
+        Engine = TargetDatabaseEngine.SqlServer,
+        Host = "sql.example.internal",
+        Port = 1434,
+        DatabaseName = "warehouse",
+        Username = "loader",
+        Password = password,
+        Options = options ?? new Dictionary<string, string>()
+    };
+
+    [Fact]
+    public void SqlServer_APasswordFullOfDelimiters_RoundTripsWithoutChangingAnyOtherSetting() {
+        var connectionString = SqlServer().BuildConnectionString(SqlServerDetails());
+
+        var parsed = new SqlConnectionStringBuilder(connectionString);
+        Assert.Equal(HostilePassword, parsed.Password);
+        Assert.Equal("sql.example.internal,1434", parsed.DataSource);
+        Assert.Equal("warehouse", parsed.InitialCatalog);
+        Assert.Equal("loader", parsed.UserID);
+    }
+
+    [Fact]
+    public void SqlServer_DefaultsToEncryptedWithoutTrustingTheServerCertificate() {
+        var parsed = new SqlConnectionStringBuilder(SqlServer().BuildConnectionString(SqlServerDetails()));
+
+        Assert.True(parsed.Encrypt);
+        Assert.False(parsed.TrustServerCertificate);
+    }
+
+    [Fact]
+    public void SqlServer_EncryptionOptions_LandOnTheDriverSettings() {
+        var details = SqlServerDetails(options: new Dictionary<string, string> {
+            ["encrypt"] = "false",
+            ["trustServerCertificate"] = "true"
+        });
+
+        var parsed = new SqlConnectionStringBuilder(SqlServer().BuildConnectionString(details));
+
+        Assert.False(parsed.Encrypt);
+        Assert.True(parsed.TrustServerCertificate);
+    }
+
+    private static MySqlEngineProfile MySql() => new(NullLoggerFactory.Instance);
+
+    private static TargetConnectionDetails MySqlDetails(string password = HostilePassword,
+        IReadOnlyDictionary<string, string>? options = null) => new() {
+        Engine = TargetDatabaseEngine.MySql,
+        Host = "mysql.example.internal",
+        Port = 3307,
+        DatabaseName = "warehouse",
+        Username = "loader",
+        Password = password,
+        Options = options ?? new Dictionary<string, string>()
+    };
+
+    [Fact]
+    public void MySql_APasswordFullOfDelimiters_RoundTripsWithoutChangingAnyOtherSetting() {
+        var connectionString = MySql().BuildConnectionString(MySqlDetails());
+
+        var parsed = new MySqlConnectionStringBuilder(connectionString);
+        Assert.Equal(HostilePassword, parsed.Password);
+        Assert.Equal("mysql.example.internal", parsed.Server);
+        Assert.Equal(3307u, parsed.Port);
+        Assert.Equal("warehouse", parsed.Database);
+        Assert.Equal("loader", parsed.UserID);
+    }
+
+    [Fact]
+    public void MySql_DefaultsToPreferredSslMode() {
+        var parsed = new MySqlConnectionStringBuilder(MySql().BuildConnectionString(MySqlDetails()));
+
+        Assert.Equal(MySqlSslMode.Preferred, parsed.SslMode);
+    }
+
+    [Fact]
+    public void MySql_SslModeOption_LandsOnTheDriverSetting() {
+        var details = MySqlDetails(options: new Dictionary<string, string> { ["sslMode"] = "Required" });
+
+        var parsed = new MySqlConnectionStringBuilder(MySql().BuildConnectionString(details));
+
+        Assert.Equal(MySqlSslMode.Required, parsed.SslMode);
     }
 
     [Fact]

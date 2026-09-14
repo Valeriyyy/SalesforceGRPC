@@ -56,9 +56,8 @@ public class PostgresRepository : RepositoryBase {
         var parameters = new DynamicParameters();
         parameters.Add("RecordIds", recordIds.ToArray());
 
-        using var result = new NpgsqlConnection(_connectionString)
-            .ExecuteAsync(sql, parameters);
-        return result.Result;
+        await using var connection = new NpgsqlConnection(_connectionString);
+        return await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
 
     public override async Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds) {
