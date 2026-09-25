@@ -38,6 +38,7 @@ public class BindingService : IBindingService {
     private readonly IConfigurationChangeSignal _changeSignal;
     private readonly IOrgConnectionProvider _connections;
     private readonly ICheckpointRepository _checkpoints;
+    private readonly TimeProvider _time;
     private readonly ILogger<BindingService> _logger;
 
     public BindingService(
@@ -50,6 +51,7 @@ public class BindingService : IBindingService {
         IConfigurationChangeSignal changeSignal,
         IOrgConnectionProvider connections,
         ICheckpointRepository checkpoints,
+        TimeProvider time,
         ILogger<BindingService> logger) {
         _meta = meta;
         _avroSchemas = avroSchemas;
@@ -60,6 +62,7 @@ public class BindingService : IBindingService {
         _changeSignal = changeSignal;
         _connections = connections;
         _checkpoints = checkpoints;
+        _time = time;
         _logger = logger;
     }
 
@@ -426,20 +429,89 @@ public class BindingService : IBindingService {
         return channel?.Id;
     }
 
-    public async Task SetPrimaryChannelAsync(int channelId, CancellationToken cancellationToken = default) {
-        var channel = await _channels.GetChannelByIdAsync(channelId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException($"Channel {channelId} was not found.");
+    public async Task SetPrimaryChannelAsync(SetPrimaryChannelDTO dto, CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var channel = await RequireChannel(dto.ChannelId, cancellationToken).ConfigureAwait(false);
 
         if (!string.Equals(channel.ChannelType, DataChannelType, StringComparison.OrdinalIgnoreCase)) {
             throw new ValidationException(
                 $"Channel '{channel.FullName}' carries platform events, not Change Data Capture, so it cannot be the Primary Channel.");
         }
 
-        await _channels.SetPrimaryChannelAsync(channelId, cancellationToken).ConfigureAwait(false);
+        var start = ParseStart(dto.Start);
+        var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+
+        // Without a Checkpoint there is nothing to choose between: the Starting Point applies.
+        if (checkpoint is not null) {
+            switch (start) {
+                case StartFrom.Resume when checkpoint.IsExpired(_time.GetUtcNow()):
+                    throw new ValidationException(
+                        $"Channel '{channel.FullName}' cannot Resume: its Checkpoint was saved {AgeHours(checkpoint):F0} hours ago, " +
+                        $"and Salesforce keeps change events for only {Checkpoint.Retention.TotalHours:F0} hours. Choose Earliest or Latest.");
+                case StartFrom.Earliest:
+                    await _checkpoints.DiscardAsync(channel.Id, StartingPoint.Earliest, cancellationToken).ConfigureAwait(false);
+                    break;
+                case StartFrom.Latest:
+                    await _checkpoints.DiscardAsync(channel.Id, StartingPoint.Latest, cancellationToken).ConfigureAwait(false);
+                    break;
+            }
+        }
+
+        await _channels.SetPrimaryChannelAsync(channel.Id, cancellationToken).ConfigureAwait(false);
         _changeSignal.Signal();
 
-        _logger.LogInformation("Primary Channel set to {Channel}", channel.FullName);
+        _logger.LogInformation("Primary Channel set to {Channel}, starting from {Start}", channel.FullName,
+            checkpoint is null ? $"its Starting Point ({channel.StartingPoint})" : start.ToString());
     }
+
+    public async Task<ChannelStartDTO> GetChannelStartAsync(int channelId, CancellationToken cancellationToken = default) {
+        var channel = await RequireChannel(channelId, cancellationToken).ConfigureAwait(false);
+        var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+
+        return new ChannelStartDTO {
+            ChannelId = channel.Id,
+            StartingPoint = channel.StartingPoint.ToString(),
+            HasCheckpoint = checkpoint is not null,
+            CheckpointSavedAt = checkpoint?.SavedAt,
+            CanResume = checkpoint is not null && !checkpoint.IsExpired(_time.GetUtcNow())
+        };
+    }
+
+    public async Task<ChannelStartDTO> SetStartingPointAsync(int channelId, SetStartingPointDTO dto,
+        CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var channel = await RequireChannel(channelId, cancellationToken).ConfigureAwait(false);
+
+        if (!Enum.TryParse<StartingPoint>(dto.StartingPoint, ignoreCase: true, out var startingPoint)
+            || !Enum.IsDefined(startingPoint)) {
+            throw new ValidationException(
+                $"'{dto.StartingPoint}' is not a Starting Point. Choose {nameof(StartingPoint.Latest)} or {nameof(StartingPoint.Earliest)}.");
+        }
+
+        // No signal: once the worker is streaming this channel it has a Checkpoint, which the Starting Point
+        // never overrides, so a re-plan would change nothing.
+        await _channels.SetStartingPointAsync(channel.Id, startingPoint, cancellationToken).ConfigureAwait(false);
+
+        return await GetChannelStartAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static StartFrom ParseStart(string? start) {
+        if (string.IsNullOrWhiteSpace(start)) {
+            return StartFrom.Resume;
+        }
+
+        if (Enum.TryParse<StartFrom>(start, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed)) {
+            return parsed;
+        }
+
+        throw new ValidationException(
+            $"'{start}' is not a start. Choose {nameof(StartFrom.Resume)}, {nameof(StartFrom.Earliest)} or {nameof(StartFrom.Latest)}.");
+    }
+
+    private double AgeHours(Checkpoint checkpoint) =>
+        (_time.GetUtcNow() - new DateTimeOffset(DateTime.SpecifyKind(checkpoint.SavedAt, DateTimeKind.Utc))).TotalHours;
 
     public async Task<SubscriptionPlan> GetSubscriptionPlanAsync(CancellationToken cancellationToken = default) {
         // Whether the connection is usable, not merely present: a connection that has never authenticated
@@ -477,10 +549,11 @@ public class BindingService : IBindingService {
             active[schemaId] = binding;
         }
 
+        // A one-time restart position, left when a Checkpoint was discarded, outranks the Starting Point.
         var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
         var start = checkpoint is not null
             ? StartPosition.ResumeAfter(checkpoint)
-            : channel.StartingPoint is StartingPoint.Earliest ? StartPosition.Earliest : StartPosition.Latest;
+            : (channel.RestartFrom ?? channel.StartingPoint) is StartingPoint.Earliest ? StartPosition.Earliest : StartPosition.Latest;
 
         return new SubscriptionPlan {
             HasConnection = hasConnection,
@@ -697,6 +770,10 @@ public class BindingService : IBindingService {
     private async Task<PlatformEventChannelMemberEntity> RequireMember(int memberId, CancellationToken cancellationToken) =>
         await _channels.GetMemberByIdAsync(memberId, cancellationToken).ConfigureAwait(false)
         ?? throw new KeyNotFoundException($"Channel member {memberId} was not found.");
+
+    private async Task<PlatformEventChannelEntity> RequireChannel(int channelId, CancellationToken cancellationToken) =>
+        await _channels.GetChannelByIdAsync(channelId, cancellationToken).ConfigureAwait(false)
+        ?? throw new KeyNotFoundException($"Channel {channelId} was not found.");
 
     private async Task<CDCSchema> RequireBinding(int bindingId) =>
         await _meta.GetSchemaById(bindingId).ConfigureAwait(false)

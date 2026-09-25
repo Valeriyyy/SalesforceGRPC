@@ -309,9 +309,10 @@ public class Worker : BackgroundService {
     /// <remarks>
     /// Every event between the Checkpoint and the oldest event Salesforce still keeps is gone, and nothing
     /// can bring it back, so this is Critical. The caller resumes from Earliest whatever the Channel's
-    /// Starting Point says, to recover everything still available. Discarding the Checkpoint means the next
-    /// restart does not hit the same rejection; if the delete fails, the first save from the new stream
-    /// replaces it anyway.
+    /// Starting Point says, to recover everything still available. The Checkpoint is discarded with Earliest
+    /// recorded as the restart position, so a restart before the next save neither hits the same rejection
+    /// nor falls back to a Latest Starting Point. If the discard fails, the first save from the new stream
+    /// replaces the Checkpoint anyway.
     /// </remarks>
     private async Task DiscardRejectedCheckpoint(SubscriptionPlan plan, Checkpoint rejected, RpcException exc,
         CancellationToken cancellationToken) {
@@ -323,7 +324,7 @@ public class Worker : BackgroundService {
             plan.ChannelFullName, age.TotalHours, Checkpoint.Retention.TotalHours);
 
         try {
-            await _checkpoints.DeleteAsync(rejected.ChannelId, cancellationToken).ConfigureAwait(false);
+            await _checkpoints.DiscardAsync(rejected.ChannelId, StartingPoint.Earliest, cancellationToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
             _logger.LogError(ex, "Could not discard the rejected Checkpoint for {Channel}; the next save replaces it",
                 plan.ChannelFullName);

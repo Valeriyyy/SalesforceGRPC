@@ -71,8 +71,21 @@ public interface IBindingService {
     /// <summary>The Primary Channel's local ID, or null when none has been selected.</summary>
     Task<int?> GetPrimaryChannelIdAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Makes one channel the Primary Channel. Rejects a channel that is not Change Data Capture.</summary>
-    Task SetPrimaryChannelAsync(int channelId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Makes one channel the Primary Channel. Rejects a channel that is not Change Data Capture.
+    /// </summary>
+    /// <remarks>
+    /// When the channel still has a Checkpoint, <see cref="SetPrimaryChannelDTO.Start"/> decides whether the
+    /// worker resumes from it (the default) or discards it and begins at Earliest or Latest, once. Resume is
+    /// refused once the Checkpoint is older than the 72 hours Salesforce keeps events for.
+    /// </remarks>
+    Task SetPrimaryChannelAsync(SetPrimaryChannelDTO dto, CancellationToken cancellationToken = default);
+
+    /// <summary>Whether a channel has a Checkpoint, how old it is, and its Starting Point.</summary>
+    Task<ChannelStartDTO> GetChannelStartAsync(int channelId, CancellationToken cancellationToken = default);
+
+    /// <summary>Sets where the worker begins a channel that has no Checkpoint. No effect once one exists.</summary>
+    Task<ChannelStartDTO> SetStartingPointAsync(int channelId, SetStartingPointDTO dto, CancellationToken cancellationToken = default);
 
     /// <summary>What the worker should subscribe to and which Bindings it should apply.</summary>
     Task<SubscriptionPlan> GetSubscriptionPlanAsync(CancellationToken cancellationToken = default);

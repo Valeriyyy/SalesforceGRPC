@@ -106,10 +106,24 @@ public class BindingsController : ControllerBase {
     public Task<ActionResult<int?>> GetPrimaryChannel(CancellationToken ct) =>
         Execute(() => _bindings.GetPrimaryChannelIdAsync(ct));
 
-    /// <summary>Selects the Primary Channel. The worker picks this up without a restart.</summary>
+    /// <summary>
+    /// Selects the Primary Channel. The worker picks this up without a restart. When the channel still has a
+    /// Checkpoint, <c>start</c> chooses Resume (the default), Earliest or Latest.
+    /// </summary>
     [HttpPut("primary-channel")]
     public Task<ActionResult> SetPrimaryChannel([FromBody] SetPrimaryChannelDTO dto, CancellationToken ct) =>
-        Execute(() => _bindings.SetPrimaryChannelAsync(dto.ChannelId, ct));
+        Execute(() => _bindings.SetPrimaryChannelAsync(dto, ct));
+
+    /// <summary>Whether a channel has a Checkpoint, when it was saved, whether it can be resumed, and its Starting Point.</summary>
+    [HttpGet("channels/{channelId:int}/start")]
+    public Task<ActionResult<ChannelStartDTO>> GetChannelStart(int channelId, CancellationToken ct) =>
+        Execute(() => _bindings.GetChannelStartAsync(channelId, ct));
+
+    /// <summary>Sets where the worker begins a channel that has no Checkpoint: Latest or Earliest.</summary>
+    [HttpPut("channels/{channelId:int}/starting-point")]
+    public Task<ActionResult<ChannelStartDTO>> SetStartingPoint(int channelId, [FromBody] SetStartingPointDTO dto,
+        CancellationToken ct) =>
+        Execute(() => _bindings.SetStartingPointAsync(channelId, dto, ct));
 
     #endregion
 

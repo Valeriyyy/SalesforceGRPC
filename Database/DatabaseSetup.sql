@@ -132,13 +132,15 @@ CREATE TABLE IF NOT EXISTS salesforce.platform_event_channels (
     manageable_state varchar(30) NULL,
     is_primary bool DEFAULT false NOT NULL, -- The single channel the worker subscribes to
     starting_point varchar(10) DEFAULT 'Latest' NOT NULL, -- Where a channel with no Checkpoint begins: Latest or Earliest
+    restart_from varchar(10) NULL, -- One-time start after a discarded Checkpoint; cleared by the next Checkpoint save
     date_created timestamptz DEFAULT now() NOT NULL,
     date_updated timestamptz NULL,
     last_synced_at timestamptz NULL, -- When this row was last reconciled against Salesforce
     CONSTRAINT platform_event_channels_pkey PRIMARY KEY (id),
     CONSTRAINT platform_event_channels_sf_id_key UNIQUE (sf_id),
     CONSTRAINT platform_event_channels_full_name_key UNIQUE (full_name),
-    CONSTRAINT platform_event_channels_starting_point_check CHECK (starting_point IN ('Latest', 'Earliest'))
+    CONSTRAINT platform_event_channels_starting_point_check CHECK (starting_point IN ('Latest', 'Earliest')),
+    CONSTRAINT platform_event_channels_restart_from_check CHECK (restart_from IN ('Latest', 'Earliest'))
 );
 
 -- At most one Primary Channel. A partial index rather than a constraint so the many false rows do not
@@ -154,6 +156,7 @@ COMMENT ON COLUMN salesforce.platform_event_channels.channel_type IS 'data (Chan
 COMMENT ON COLUMN salesforce.platform_event_channels.event_type IS 'custom, data, monitoring or standard (API 61.0+); immutable in Salesforce after create';
 COMMENT ON COLUMN salesforce.platform_event_channels.last_synced_at IS 'When this row was last reconciled against Salesforce';
 COMMENT ON COLUMN salesforce.platform_event_channels.starting_point IS 'Where the worker begins a channel that has no Checkpoint: Latest (default) or Earliest';
+COMMENT ON COLUMN salesforce.platform_event_channels.restart_from IS 'One-time start chosen when the Checkpoint was discarded; used instead of starting_point until the next Checkpoint is saved';
 
 
 -- salesforce.platform_event_channel_members definition

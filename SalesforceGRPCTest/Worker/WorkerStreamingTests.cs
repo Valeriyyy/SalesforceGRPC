@@ -284,7 +284,7 @@ public class WorkerStreamingTests {
         await harness.RunUntil(recovered);
 
         Assert.Equal(GrpcClient.ReplayPreset.Earliest, recovered.Requests[0].ReplayPreset);
-        await harness.Checkpoints.Received(1).DeleteAsync(ChannelId, Arg.Any<CancellationToken>());
+        await harness.Checkpoints.Received(1).DiscardAsync(ChannelId, Database.Models.StartingPoint.Earliest, Arg.Any<CancellationToken>());
         await harness.Checkpoints.Received(1).SaveAsync(ChannelId, IsReplayId(9), Arg.Any<CancellationToken>());
         Assert.Contains(harness.Log.Entries, e => e.Level == LogLevel.Critical
             && e.Message.Contains("Sales__chn") && e.Message.Contains("80"));

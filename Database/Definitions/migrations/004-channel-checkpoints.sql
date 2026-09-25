@@ -2,13 +2,15 @@
 --
 -- Brings an existing App Database up to the shape in Definitions/schemas. Safe to re-run.
 --
--- Adds the Checkpoint table the worker resumes each Channel from, and the Starting Point a Channel with no
--- Checkpoint begins at. Existing Channels take Latest, which is what the worker has always done.
+-- Adds the Checkpoint table the worker resumes each Channel from, the Starting Point a Channel with no
+-- Checkpoint begins at, and the one-time restart position used after a Checkpoint is discarded. Existing
+-- Channels take Latest, which is what the worker has always done.
 
 BEGIN;
 
 ALTER TABLE salesforce.platform_event_channels
-    ADD COLUMN IF NOT EXISTS starting_point varchar(10) DEFAULT 'Latest' NOT NULL;
+    ADD COLUMN IF NOT EXISTS starting_point varchar(10) DEFAULT 'Latest' NOT NULL,
+    ADD COLUMN IF NOT EXISTS restart_from varchar(10) NULL;
 
 DO $$
 BEGIN
@@ -16,6 +18,11 @@ BEGIN
         ALTER TABLE salesforce.platform_event_channels
             ADD CONSTRAINT platform_event_channels_starting_point_check
                 CHECK (starting_point IN ('Latest', 'Earliest'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'platform_event_channels_restart_from_check') THEN
+        ALTER TABLE salesforce.platform_event_channels
+            ADD CONSTRAINT platform_event_channels_restart_from_check
+                CHECK (restart_from IN ('Latest', 'Earliest'));
     END IF;
 END $$;
 

@@ -39,12 +39,15 @@ public class CheckpointRepository : ICheckpointRepository {
     public async Task SaveAsync(int channelId, byte[] replayId, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(replayId);
 
+        // The WHERE keeps the per-batch save from rewriting the channel row once restart_from is already clear.
         const string sql = @"
             INSERT INTO salesforce.channel_checkpoints (channel_id, replay_id, saved_at)
             VALUES (@ChannelId, @ReplayId, now())
             ON CONFLICT (channel_id) DO UPDATE SET
                 replay_id = EXCLUDED.replay_id,
-                saved_at = EXCLUDED.saved_at";
+                saved_at = EXCLUDED.saved_at;
+            UPDATE salesforce.platform_event_channels SET restart_from = NULL
+            WHERE id = @ChannelId AND restart_from IS NOT NULL;";
 
         LogQuery("UPSERT", sql, channelId);
 
@@ -53,14 +56,21 @@ public class CheckpointRepository : ICheckpointRepository {
             cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
-    public async Task DeleteAsync(int channelId, CancellationToken cancellationToken = default) {
-        const string sql = "DELETE FROM salesforce.channel_checkpoints WHERE channel_id = @ChannelId";
+    public async Task DiscardAsync(int channelId, StartingPoint restartFrom, CancellationToken cancellationToken = default) {
+        const string sql = @"
+            DELETE FROM salesforce.channel_checkpoints WHERE channel_id = @ChannelId;
+            UPDATE salesforce.platform_event_channels SET restart_from = @RestartFrom, date_updated = now()
+            WHERE id = @ChannelId;";
 
-        LogQuery("DELETE", sql, channelId);
+        LogQuery("DISCARD", sql, channelId);
 
         await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.ExecuteAsync(new CommandDefinition(sql, new { ChannelId = channelId },
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await connection.ExecuteAsync(new CommandDefinition(sql,
+            new { ChannelId = channelId, RestartFrom = restartFrom.ToString() }, transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private void LogQuery(string queryType, string sql, int channelId) {

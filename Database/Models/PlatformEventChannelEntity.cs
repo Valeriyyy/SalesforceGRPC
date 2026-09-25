@@ -50,6 +50,13 @@ public class PlatformEventChannelEntity {
     [Column("starting_point")]
     public StartingPoint StartingPoint { get; set; } = StartingPoint.Latest;
 
+    /// <summary>
+    /// A one-time start chosen when this channel's Checkpoint was discarded, used instead of
+    /// <see cref="StartingPoint"/> until the next Checkpoint is saved. Null when there is none.
+    /// </summary>
+    [Column("restart_from")]
+    public StartingPoint? RestartFrom { get; set; }
+
     [Column("date_created")]
     public DateTime DateCreated { get; set; }
 

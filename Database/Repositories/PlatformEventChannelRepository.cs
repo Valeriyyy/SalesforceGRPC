@@ -28,6 +28,7 @@ public class PlatformEventChannelRepository : IPlatformEventChannelRepository {
                 manageable_state AS ManageableState,
                 is_primary AS IsPrimary,
                 starting_point AS StartingPoint,
+                restart_from AS RestartFrom,
                 date_created AS DateCreated,
                 date_updated AS DateUpdated,
                 last_synced_at AS LastSyncedAt";
