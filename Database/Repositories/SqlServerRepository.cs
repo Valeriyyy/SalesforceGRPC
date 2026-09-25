@@ -14,16 +14,26 @@ public class SqlServerRepository : RepositoryBase {
     private const string DefaultSchema = "dbo";
 
     #region Data Queries
-    public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    /// <inheritdoc />
+    public override async Task<int> Upsert(string table, string keyColumn, Dictionary<string, object> data,
+        CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
-        var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
-        var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
+        var source = string.Join(", ", data.Keys.Select(k => $"@{k} AS {k}"));
+        var updates = data.Keys.Where(k => !IsKey(k, keyColumn)).Select(k => $"target.{k} = source.{k}").ToList();
+        var whenMatched = updates.Count == 0 ? "" : $"WHEN MATCHED THEN UPDATE SET {string.Join(", ", updates)} ";
+        // HOLDLOCK makes the match and the insert one serializable step, so two writers of the same new record
+        // cannot both miss the match and both insert.
+        var sql = $"MERGE {table} WITH (HOLDLOCK) AS target " +
+                  $"USING (SELECT {source}) AS source ON target.{keyColumn} = source.{keyColumn} " +
+                  whenMatched +
+                  $"WHEN NOT MATCHED THEN INSERT ({columns}) VALUES ({string.Join(", ", data.Keys.Select(k => $"source.{k}"))});";
         if (_debugQuery) {
-            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "CREATE", sql, data);
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "UPSERT", sql, data);
         }
 
         await using var connection = new SqlConnection(_connectionString);
-        return await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
+        return await connection.ExecuteAsync(new CommandDefinition(sql, data, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
     }
 
     public override async Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {

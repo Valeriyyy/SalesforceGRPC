@@ -43,4 +43,22 @@ public class WorkerStreamingTests {
     }
 
     #endregion
+
+    #region Idempotent writes
+
+    [Fact]
+    public async Task ACreateIsWrittenAsAnUpsertOnTheKeyMappingColumn_SoAReplayedCreateCannotAddASecondRow() {
+        var harness = new WorkerHarness();
+        var subscription = harness.PubSub.Script(
+            Response(1, Create("001A", "555-0100")),
+            Response(2, Create("001A", "555-0100")));
+
+        await harness.RunUntil(subscription);
+
+        await harness.Target.Received(2).Upsert(Table, KeyColumn,
+            Arg.Is<Dictionary<string, object>>(d => (string)d[KeyColumn] == "001A" && (string)d["phone"] == "555-0100"),
+            Arg.Any<CancellationToken>());
+    }
+
+    #endregion
 }

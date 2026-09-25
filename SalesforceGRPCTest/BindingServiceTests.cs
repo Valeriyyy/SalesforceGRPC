@@ -277,7 +277,7 @@ public class BindingServiceTests {
         await NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct);
 
-        await _target.DidNotReceive().Create(Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
+        await _target.DidNotReceive().Upsert(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
         await _target.DidNotReceive().Update(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>(), Arg.Any<Dictionary<string, object>>());
         await _target.DidNotReceive().Delete(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>());
     }
@@ -451,6 +451,17 @@ public class BindingServiceTests {
             new SetKeyMappingDTO { TargetColumnName = "employee_count" }, Ct));
 
         Assert.Contains("employee_count", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SetKeyMapping_ToAColumnWithoutAUniqueConstraint_IsRejectedAndNothingIsSaved() {
+        ArrangeValidBinding();
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().SetKeyMappingAsync(BindingId,
+            new SetKeyMappingDTO { TargetColumnName = "phone" }, Ct));
+
+        Assert.Contains("unique constraint or primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
+        await _meta.DidNotReceive().ReplaceFieldMappings(Arg.Any<int>(), Arg.Any<IEnumerable<MappedField>>());
     }
 
     [Fact]
@@ -836,6 +847,47 @@ public class BindingServiceTests {
         var plan = await NewService().GetSubscriptionPlanAsync(Ct);
 
         Assert.DoesNotContain("CONTACT_V1", plan.ActiveBindingsBySchemaId.Keys);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_DemotesAnActiveBindingWhoseKeyMappingColumnIsNotUnique() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        var table = AccountTable();
+        // A DBA dropped the constraint after the Binding was activated.
+        table.Columns.Single(c => c.ColumnName == "sf_id").ColumnConstraints.Clear();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Empty(plan.ActiveBindingsBySchemaId);
+        await _meta.Received(1).SetBindingState(BindingId, BindingState.Incomplete);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_KeepsAnActiveBindingWhoseKeyMappingColumnIsUnique() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Contains("SCHEMA_V1", plan.ActiveBindingsBySchemaId.Keys);
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_KeepsActiveBindings_WhenTheTargetDatabaseCannotBeRead() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>())
+            .Returns<TableMetadata?>(_ => throw new TimeoutException("unreachable"));
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        // Nothing is known to be wrong with the Binding, so it is not demoted; the worker's own failure
+        // handling deals with a database that cannot be reached.
+        Assert.Contains("SCHEMA_V1", plan.ActiveBindingsBySchemaId.Keys);
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
     }
 
     [Fact]

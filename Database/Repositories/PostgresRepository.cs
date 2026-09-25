@@ -15,18 +15,21 @@ public class PostgresRepository : RepositoryBase {
     private const string DefaultSchema = "public";
 
     #region Data Queries
-    public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    /// <inheritdoc />
+    public override async Task<int> Upsert(string table, string keyColumn, Dictionary<string, object> data,
+        CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
         var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
-        var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
+        var updates = data.Keys.Where(k => !IsKey(k, keyColumn)).Select(k => $"{k} = EXCLUDED.{k}").ToList();
+        var onConflict = updates.Count == 0 ? "DO NOTHING" : $"DO UPDATE SET {string.Join(", ", updates)}";
+        var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters}) ON CONFLICT ({keyColumn}) {onConflict}";
         if (_debugQuery) {
-            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "CREATE", sql, data);
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "UPSERT", sql, data);
         }
 
         await using var connection = new NpgsqlConnection(_connectionString);
-        var resultCount = await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
-        
-        return resultCount;
+        return await connection.ExecuteAsync(new CommandDefinition(sql, data, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
     }
     
     public override async Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {

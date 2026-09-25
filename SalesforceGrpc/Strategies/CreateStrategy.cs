@@ -73,7 +73,7 @@ public class CreateStrategy : IEventStrategy {
         var data = changeSet.ToDataObject();
 
         try {
-            var createdCount = await target.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
+            var createdCount = await target.Upsert(dbSchema.DbSchemaFullName, sfMappedKey, data, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);

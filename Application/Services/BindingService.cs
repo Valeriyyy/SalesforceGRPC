@@ -466,6 +466,11 @@ public class BindingService : IBindingService {
                 !entityNames.Contains(binding.EntityName)) {
                 continue;
             }
+
+            if (targetState is ConnectionState.Connected &&
+                await DemoteIfKeyMappingIsNotUnique(binding, cancellationToken).ConfigureAwait(false)) {
+                continue;
+            }
             active[schemaId] = binding;
         }
 
@@ -477,6 +482,48 @@ public class BindingService : IBindingService {
             ActiveBindingsBySchemaId = active,
             ChannelEntityNames = entityNames
         };
+    }
+
+    /// <summary>
+    /// Sets an Active Binding back to Incomplete when its Key Mapping column has lost its unique constraint.
+    /// </summary>
+    /// <remarks>
+    /// Delivery is at-least-once (ADR 0005), so a repeated CREATE has to land on the row it already wrote,
+    /// and only a unique key lets it. Without one, the repeat fails the write and replays the same batch
+    /// forever. The column may have lost its constraint after activation (a DBA dropped it), or the Binding
+    /// may date from before the constraint was required. A table that cannot be read is not proof of
+    /// anything, so the Binding is kept and the worker's own failure handling takes over.
+    /// </remarks>
+    private async Task<bool> DemoteIfKeyMappingIsNotUnique(CDCSchema binding, CancellationToken cancellationToken) {
+        ColumnMetadata? keyColumn;
+        try {
+            var keyMapping = (await ReadMappings(binding.Id).ConfigureAwait(false))
+                .FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName);
+            if (keyMapping is null) {
+                return false;
+            }
+
+            var table = await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false);
+            keyColumn = table?.Columns.FirstOrDefault(c =>
+                string.Equals(c.ColumnName, keyMapping.TargetFieldName, StringComparison.OrdinalIgnoreCase));
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogWarning(ex, "Could not read the Key Mapping column of Binding {BindingId} ({Table}); keeping it Active",
+                binding.Id, binding.DbSchemaFullName);
+            return false;
+        }
+
+        if (keyColumn is null || keyColumn.IsUnique) {
+            return false;
+        }
+
+        await _meta.SetBindingState(binding.Id, BindingState.Incomplete).ConfigureAwait(false);
+        binding.BindingState = BindingState.Incomplete;
+        _logger.LogWarning(
+            "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because its Key Mapping column {Column} " +
+            "has no unique constraint. Change events can arrive more than once, and a repeated CREATE needs a unique " +
+            "key to land on the row it already wrote. Add a unique constraint or primary key to {Column}, then activate it again.",
+            binding.Id, binding.EntityName, binding.DbSchemaFullName, keyColumn.ColumnName, keyColumn.ColumnName);
+        return true;
     }
 
     #endregion
