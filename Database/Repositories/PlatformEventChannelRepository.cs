@@ -27,6 +27,7 @@ public class PlatformEventChannelRepository : IPlatformEventChannelRepository {
                 namespace_prefix AS NamespacePrefix,
                 manageable_state AS ManageableState,
                 is_primary AS IsPrimary,
+                starting_point AS StartingPoint,
                 date_created AS DateCreated,
                 date_updated AS DateUpdated,
                 last_synced_at AS LastSyncedAt";
@@ -405,6 +406,25 @@ public class PlatformEventChannelRepository : IPlatformEventChannelRepository {
             await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Sets where the worker begins a channel that has no Checkpoint.
+    /// </summary>
+    public async Task<bool> SetStartingPointAsync(int channelId, StartingPoint startingPoint,
+        CancellationToken cancellationToken = default) {
+        const string sql = @"
+            UPDATE salesforce.platform_event_channels
+            SET starting_point = @StartingPoint, date_updated = now()
+            WHERE id = @ChannelId";
+
+        var parameters = new { ChannelId = channelId, StartingPoint = startingPoint.ToString() };
+        LogQuery("UPDATE", sql, parameters);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        var affectedRows = await connection.ExecuteAsync(new CommandDefinition(
+            sql, parameters, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        return affectedRows > 0;
     }
 
     /// <summary>

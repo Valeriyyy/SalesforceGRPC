@@ -8,6 +8,7 @@ using com.sforce.eventbus;
 using Common;
 using Database.Models;
 using Database.Repositories.Interfaces;
+using Google.Protobuf;
 using Grpc.Core;
 using GrpcClient;
 using SalesforceGrpc.Extensions;
@@ -31,6 +32,7 @@ public class Worker : BackgroundService {
 
     private readonly IMetaRepository _metaRepo;
     private readonly IAvroSchemaRepository _avroSchemaRepo;
+    private readonly ICheckpointRepository _checkpoints;
 
     private const int EventsPerFetch = 25;
 
@@ -39,6 +41,7 @@ public class Worker : BackgroundService {
         PubSub.PubSubClient psClient,
         IMetaRepository metaRepo,
         IAvroSchemaRepository avroSchemaRepo,
+        ICheckpointRepository checkpoints,
         IServiceScopeFactory scopeFactory,
         IConfigurationChangeSignal changeSignal,
         EventResolver eventResolver) {
@@ -46,6 +49,7 @@ public class Worker : BackgroundService {
         _pubsubClient = psClient;
         _metaRepo = metaRepo;
         _avroSchemaRepo = avroSchemaRepo;
+        _checkpoints = checkpoints;
         _scopeFactory = scopeFactory;
         _changeSignal = changeSignal;
         _eventResolver = eventResolver;
@@ -226,6 +230,11 @@ public class Worker : BackgroundService {
                     await ApplyBatch(response.Events, bindings, planToken).ConfigureAwait(false);
                 }
 
+                // A strategy can swallow a cancellation as one record's failure, so a batch that "finished"
+                // after the plan was cancelled may not have been applied. It is replayed rather than trusted.
+                planToken.ThrowIfCancellationRequested();
+                await SaveCheckpoint(plan, response.LatestReplayId, planToken).ConfigureAwait(false);
+
                 await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
                     .ConfigureAwait(false);
             }
@@ -242,6 +251,31 @@ public class Worker : BackgroundService {
                 await planScope.CancelAsync().ConfigureAwait(false);
             }
             await watcher.ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Records that every event up to <paramref name="latestReplayId"/> has been applied or deliberately
+    /// skipped, so the next subscription resumes after it.
+    /// </summary>
+    /// <remarks>
+    /// Called after a whole batch and after a keepalive, whose position Salesforce advances while the Channel
+    /// is quiet — without that, a Channel with no activity for three days would end up with an expired
+    /// Checkpoint. A failed save does not stop the stream: it only means a restart before the next successful
+    /// save replays a little more, which idempotent writes make harmless (ADR 0005).
+    /// </remarks>
+    private async Task SaveCheckpoint(SubscriptionPlan plan, ByteString latestReplayId, CancellationToken cancellationToken) {
+        if (plan.ChannelId is not int channelId || latestReplayId.IsEmpty) {
+            return;
+        }
+
+        try {
+            await _checkpoints.SaveAsync(channelId, latestReplayId.ToByteArray(), cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogError(ex,
+                "Could not save the Checkpoint for {Channel}; streaming continues. A restart before the next " +
+                "successful save will replay the events since the last one.",
+                plan.ChannelFullName);
         }
     }
 

@@ -44,6 +44,12 @@ public class PlatformEventChannelEntity {
     [Column("is_primary")]
     public bool IsPrimary { get; set; }
 
+    /// <summary>
+    /// Where the worker begins this channel when it has no Checkpoint. Plays no part once one exists.
+    /// </summary>
+    [Column("starting_point")]
+    public StartingPoint StartingPoint { get; set; } = StartingPoint.Latest;
+
     [Column("date_created")]
     public DateTime DateCreated { get; set; }
 

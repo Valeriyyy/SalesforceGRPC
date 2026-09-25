@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using static SalesforceGRPCTest.Worker.WorkerHarness;
 
@@ -144,6 +145,92 @@ public class WorkerStreamingTests {
         await harness.RunUntil(subscription);
 
         Assert.Equal(["create 001A", "create 001B"], completed);
+    }
+
+    #endregion
+
+    #region Saving the Checkpoint
+
+    [Fact]
+    public async Task SavesTheBatchesLatestReplayIdAsTheCheckpoint_OnceEveryEventIsApplied() {
+        var harness = new WorkerHarness();
+        var subscription = harness.PubSub.Script(
+            Response(1, Create("001A", "1")),
+            Response(2, Create("001B", "2")));
+
+        await harness.RunUntil(subscription);
+
+        Received.InOrder(() => {
+            harness.Target.Upsert(Table, KeyColumn, Arg.Is<Dictionary<string, object>>(d => (string)d[KeyColumn] == "001A"), Arg.Any<CancellationToken>());
+            harness.Checkpoints.SaveAsync(ChannelId, IsReplayId(1), Arg.Any<CancellationToken>());
+            harness.Target.Upsert(Table, KeyColumn, Arg.Is<Dictionary<string, object>>(d => (string)d[KeyColumn] == "001B"), Arg.Any<CancellationToken>());
+            harness.Checkpoints.SaveAsync(ChannelId, IsReplayId(2), Arg.Any<CancellationToken>());
+        });
+    }
+
+    [Fact]
+    public async Task SavesAKeepalivesLatestReplayId_SoAQuietChannelsCheckpointKeepsAdvancing() {
+        var harness = new WorkerHarness();
+        var subscription = harness.PubSub.Script(Keepalive(9));
+
+        await harness.RunUntil(subscription);
+
+        await harness.Checkpoints.Received(1).SaveAsync(ChannelId, IsReplayId(9), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MovesTheCheckpointPastAnEventThatCannotBeDecoded() {
+        var harness = new WorkerHarness();
+        var subscription = harness.PubSub.Script(Response(3, Garbage(), Create("001A", "1")));
+
+        await harness.RunUntil(subscription);
+
+        await harness.Target.Received(1).Upsert(Table, KeyColumn, Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
+        await harness.Checkpoints.Received(1).SaveAsync(ChannelId, IsReplayId(3), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task DoesNotSaveTheCheckpoint_WhenTheTargetDatabaseRefusesAWrite_SoTheBatchIsReplayed() {
+        var harness = new WorkerHarness();
+        harness.Target.Upsert(Table, KeyColumn, Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>())
+            .Returns<int>(_ => throw new UnreachableDatabaseException());
+        harness.PubSub.Script(Response(1, Create("001A", "1")));
+
+        await harness.RunUntil(() => harness.PubSub.WaitForSubscriptionsAsync(2));
+
+        await harness.Checkpoints.DidNotReceiveWithAnyArgs().SaveAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task DoesNotSaveTheCheckpoint_WhenAConfigurationChangeInterruptsTheBatch() {
+        var harness = new WorkerHarness();
+        harness.Target.Upsert(Table, KeyColumn, Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>())
+            .Returns(async call => {
+                harness.Signal.Signal();
+                await Task.Delay(Timeout.Infinite, call.ArgAt<CancellationToken>(3));
+                return 1;
+            });
+        harness.PubSub.Script(Response(1, Create("001A", "1")));
+
+        await harness.RunUntil(() => harness.PubSub.WaitForSubscriptionsAsync(2));
+
+        await harness.Checkpoints.DidNotReceiveWithAnyArgs().SaveAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task KeepsStreaming_WhenSavingTheCheckpointFails_AndSaysSoInTheLog() {
+        var harness = new WorkerHarness();
+        harness.Checkpoints.SaveAsync(ChannelId, IsReplayId(1), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException(new InvalidOperationException("App Database unavailable")));
+        var subscription = harness.PubSub.Script(
+            Response(1, Create("001A", "1")),
+            Response(2, Create("001B", "2")));
+
+        await harness.RunUntil(subscription);
+
+        await harness.Target.Received(2).Upsert(Table, KeyColumn, Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
+        await harness.Checkpoints.Received(1).SaveAsync(ChannelId, IsReplayId(2), Arg.Any<CancellationToken>());
+        Assert.Contains(harness.Log.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("Sales__chn"));
     }
 
     #endregion

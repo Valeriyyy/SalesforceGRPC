@@ -56,6 +56,7 @@ internal sealed class WorkerHarness {
     public IRepository Target { get; } = Substitute.For<IRepository>();
     public IBindingService Bindings { get; } = Substitute.For<IBindingService>();
     public ITargetConnectionService TargetConnections { get; } = Substitute.For<ITargetConnectionService>();
+    public ICheckpointRepository Checkpoints { get; } = Substitute.For<ICheckpointRepository>();
     public ConfigurationChangeSignal Signal { get; } = new();
     public ListLogger<SalesforceGrpc.Worker> Log { get; } = new();
 
@@ -67,6 +68,7 @@ internal sealed class WorkerHarness {
             TargetConnectionState = ConnectionState.Connected,
             TopicName = "/data/Sales__chn",
             ChannelFullName = "Sales__chn",
+            ChannelId = ChannelId,
             ActiveBindingsBySchemaId = new() { [SchemaId] = Binding() }
         };
 
@@ -102,7 +104,7 @@ internal sealed class WorkerHarness {
             new UndeleteStrategy(NullLogger<UndeleteStrategy>.Instance, targets, Meta)
         };
 
-        return new SalesforceGrpc.Worker(Log, PubSub, Meta, AvroSchemas,
+        return new SalesforceGrpc.Worker(Log, PubSub, Meta, AvroSchemas, Checkpoints,
             provider.GetRequiredService<IServiceScopeFactory>(), Signal, new EventResolver(strategies));
     }
 
@@ -136,6 +138,15 @@ internal sealed class WorkerHarness {
     public static FetchResponse Keepalive(byte latestReplayId) => Response(latestReplayId);
 
     public static ByteString ReplayId(byte value) => ByteString.CopyFrom(0, 0, 0, 0, 0, 0, 0, value);
+
+    /// <summary>Matches the raw bytes of <see cref="ReplayId"/>, the way they reach the Checkpoint store.</summary>
+    public static byte[] IsReplayId(byte value) => Arg.Is<byte[]>(b => b.SequenceEqual(ReplayId(value).ToByteArray()));
+
+    /// <summary>An event whose payload is not Avro at all.</summary>
+    public static ConsumerEvent Garbage() => new() {
+        ReplayId = ReplayId(0),
+        Event = new ProducerEvent { SchemaId = SchemaId, Payload = ByteString.CopyFrom(0xFF, 0xFF, 0xFF) }
+    };
 
     public static ConsumerEvent Create(string recordId, string phone) =>
         Event("CREATE", [recordId], phone, []);
@@ -187,4 +198,9 @@ internal sealed class ListLogger<T> : ILogger<T> {
             _entries.Add((logLevel, formatter(state, exception)));
         }
     }
+}
+
+/// <summary>A driver failure that never reached a server — the Target Database is down, not the data bad.</summary>
+internal sealed class UnreachableDatabaseException : System.Data.Common.DbException {
+    public UnreachableDatabaseException() : base("connection refused") { }
 }

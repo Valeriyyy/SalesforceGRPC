@@ -131,12 +131,14 @@ CREATE TABLE IF NOT EXISTS salesforce.platform_event_channels (
     namespace_prefix varchar(15) NULL,
     manageable_state varchar(30) NULL,
     is_primary bool DEFAULT false NOT NULL, -- The single channel the worker subscribes to
+    starting_point varchar(10) DEFAULT 'Latest' NOT NULL, -- Where a channel with no Checkpoint begins: Latest or Earliest
     date_created timestamptz DEFAULT now() NOT NULL,
     date_updated timestamptz NULL,
     last_synced_at timestamptz NULL, -- When this row was last reconciled against Salesforce
     CONSTRAINT platform_event_channels_pkey PRIMARY KEY (id),
     CONSTRAINT platform_event_channels_sf_id_key UNIQUE (sf_id),
-    CONSTRAINT platform_event_channels_full_name_key UNIQUE (full_name)
+    CONSTRAINT platform_event_channels_full_name_key UNIQUE (full_name),
+    CONSTRAINT platform_event_channels_starting_point_check CHECK (starting_point IN ('Latest', 'Earliest'))
 );
 
 -- At most one Primary Channel. A partial index rather than a constraint so the many false rows do not
@@ -151,6 +153,7 @@ COMMENT ON COLUMN salesforce.platform_event_channels.developer_name IS 'Unique n
 COMMENT ON COLUMN salesforce.platform_event_channels.channel_type IS 'data (Change Data Capture) or event (platform events); immutable in Salesforce after create';
 COMMENT ON COLUMN salesforce.platform_event_channels.event_type IS 'custom, data, monitoring or standard (API 61.0+); immutable in Salesforce after create';
 COMMENT ON COLUMN salesforce.platform_event_channels.last_synced_at IS 'When this row was last reconciled against Salesforce';
+COMMENT ON COLUMN salesforce.platform_event_channels.starting_point IS 'Where the worker begins a channel that has no Checkpoint: Latest (default) or Earliest';
 
 
 -- salesforce.platform_event_channel_members definition
@@ -185,6 +188,24 @@ COMMENT ON COLUMN salesforce.platform_event_channel_members.sf_id IS 'Salesforce
 COMMENT ON COLUMN salesforce.platform_event_channel_members.full_name IS '<channel>_<entity> with double underscores flattened to single';
 COMMENT ON COLUMN salesforce.platform_event_channel_members.selected_entity IS 'Entity name, e.g. AccountChangeEvent; immutable in Salesforce after create';
 COMMENT ON COLUMN salesforce.platform_event_channel_members.cdc_schema_id IS 'Optional link to the cdc_schemas row that says where this entity lands in the target database';
+
+
+-- salesforce.channel_checkpoints definition
+-- One Checkpoint per mirrored Channel: the position in its event stream up to which every event has been
+-- applied or deliberately skipped. The worker resumes from the event after it. See ADR 0005.
+-- DROP TABLE salesforce.channel_checkpoints;
+
+CREATE TABLE IF NOT EXISTS salesforce.channel_checkpoints (
+    channel_id int4 NOT NULL, -- The Channel this position belongs to
+    replay_id bytea NOT NULL, -- Opaque Salesforce replay ID, stored exactly as received
+    saved_at timestamptz DEFAULT now() NOT NULL, -- Salesforce keeps events for 72 hours after this
+    CONSTRAINT channel_checkpoints_pkey PRIMARY KEY (channel_id),
+    CONSTRAINT channel_checkpoints_channel_id_fkey FOREIGN KEY (channel_id)
+        REFERENCES salesforce.platform_event_channels (id) ON DELETE CASCADE
+);
+
+COMMENT ON COLUMN salesforce.channel_checkpoints.replay_id IS 'Opaque Salesforce replay ID, stored exactly as received; never parsed or compared';
+COMMENT ON COLUMN salesforce.channel_checkpoints.saved_at IS 'When the position was saved; Salesforce keeps events for 72 hours, so an older one cannot be resumed from';
 
 
 -- salesforce.data_protection_keys definition
