@@ -7,7 +7,7 @@ namespace Application.Bindings;
 /// </summary>
 /// <remarks>
 /// This is the whole of the worker's configuration decision, pulled out of the streaming loop so it can be
-/// unit tested. The loop itself stays untested.
+/// unit tested on its own.
 /// </remarks>
 public sealed record SubscriptionPlan {
     /// <summary>

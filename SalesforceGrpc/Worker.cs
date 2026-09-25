@@ -20,8 +20,14 @@ namespace SalesforceGrpc;
 /// Streams change events for the Primary Channel and applies the Active Bindings to the target database.
 /// </summary>
 /// <remarks>
-/// What to subscribe to and which Bindings to apply is decided by <see cref="IBindingService"/>, not here, so
-/// that decision is unit testable. This class owns only the streaming loop.
+/// What to subscribe to, where to start and which Bindings to apply is decided by <see cref="IBindingService"/>,
+/// not here. This class owns the streaming loop: flow control, applying each batch in record order, and saving
+/// the Channel's Checkpoint once a batch is done, so any interruption resumes where it left off.
+/// <para>
+/// Delivery is at-least-once (ADR 0005). A batch interrupted part-way is replayed from its start, so every write
+/// the strategies make must be safe to repeat. Only one worker per App Database is assumed: two would
+/// overwrite each other's Checkpoint.
+/// </para>
 /// </remarks>
 public class Worker : BackgroundService {
     private readonly ILogger<Worker> _logger;
@@ -137,22 +143,16 @@ public class Worker : BackgroundService {
     /// Reports a dropped stream and pauses before reconnecting.
     /// </summary>
     /// <remarks>
-    /// This used to call <c>StopApplication()</c>, with a deliberate justification: there is no replay-ID
-    /// checkpointing, so a dropped stream cannot be resumed without gaps, and shutting down was honest about
-    /// that where silently reconnecting would lose events invisibly.
-    /// <para>
-    /// That reasoning is sound and is overruled knowingly. Credentials are now managed through the API this
-    /// host serves, and a service that kills itself when a credential fails cannot be repaired through the UI
-    /// that manages credentials. The cost is real and unchanged: every event between the drop and the
-    /// reconnect is lost, with no record of how many. The remedy is replay-ID checkpointing. Until it exists,
-    /// this logs loudly enough that the gap is at least visible.
-    /// </para>
+    /// This once called <c>StopApplication()</c>, because without Checkpoints a dropped stream could not be
+    /// resumed without losing events. Checkpoints removed that cost: the reconnect resumes after the last
+    /// fully applied batch, so nothing is lost as long as it happens within the 72 hours Salesforce keeps
+    /// events for. Credentials are managed through the API this host serves, so the host stays up to be
+    /// repaired rather than shutting down.
     /// </remarks>
     private async Task ReportDropAndPause(RpcException exc, CancellationToken stoppingToken) {
-        _logger.LogCritical(exc,
-            "The Salesforce event stream dropped ({Status}): {Message}. Reconnecting in {Delay}s — " +
-            "events published during the gap will NOT be replayed, and there is no record of how many. " +
-            "Replay-ID checkpointing is the remedy and is not implemented yet.",
+        _logger.LogError(exc,
+            "The Salesforce event stream dropped ({Status}): {Message}. Reconnecting in {Delay}s and resuming " +
+            "from the Checkpoint, so events published meanwhile will be replayed.",
             exc.StatusCode, exc.Message, RetryDelay.TotalSeconds);
 
         await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
@@ -162,16 +162,17 @@ public class Worker : BackgroundService {
     /// Records the write failure on the Target Connection and ends the stream.
     /// </summary>
     /// <remarks>
-    /// Dropping rather than holding the stream open and logging per event. Holding it open consumes every
-    /// event in the outage window into a database that cannot store them, with no record of how many, while
-    /// hammering that database. Dropping loses the same events — there is still no replay-ID checkpointing —
-    /// but stops the hammering and makes the health check tell the truth. The plan loop then retries.
+    /// Dropping rather than holding the stream open and logging per event. Holding it open would consume every
+    /// event in the outage window into a database that cannot store them, while hammering that database. The
+    /// batch that failed never reaches its Checkpoint, so once the plan loop finds the database back it resumes
+    /// from the start of that batch and nothing is lost — unless the outage outlasts the 72 hours Salesforce
+    /// keeps events for, which the expired-Checkpoint fallback reports.
     /// </remarks>
     private async Task ReportTargetFailureAndDrop(TargetDatabaseWriteException exc, CancellationToken stoppingToken) {
         _logger.LogCritical(exc,
-            "The Target Database refused a write, so the stream has been dropped: {Message}. Events published until it " +
-            "recovers will NOT be replayed, and there is no record of how many. Retrying in {Delay}s.",
-            exc.Message, RetryDelay.TotalSeconds);
+            "The Target Database refused a write, so the stream has been dropped: {Message}. Once it recovers the " +
+            "worker resumes from the Checkpoint and replays everything since, provided that is within 72 hours.",
+            exc.Message);
 
         try {
             using var scope = _scopeFactory.CreateScope();
