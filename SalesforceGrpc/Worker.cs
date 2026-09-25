@@ -222,15 +222,16 @@ public class Worker : BackgroundService {
                 _logger.LogInformation("Latest Replay Id: {replayId}, RPC Id: {RpcId}",
                     response.LatestReplayId.ToLongBE(), response.RpcId);
 
-                if (response.Events is null || response.Events.Count == 0) {
-                    continue;
+                if (response.Events is { Count: > 0 }) {
+                    var eventTasks = response.Events
+                        .Select(e => ApplyEvent(e, bindings, planToken))
+                        .ToList();
+
+                    await Task.WhenAll(eventTasks).ConfigureAwait(false);
                 }
 
-                var eventTasks = response.Events
-                    .Select(e => ApplyEvent(e, bindings, planToken))
-                    .ToList();
-
-                await Task.WhenAll(eventTasks).ConfigureAwait(false);
+                await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
+                    .ConfigureAwait(false);
             }
         } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
@@ -246,6 +247,26 @@ public class Worker : BackgroundService {
             }
             await watcher.ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Asks Salesforce for enough events to bring the outstanding request back up to one batch.
+    /// </summary>
+    /// <remarks>
+    /// Salesforce delivers only what has been requested, so a subscriber that asks once and never again goes
+    /// silent after its first batch. Requesting only after a batch is applied, and never beyond one batch
+    /// outstanding, is the back-pressure: a slow Target Database slows the stream instead of letting events
+    /// pile up in memory.
+    /// </remarks>
+    private static async Task TopUpRequests(IClientStreamWriter<FetchRequest> requests, string topicName,
+        int pendingNumRequested, CancellationToken cancellationToken) {
+        var shortfall = EventsPerFetch - pendingNumRequested;
+        if (shortfall <= 0) {
+            return;
+        }
+
+        await requests.WriteAsync(new FetchRequest { TopicName = topicName, NumRequested = shortfall },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private Task WatchForConfigurationChange(CancellationTokenSource planScope) {
