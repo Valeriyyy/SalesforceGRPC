@@ -210,33 +210,15 @@ public class Worker : BackgroundService {
         var bindings = new Dictionary<string, CDCSchema>(plan.ActiveBindingsBySchemaId, StringComparer.Ordinal);
 
         try {
-            var fetchRequest = new FetchRequest {
-                TopicName = plan.TopicName,
-                NumRequested = EventsPerFetch
-            };
-
-            _logger.LogInformation("Subscribing to {Topic} with {Count} active binding(s)",
-                plan.TopicName, bindings.Count);
-
-            using var stream = _pubsubClient.Subscribe(null, null, planToken);
-            await stream.RequestStream.WriteAsync(fetchRequest, planToken).ConfigureAwait(false);
-
-            while (await stream.ResponseStream.MoveNext(planToken).ConfigureAwait(false)) {
-                var response = stream.ResponseStream.Current;
-                _logger.LogInformation("Latest Replay Id: {replayId}, RPC Id: {RpcId}",
-                    response.LatestReplayId.ToLongBE(), response.RpcId);
-
-                if (response.Events is { Count: > 0 }) {
-                    await ApplyBatch(response.Events, bindings, planToken).ConfigureAwait(false);
+            var start = plan.StartPosition;
+            while (true) {
+                try {
+                    await StreamFrom(start, plan, bindings, planToken).ConfigureAwait(false);
+                    break;
+                } catch (RpcException exc) when (start.Checkpoint is { } rejected && IsReplayIdRejected(exc)) {
+                    await DiscardRejectedCheckpoint(plan, rejected, exc, planToken).ConfigureAwait(false);
+                    start = StartPosition.Earliest;
                 }
-
-                // A strategy can swallow a cancellation as one record's failure, so a batch that "finished"
-                // after the plan was cancelled may not have been applied. It is replayed rather than trusted.
-                planToken.ThrowIfCancellationRequested();
-                await SaveCheckpoint(plan, response.LatestReplayId, planToken).ConfigureAwait(false);
-
-                await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
-                    .ConfigureAwait(false);
             }
         } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
@@ -251,6 +233,100 @@ public class Worker : BackgroundService {
                 await planScope.CancelAsync().ConfigureAwait(false);
             }
             await watcher.ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Opens one subscription at <paramref name="start"/> and applies what arrives until it ends.
+    /// </summary>
+    /// <remarks>
+    /// Salesforce reads the replay position only from a stream's first FetchRequest, so moving to another
+    /// position always means a new subscription.
+    /// </remarks>
+    private async Task StreamFrom(StartPosition start, SubscriptionPlan plan, Dictionary<string, CDCSchema> bindings,
+        CancellationToken planToken) {
+        var fetchRequest = new FetchRequest {
+            TopicName = plan.TopicName,
+            NumRequested = EventsPerFetch
+        };
+
+        switch (start.From) {
+            case StartFrom.Resume when start.Checkpoint is { } checkpoint:
+                fetchRequest.ReplayPreset = ReplayPreset.Custom;
+                fetchRequest.ReplayId = ByteString.CopyFrom(checkpoint.ReplayId);
+                break;
+            case StartFrom.Earliest:
+                fetchRequest.ReplayPreset = ReplayPreset.Earliest;
+                break;
+            default:
+                fetchRequest.ReplayPreset = ReplayPreset.Latest;
+                break;
+        }
+
+        _logger.LogInformation("Subscribing to {Topic} from {Start} with {Count} active binding(s)",
+            plan.TopicName, start.From, bindings.Count);
+
+        using var stream = _pubsubClient.Subscribe(null, null, planToken);
+        await stream.RequestStream.WriteAsync(fetchRequest, planToken).ConfigureAwait(false);
+
+        while (await stream.ResponseStream.MoveNext(planToken).ConfigureAwait(false)) {
+            var response = stream.ResponseStream.Current;
+            _logger.LogInformation("Latest Replay Id: {replayId}, RPC Id: {RpcId}",
+                response.LatestReplayId.ToLongBE(), response.RpcId);
+
+            if (response.Events is { Count: > 0 }) {
+                await ApplyBatch(response.Events, bindings, planToken).ConfigureAwait(false);
+            }
+
+            // A strategy can swallow a cancellation as one record's failure, so a batch that "finished"
+            // after the plan was cancelled may not have been applied. It is replayed rather than trusted.
+            planToken.ThrowIfCancellationRequested();
+            await SaveCheckpoint(plan, response.LatestReplayId, planToken).ConfigureAwait(false);
+
+            await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// The Salesforce error code for a replay ID it will not resume from: older than the 72-hour retention
+    /// window, or never issued for this topic.
+    /// </summary>
+    private const string ReplayIdCorruptedCode = "sfdc.platform.eventbus.grpc.subscription.fetch.replayid.corrupted";
+
+    /// <summary>Whether Salesforce ended the subscription because it rejected the replay ID it was given.</summary>
+    /// <remarks>
+    /// The code arrives in the <c>error-code</c> trailer. The status detail is checked as well, so a proxy that
+    /// drops trailers does not turn an expired Checkpoint into an endless drop-and-retry loop.
+    /// </remarks>
+    private static bool IsReplayIdRejected(RpcException exc) =>
+        string.Equals(exc.Trailers.GetValue("error-code"), ReplayIdCorruptedCode, StringComparison.Ordinal)
+        || exc.Status.Detail?.Contains(ReplayIdCorruptedCode, StringComparison.Ordinal) == true;
+
+    /// <summary>
+    /// Reports and discards a Checkpoint Salesforce will no longer resume from.
+    /// </summary>
+    /// <remarks>
+    /// Every event between the Checkpoint and the oldest event Salesforce still keeps is gone, and nothing
+    /// can bring it back, so this is Critical. The caller resumes from Earliest whatever the Channel's
+    /// Starting Point says, to recover everything still available. Discarding the Checkpoint means the next
+    /// restart does not hit the same rejection; if the delete fails, the first save from the new stream
+    /// replaces it anyway.
+    /// </remarks>
+    private async Task DiscardRejectedCheckpoint(SubscriptionPlan plan, Checkpoint rejected, RpcException exc,
+        CancellationToken cancellationToken) {
+        var age = DateTime.UtcNow - DateTime.SpecifyKind(rejected.SavedAt, DateTimeKind.Utc);
+        _logger.LogCritical(exc,
+            "Salesforce rejected the Checkpoint for {Channel}, saved {AgeHours:F1} hours ago; it keeps change events for " +
+            "{RetentionHours} hours. Changes made between that Checkpoint and the oldest event Salesforce still keeps " +
+            "have been lost. Resubscribing from Earliest to recover everything still available.",
+            plan.ChannelFullName, age.TotalHours, Checkpoint.Retention.TotalHours);
+
+        try {
+            await _checkpoints.DeleteAsync(rejected.ChannelId, cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogError(ex, "Could not discard the rejected Checkpoint for {Channel}; the next save replaces it",
+                plan.ChannelFullName);
         }
     }
 
@@ -299,15 +375,16 @@ public class Worker : BackgroundService {
             cancellationToken).ConfigureAwait(false);
     }
 
-    private Task WatchForConfigurationChange(CancellationTokenSource planScope) {
-        return Task.Run(async () => {
-            try {
-                await _changeSignal.WaitForChangeAsync(planScope.Token).ConfigureAwait(false);
-                await planScope.CancelAsync().ConfigureAwait(false);
-            } catch (OperationCanceledException) {
-                // The stream ended first; nothing to do.
-            }
-        }, CancellationToken.None);
+    private async Task WatchForConfigurationChange(CancellationTokenSource planScope) {
+        // Subscribed to synchronously, before the caller opens the stream: waiting from inside a queued task
+        // would miss a change signalled before that task first ran.
+        var changed = _changeSignal.WaitForChangeAsync(planScope.Token);
+        try {
+            await changed.ConfigureAwait(false);
+            await planScope.CancelAsync().ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+            // The stream ended first; nothing to do.
+        }
     }
 
     /// <summary>One event, decoded and routed, ready for its strategy.</summary>

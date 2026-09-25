@@ -35,6 +35,7 @@ public class BindingServiceTests {
     private readonly IEntitySchemaProvider _entitySchemas = Substitute.For<IEntitySchemaProvider>();
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
     private readonly IOrgConnectionProvider _connections = Substitute.For<IOrgConnectionProvider>();
+    private readonly ICheckpointRepository _checkpoints = Substitute.For<ICheckpointRepository>();
 
     private const int MemberId = 5;
     private const int ChannelId = 1;
@@ -59,7 +60,8 @@ public class BindingServiceTests {
     }
 
     private BindingService NewService() =>
-        new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, _checkpoints,
+            NullLogger<BindingService>.Instance);
 
     #region Arrangement
 
@@ -891,6 +893,42 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task GetSubscriptionPlan_CarriesThePrimaryChannelsId_SoTheWorkerKnowsWhereToSaveCheckpoints() {
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(ChannelId, plan.ChannelId);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_ResumesAfterTheChannelsCheckpoint_WhenItHasOne() {
+        var checkpoint = new Checkpoint { ChannelId = ChannelId, ReplayId = [1, 2, 3], SavedAt = DateTime.UtcNow };
+        ArrangePrimaryChannel(Binding(BindingState.Active), StartingPoint.Earliest);
+        _checkpoints.GetAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(checkpoint);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        // The Starting Point plays no part once a Checkpoint exists.
+        Assert.Equal(StartFrom.Resume, plan.StartPosition.From);
+        Assert.Same(checkpoint, plan.StartPosition.Checkpoint);
+    }
+
+    [Theory]
+    [InlineData(StartingPoint.Latest, StartFrom.Latest)]
+    [InlineData(StartingPoint.Earliest, StartFrom.Earliest)]
+    public async Task GetSubscriptionPlan_WithoutACheckpoint_StartsAtTheChannelsStartingPoint(
+        StartingPoint startingPoint, StartFrom expected) {
+        ArrangePrimaryChannel(Binding(BindingState.Active), startingPoint);
+        _checkpoints.GetAsync(ChannelId, Arg.Any<CancellationToken>()).Returns((Checkpoint?)null);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(expected, plan.StartPosition.From);
+        Assert.Null(plan.StartPosition.Checkpoint);
+    }
+
+    [Fact]
     public async Task SetPrimaryChannel_OnAPlatformEventChannel_IsRejected() {
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel("event"));
 
@@ -915,8 +953,9 @@ public class BindingServiceTests {
         _signal.Received().Signal();
     }
 
-    private void ArrangePrimaryChannel(CDCSchema binding) {
+    private void ArrangePrimaryChannel(CDCSchema binding, StartingPoint startingPoint = StartingPoint.Latest) {
         var channel = Channel(isPrimary: true);
+        channel.StartingPoint = startingPoint;
         channel.Members = [Member(binding.Id)];
         _channels.GetPrimaryChannelAsync(Arg.Any<CancellationToken>()).Returns(channel);
         _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([binding]);

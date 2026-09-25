@@ -234,4 +234,81 @@ public class WorkerStreamingTests {
     }
 
     #endregion
+
+    #region Where a subscription starts
+
+    private static Database.Models.Checkpoint StoredCheckpoint(TimeSpan age) => new() {
+        ChannelId = ChannelId, ReplayId = ReplayId(5).ToByteArray(), SavedAt = DateTime.UtcNow - age
+    };
+
+    [Fact]
+    public async Task ResumesRightAfterTheStoredCheckpoint() {
+        var harness = new WorkerHarness();
+        harness.Plan = harness.Plan with {
+            StartPosition = Application.Bindings.StartPosition.ResumeAfter(StoredCheckpoint(TimeSpan.FromHours(1)))
+        };
+        var subscription = harness.PubSub.Script(Keepalive(6));
+
+        await harness.RunUntil(subscription);
+
+        var first = subscription.Requests[0];
+        Assert.Equal(GrpcClient.ReplayPreset.Custom, first.ReplayPreset);
+        Assert.Equal(ReplayId(5), first.ReplayId);
+    }
+
+    [Theory]
+    [InlineData(Application.Bindings.StartFrom.Earliest, GrpcClient.ReplayPreset.Earliest)]
+    [InlineData(Application.Bindings.StartFrom.Latest, GrpcClient.ReplayPreset.Latest)]
+    public async Task StartsAtTheEndOfTheStreamThePlanNames_WhenThereIsNoCheckpoint(
+        Application.Bindings.StartFrom from, GrpcClient.ReplayPreset expected) {
+        var harness = new WorkerHarness();
+        harness.Plan = harness.Plan with { StartPosition = new Application.Bindings.StartPosition(from) };
+        var subscription = harness.PubSub.Script(Keepalive(1));
+
+        await harness.RunUntil(subscription);
+
+        Assert.Equal(expected, subscription.Requests[0].ReplayPreset);
+        Assert.True(subscription.Requests[0].ReplayId.IsEmpty);
+    }
+
+    [Fact]
+    public async Task WhenSalesforceRejectsTheCheckpoint_DiscardsItAndStartsAgainFromEarliestStraightAway() {
+        var harness = new WorkerHarness();
+        harness.Plan = harness.Plan with {
+            StartPosition = Application.Bindings.StartPosition.ResumeAfter(StoredCheckpoint(TimeSpan.FromHours(80)))
+        };
+        harness.PubSub.ScriptFailure(ReplayIdCorrupted());
+        var recovered = harness.PubSub.Script(Response(9, Create("001A", "1")));
+
+        // Well inside the usual retry delay, so a pause before resubscribing would time this out.
+        await harness.RunUntil(recovered);
+
+        Assert.Equal(GrpcClient.ReplayPreset.Earliest, recovered.Requests[0].ReplayPreset);
+        await harness.Checkpoints.Received(1).DeleteAsync(ChannelId, Arg.Any<CancellationToken>());
+        await harness.Checkpoints.Received(1).SaveAsync(ChannelId, IsReplayId(9), Arg.Any<CancellationToken>());
+        Assert.Contains(harness.Log.Entries, e => e.Level == LogLevel.Critical
+            && e.Message.Contains("Sales__chn") && e.Message.Contains("80"));
+    }
+
+    [Fact]
+    public async Task FallsBackToEarliest_EvenWhenTheChannelsStartingPointIsLatest() {
+        var harness = new WorkerHarness();
+        harness.Plan = harness.Plan with {
+            StartPosition = Application.Bindings.StartPosition.ResumeAfter(StoredCheckpoint(TimeSpan.FromHours(80)))
+        };
+        harness.PubSub.ScriptFailure(ReplayIdCorrupted());
+        harness.PubSub.Script();
+
+        await harness.RunUntil(() => harness.PubSub.WaitForSubscriptionsAsync(2));
+
+        // Re-planning would have read the Starting Point; the fallback must not go back to the plan for it.
+        await harness.Bindings.Received(1).GetSubscriptionPlanAsync(Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>What Salesforce sends back for a replay ID it no longer keeps, or never issued.</summary>
+    private static Grpc.Core.RpcException ReplayIdCorrupted() => new(
+        new Grpc.Core.Status(Grpc.Core.StatusCode.InvalidArgument, "The Replay ID validation failed."),
+        new Grpc.Core.Metadata { { "error-code", "sfdc.platform.eventbus.grpc.subscription.fetch.replayid.corrupted" } });
+
+    #endregion
 }

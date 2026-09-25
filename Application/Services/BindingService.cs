@@ -37,6 +37,7 @@ public class BindingService : IBindingService {
     private readonly IEntitySchemaProvider _entitySchemas;
     private readonly IConfigurationChangeSignal _changeSignal;
     private readonly IOrgConnectionProvider _connections;
+    private readonly ICheckpointRepository _checkpoints;
     private readonly ILogger<BindingService> _logger;
 
     public BindingService(
@@ -48,6 +49,7 @@ public class BindingService : IBindingService {
         IEntitySchemaProvider entitySchemas,
         IConfigurationChangeSignal changeSignal,
         IOrgConnectionProvider connections,
+        ICheckpointRepository checkpoints,
         ILogger<BindingService> logger) {
         _meta = meta;
         _avroSchemas = avroSchemas;
@@ -57,6 +59,7 @@ public class BindingService : IBindingService {
         _entitySchemas = entitySchemas;
         _changeSignal = changeSignal;
         _connections = connections;
+        _checkpoints = checkpoints;
         _logger = logger;
     }
 
@@ -474,11 +477,18 @@ public class BindingService : IBindingService {
             active[schemaId] = binding;
         }
 
+        var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+        var start = checkpoint is not null
+            ? StartPosition.ResumeAfter(checkpoint)
+            : channel.StartingPoint is StartingPoint.Earliest ? StartPosition.Earliest : StartPosition.Latest;
+
         return new SubscriptionPlan {
             HasConnection = hasConnection,
             TargetConnectionState = targetState,
             TopicName = $"/data/{channel.FullName}",
             ChannelFullName = channel.FullName,
+            ChannelId = channel.Id,
+            StartPosition = start,
             ActiveBindingsBySchemaId = active,
             ChannelEntityNames = entityNames
         };
