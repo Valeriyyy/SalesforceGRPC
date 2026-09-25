@@ -223,11 +223,7 @@ public class Worker : BackgroundService {
                     response.LatestReplayId.ToLongBE(), response.RpcId);
 
                 if (response.Events is { Count: > 0 }) {
-                    var eventTasks = response.Events
-                        .Select(e => ApplyEvent(e, bindings, planToken))
-                        .ToList();
-
-                    await Task.WhenAll(eventTasks).ConfigureAwait(false);
+                    await ApplyBatch(response.Events, bindings, planToken).ConfigureAwait(false);
                 }
 
                 await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
@@ -280,10 +276,77 @@ public class Worker : BackgroundService {
         }, CancellationToken.None);
     }
 
+    /// <summary>One event, decoded and routed, ready for its strategy.</summary>
+    private sealed record DecodedEvent(ConsumerEvent Source, CDCSchema Binding, GenericRecord Record, Schema Schema,
+        ChangeType ChangeType, IReadOnlyList<string> RecordIds);
+
     /// <summary>
-    /// Applies one event, isolating its failure so one bad record cannot stop the batch or the stream.
+    /// Applies one response's events: every event touching a record after every earlier event touching it,
+    /// and events for unrelated records in parallel.
     /// </summary>
-    private async Task ApplyEvent(ConsumerEvent consumerEvent,
+    /// <remarks>
+    /// Decoding runs first, for the whole batch, because only a decoded event says which records it touches.
+    /// Events are then split into ordering groups — two events share a group when they share any record ID,
+    /// transitively, since one bulk change can touch records that other events touch separately. Each group
+    /// runs in delivery order and the groups run in parallel. Without this, a CREATE and the UPDATE after it
+    /// race, and an UPDATE that wins matches no row and is lost; replaying from a Checkpoint delivers exactly
+    /// these dense bursts.
+    /// </remarks>
+    private async Task ApplyBatch(IReadOnlyList<ConsumerEvent> events, Dictionary<string, CDCSchema> bindings,
+        CancellationToken cancellationToken) {
+        var decoded = await Task.WhenAll(events.Select(e => DecodeEvent(e, bindings, cancellationToken)))
+            .ConfigureAwait(false);
+
+        var groups = OrderingGroups(decoded.OfType<DecodedEvent>().ToList());
+
+        await Task.WhenAll(groups.Select(async group => {
+            foreach (var decodedEvent in group) {
+                await ApplyEvent(decodedEvent, cancellationToken).ConfigureAwait(false);
+            }
+        })).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Splits events into groups that share record IDs, each group in delivery order.
+    /// </summary>
+    private static List<List<DecodedEvent>> OrderingGroups(IReadOnlyList<DecodedEvent> events) {
+        // Union-find over event positions: every event is joined to the first earlier event that touched each of
+        // its records, so a chain of shared records ends up under one root.
+        var parent = Enumerable.Range(0, events.Count).ToArray();
+        int Root(int i) {
+            while (parent[i] != i) {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            return i;
+        }
+
+        var firstEventForRecord = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < events.Count; i++) {
+            foreach (var recordId in events[i].RecordIds) {
+                if (firstEventForRecord.TryGetValue(recordId, out var earlier)) {
+                    parent[Root(i)] = Root(earlier);
+                } else {
+                    firstEventForRecord[recordId] = i;
+                }
+            }
+        }
+
+        // Positions are visited in order, so each group keeps delivery order.
+        return Enumerable.Range(0, events.Count)
+            .GroupBy(Root)
+            .Select(g => g.Select(i => events[i]).ToList())
+            .ToList();
+    }
+
+    /// <summary>
+    /// Finds an event's Binding and decodes it, or returns null when the event is to be skipped.
+    /// </summary>
+    /// <remarks>
+    /// A failure here is this event's problem — a payload that will not decode, a header that cannot be read —
+    /// so it is logged and the event skipped, and one bad record cannot stop the batch or the stream.
+    /// </remarks>
+    private async Task<DecodedEvent?> DecodeEvent(ConsumerEvent consumerEvent,
         Dictionary<string, CDCSchema> bindings, CancellationToken cancellationToken) {
         try {
             _logger.LogInformation("Event Replay Id: {replayId}, Schema Id: {schemaId}",
@@ -293,13 +356,13 @@ public class Worker : BackgroundService {
                 .ConfigureAwait(false);
 
             if (binding is null) {
-                return;
+                return null;
             }
 
             if (binding.AvroSchema?.SchemaJson is not { } schemaJson) {
                 _logger.LogError("Binding {BindingId} has no Avro Schema to decode {Entity} with",
                     binding.Id, binding.EntityName);
-                return;
+                return null;
             }
 
             var schema = Schema.Parse(schemaJson);
@@ -312,25 +375,45 @@ public class Worker : BackgroundService {
             if (!record.GetTypedValue<GenericRecord>("ChangeEventHeader", out var changeEventHeader) ||
                 !changeEventHeader.GetTypedValue<GenericEnum>("changeType", out var changeType)) {
                 _logger.LogWarning("Event for {Entity} carries no readable ChangeEventHeader", binding.EntityName);
-                return;
+                return null;
             }
 
             if (!Enum.TryParse(changeType.Value, out ChangeType changeTypeEnum)) {
                 _logger.LogWarning("Unrecognised change type '{ChangeType}' for {Entity}", changeType.Value, binding.EntityName);
-                return;
+                return null;
             }
 
-            _logger.LogInformation("Processing {ChangeType} for {Entity}", changeTypeEnum, binding.EntityName);
+            var recordIds = changeEventHeader.TryGetValue("recordIds", out var ids) && ids is object[] idArray
+                ? idArray.Select(id => id?.ToString() ?? string.Empty).ToList()
+                : [];
 
-            var strategy = _eventResolver.Resolve(changeTypeEnum);
-            await strategy.ProcessEvent(record, schema, binding, cancellationToken).ConfigureAwait(false);
+            return new DecodedEvent(consumerEvent, binding, record, schema, changeTypeEnum, recordIds);
+        } catch (OperationCanceledException) {
+            throw;
+        } catch (Exception ex) {
+            _logger.LogError(ex, "Failed to decode event with Schema Id {SchemaId}; skipping it and continuing with the rest of the batch",
+                consumerEvent.Event.SchemaId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Applies one decoded event, isolating its failure so one bad record cannot stop the batch or the stream.
+    /// </summary>
+    private async Task ApplyEvent(DecodedEvent decodedEvent, CancellationToken cancellationToken) {
+        try {
+            _logger.LogInformation("Processing {ChangeType} for {Entity}", decodedEvent.ChangeType, decodedEvent.Binding.EntityName);
+
+            var strategy = _eventResolver.Resolve(decodedEvent.ChangeType);
+            await strategy.ProcessEvent(decodedEvent.Record, decodedEvent.Schema, decodedEvent.Binding, cancellationToken)
+                .ConfigureAwait(false);
         } catch (OperationCanceledException) {
             throw;
         } catch (TargetDatabaseWriteException) {
             throw;
         } catch (Exception ex) {
-            _logger.LogError(ex, "Failed to apply event with Schema Id {SchemaId}; continuing with the rest of the batch",
-                consumerEvent.Event.SchemaId);
+            _logger.LogError(ex, "Failed to apply {ChangeType} with Schema Id {SchemaId}; continuing with the rest of the batch",
+                decodedEvent.ChangeType, decodedEvent.Source.Event.SchemaId);
         }
     }
 
