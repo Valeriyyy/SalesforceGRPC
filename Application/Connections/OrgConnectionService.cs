@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Mappers;
 using Application.Targets;
 using Database.Models;
 using Database.Repositories.Interfaces;
@@ -80,7 +81,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
 
     public async Task<OrgConnectionDTO> GetAsync(CancellationToken cancellationToken = default) {
         var connection = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
-        return ToDto(connection);
+        return connection.ToDto(_config.CallbackUrl ?? "", DescribeSecretProtection(connection));
     }
 
     public async Task<OrgConnectionDTO> SaveAsync(SaveOrgConnectionDTO request, CancellationToken cancellationToken = default) {
@@ -235,7 +236,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
 
     public async Task<DisconnectPreviewDTO> PreviewDisconnectAsync(CancellationToken cancellationToken = default) {
         var counts = await _repository.CountOrgScopedStateAsync(cancellationToken).ConfigureAwait(false);
-        return ToPreview(counts);
+        return counts.ToPreviewDto();
     }
 
     public async Task<DisconnectPreviewDTO> DisconnectAsync(ConfirmDisconnectDTO confirmation,
@@ -270,7 +271,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         _tokenProvider.ClearCache();
         _changeSignal.Signal();
 
-        return ToPreview(destroyed);
+        return destroyed.ToPreviewDto();
     }
 
     public async Task<string> GetCertificatePemAsync(CancellationToken cancellationToken = default) {
@@ -302,65 +303,6 @@ public sealed class OrgConnectionService : IOrgConnectionService {
         }
 
         return _config.CallbackUrl!;
-    }
-
-    private static DisconnectPreviewDTO ToPreview(OrgScopedStateCounts counts) => new() {
-        Bindings = counts.Bindings,
-        FieldMappings = counts.FieldMappings,
-        AvroSchemas = counts.AvroSchemas,
-        Channels = counts.Channels,
-        ChannelMembers = counts.ChannelMembers,
-        TargetConnection = counts.TargetConnection,
-        LeftInSalesforce = [
-            "The External Client App you created, along with its Consumer Key and Secret",
-            "The permission set granting access to it, and its assignment to the Run-as User",
-            "The Signing Certificate registered on the app"
-        ]
-    };
-
-    private OrgConnectionDTO ToDto(OrgConnection? connection) {
-        var secretProtection = DescribeSecretProtection(connection);
-
-        if (connection is null) {
-            return new OrgConnectionDTO {
-                Exists = false,
-                CallbackUrl = _config.CallbackUrl ?? "",
-                SecretProtection = secretProtection
-            };
-        }
-
-        return new OrgConnectionDTO {
-            Exists = true,
-            ConnectionState = connection.ConnectionState.ToString(),
-            ConsumerKey = connection.ConsumerKey,
-            AdministeringUsername = connection.AdministeringUsername,
-            RunAsUsername = connection.RunAsUsername,
-            IsSandbox = connection.IsSandbox,
-            OrgUrl = connection.OrgUrl,
-            OrgId = connection.OrgId,
-            LastConnectedAt = connection.LastConnectedAt,
-            LastError = BuildLastError(connection),
-            CertificateFingerprint = connection.CertificateFingerprint,
-            CertificateExpiresAt = connection.CertificateExpiresAt,
-            CallbackUrl = _config.CallbackUrl ?? "",
-            HasBootstrapSession = connection.BootstrapConsumerSecret is not null,
-            SecretProtection = secretProtection
-        };
-    }
-
-    private static OAuthFailureDTO? BuildLastError(OrgConnection connection) {
-        if (string.IsNullOrWhiteSpace(connection.LastError)) {
-            return null;
-        }
-
-        // Both halves reach the user: the translated summary, and Salesforce's own words underneath it. The
-        // raw text is stored separately precisely so this does not have to reconstruct it from a summary.
-        return new OAuthFailureDTO {
-            Error = connection.ConnectionState.ToString(),
-            ErrorDescription = connection.LastError,
-            RawResponse = connection.LastErrorRaw ?? "",
-            OccurredAt = connection.LastErrorAt
-        };
     }
 
     private SecretProtectionDTO DescribeSecretProtection(OrgConnection? connection) {

@@ -1,5 +1,6 @@
 using Application.Bindings;
 using Application.Connections;
+using Application.Mappers;
 using Application.Services.Interfaces;
 using Application.Targets;
 using Avro;
@@ -16,12 +17,6 @@ namespace Application.Services;
 
 /// <inheritdoc />
 public class BindingService : IBindingService {
-
-    /// <summary>
-    /// The sentinel Salesforce field name the Key Mapping is stored under. Every strategy reads it to build
-    /// its WHERE clause, so it is a contract with the worker, not an implementation detail of this service.
-    /// </summary>
-    private const string KeyMappingFieldName = "MappedSFKey";
 
     /// <summary>Change Data Capture channels. Platform event channels cannot carry a Binding.</summary>
     private const string DataChannelType = "data";
@@ -75,7 +70,7 @@ public class BindingService : IBindingService {
 
         // Without a Binding there is no Target Table to map against, so the fields stand alone.
         if (member.CdcSchemaId is not { } bindingId) {
-            return fields.Select(f => ToDto(f, null, null)).ToList();
+            return fields.Select(f => f.ToDto(null, SuggestKeyColumn(f, null))).ToList();
         }
 
         var binding = await _meta.GetSchemaById(bindingId).ConfigureAwait(false);
@@ -85,7 +80,7 @@ public class BindingService : IBindingService {
             : (await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false))?.Columns ?? [];
 
         var mappedByField = mappings
-            .Where(m => m.SalesforceFieldName != KeyMappingFieldName)
+            .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
             .ToDictionary(m => m.SalesforceFieldName, m => m.TargetFieldName, StringComparer.OrdinalIgnoreCase);
 
         var takenColumns = mappings
@@ -105,7 +100,7 @@ public class BindingService : IBindingService {
                 && !takenColumns.Contains(candidate)) {
                 suggestion = candidate;
             }
-            return ToDto(f, mapped, suggestion);
+            return f.ToDto(mapped, suggestion ?? SuggestKeyColumn(f, mapped));
         }).ToList();
     }
 
@@ -124,12 +119,7 @@ public class BindingService : IBindingService {
             // agrees with what CreateBindingAsync stored for it — an inline "{schema}.{table}" here would
             // always insert a dot, even for an engine with no schema, and never match.
             var fullName = BuildFullName(t.SchemaName, t.TableName);
-            return new TargetTableDTO {
-                SchemaName = t.SchemaName,
-                TableName = t.TableName,
-                FullName = fullName,
-                BoundEntityName = boundTables.GetValueOrDefault(fullName)
-            };
+            return t.ToDto(fullName, boundTables.GetValueOrDefault(fullName));
         }).ToList();
     }
 
@@ -147,14 +137,7 @@ public class BindingService : IBindingService {
             .GroupBy(m => m.TargetFieldName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().SalesforceFieldName, StringComparer.OrdinalIgnoreCase);
 
-        return table.Columns.Select(c => new TargetColumnDTO {
-            ColumnName = c.ColumnName,
-            DataType = c.DataType,
-            IsNullable = c.IsNullable,
-            MaxLength = c.MaxLength,
-            IsUnique = c.IsUnique,
-            MappedSalesforceFieldName = mappedByColumn.GetValueOrDefault(c.ColumnName)
-        }).ToList();
+        return table.Columns.Select(c => c.ToDto(mappedByColumn.GetValueOrDefault(c.ColumnName))).ToList();
     }
 
     #endregion
@@ -166,14 +149,14 @@ public class BindingService : IBindingService {
 
         var result = new List<BindingDTO>(bindings.Count);
         foreach (var binding in bindings) {
-            result.Add(await ToDto(binding, cancellationToken).ConfigureAwait(false));
+            result.Add(await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false));
         }
         return result;
     }
 
     public async Task<BindingDTO> GetBindingAsync(int bindingId, CancellationToken cancellationToken = default) {
         var binding = await RequireBinding(bindingId).ConfigureAwait(false);
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingDTO> CreateBindingAsync(int memberId, CreateBindingDTO dto,
@@ -226,7 +209,7 @@ public class BindingService : IBindingService {
 
         _logger.LogInformation("Created Binding {BindingId}: {Entity} -> {Table}", created.Id, created.EntityName, targetTable);
 
-        return await ToDto(created, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(created, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingDTO> SetFieldMappingsAsync(int bindingId, SetFieldMappingsDTO dto,
@@ -238,7 +221,7 @@ public class BindingService : IBindingService {
         var entityFields = await ReadEntityFieldNames(binding.EntityName, cancellationToken).ConfigureAwait(false);
 
         var existing = await ReadMappings(bindingId).ConfigureAwait(false);
-        var keyMapping = existing.FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName);
+        var keyMapping = existing.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
 
         var columns = table.Columns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
         var seenColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -307,14 +290,14 @@ public class BindingService : IBindingService {
         }
 
         var replacement = (await ReadMappings(bindingId).ConfigureAwait(false))
-            .Where(m => m.SalesforceFieldName != KeyMappingFieldName)
+            .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
             // A field mapped to this column would fight the WHERE clause, so it gives way.
             .Where(m => !string.Equals(m.TargetFieldName, column.ColumnName, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         replacement.Add(new MappedField {
             SchemaId = bindingId,
-            SalesforceFieldName = KeyMappingFieldName,
+            SalesforceFieldName = KeyMapping.FieldName,
             TargetFieldName = column.ColumnName
         });
 
@@ -360,7 +343,7 @@ public class BindingService : IBindingService {
         binding.SoftDeleteColumnName = columnName;
         _changeSignal.Signal();
 
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingValidationDTO> ValidateBindingAsync(int bindingId,
@@ -386,7 +369,7 @@ public class BindingService : IBindingService {
         _logger.LogInformation("Activated Binding {BindingId}: {Entity} -> {Table}",
             bindingId, binding.EntityName, binding.DbSchemaFullName);
 
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingDTO> DeactivateAsync(int bindingId, CancellationToken cancellationToken = default) {
@@ -403,7 +386,7 @@ public class BindingService : IBindingService {
         binding.BindingState = BindingState.Inactive;
         _changeSignal.Signal();
 
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteBindingAsync(int bindingId, CancellationToken cancellationToken = default) {
@@ -469,13 +452,8 @@ public class BindingService : IBindingService {
         var channel = await RequireChannel(channelId, cancellationToken).ConfigureAwait(false);
         var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
 
-        return new ChannelStartDTO {
-            ChannelId = channel.Id,
-            StartingPoint = channel.StartingPoint.ToString(),
-            HasCheckpoint = checkpoint is not null,
-            CheckpointSavedAt = checkpoint?.SavedAt,
-            CanResume = checkpoint is not null && !checkpoint.IsExpired(_time.GetUtcNow())
-        };
+        return channel.ToStartDto(checkpoint,
+            canResume: checkpoint is not null && !checkpoint.IsExpired(_time.GetUtcNow()));
     }
 
     public async Task<ChannelStartDTO> SetStartingPointAsync(int channelId, SetStartingPointDTO dto,
@@ -581,7 +559,7 @@ public class BindingService : IBindingService {
         ColumnMetadata? keyColumn;
         try {
             var keyMapping = (await ReadMappings(binding.Id).ConfigureAwait(false))
-                .FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName);
+                .FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
             if (keyMapping is null) {
                 return false;
             }
@@ -637,17 +615,17 @@ public class BindingService : IBindingService {
         var entityFields = ReadFields(avro).ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
         var columns = table.Columns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
 
-        var keyMapping = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName);
+        var keyMapping = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
         if (keyMapping is null) {
             result.Blockers.Add(
                 "No Key Mapping. Choose the column holding the Salesforce record ID — updates and deletes build their WHERE clause from it.");
         } else if (!columns.TryGetValue(keyMapping.TargetFieldName, out var keyColumn)) {
             result.Blockers.Add($"Key Mapping column '{keyMapping.TargetFieldName}' no longer exists on '{binding.DbSchemaFullName}'.");
         } else {
-            result.Results.Add(ToDto(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, engine)));
+            result.Results.Add(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, engine).ToDto());
         }
 
-        var fieldMappings = mappings.Where(m => m.SalesforceFieldName != KeyMappingFieldName).ToList();
+        var fieldMappings = mappings.Where(m => m.SalesforceFieldName != KeyMapping.FieldName).ToList();
         if (fieldMappings.Count == 0) {
             result.Blockers.Add("No Field Mapping. A Binding with nothing mapped would write only record IDs.");
         }
@@ -665,8 +643,7 @@ public class BindingService : IBindingService {
                 continue;
             }
 
-            result.Results.Add(ToDto(TypeCompatibilityChecker.Check(
-                field.Name, field.FieldType, column, engine)));
+            result.Results.Add(TypeCompatibilityChecker.Check(field.Name, field.FieldType, column, engine).ToDto());
         }
 
         AddUnmappedNotNullWarnings(result, table, mappings, binding);
@@ -678,7 +655,7 @@ public class BindingService : IBindingService {
                 result.Blockers.Add(
                     $"Soft delete column '{binding.SoftDeleteColumnName}' no longer exists on '{binding.DbSchemaFullName}'.");
             } else {
-                result.Results.Add(ToDto(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, engine)));
+                result.Results.Add(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, engine).ToDto());
             }
         }
 
@@ -734,7 +711,7 @@ public class BindingService : IBindingService {
             }
         }
 
-        return await ToDto(binding, mappings, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, mappings, cancellationToken).ConfigureAwait(false);
     }
 
     private static string DescribeFailure(CDCSchema binding, BindingValidationDTO validation) {
@@ -857,17 +834,7 @@ public class BindingService : IBindingService {
 
     #endregion
 
-    #region Mapping to DTOs
-
-    private static BindableFieldDTO ToDto(EntityField field, string? mappedColumn, string? suggestion) => new() {
-        Name = field.Name,
-        FieldType = field.FieldType.ToString(),
-        AvroType = field.AvroType,
-        IsNullable = field.IsNullable,
-        ParentName = field.ParentName,
-        MappedColumnName = mappedColumn,
-        SuggestedColumnName = suggestion ?? SuggestKeyColumn(field, mappedColumn)
-    };
+    #region Building DTOs
 
     /// <summary>
     /// Offers a conventional Key Mapping column against the Salesforce record ID field, so the one field that
@@ -878,34 +845,16 @@ public class BindingService : IBindingService {
             ? KeyColumnCandidates[0]
             : null;
 
-    private async Task<BindingDTO> ToDto(CDCSchema binding, CancellationToken cancellationToken) =>
-        await ToDto(binding, await ReadMappings(binding.Id).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+    private async Task<BindingDTO> LoadBindingDto(CDCSchema binding, CancellationToken cancellationToken) =>
+        await LoadBindingDto(binding, await ReadMappings(binding.Id).ConfigureAwait(false), cancellationToken)
+            .ConfigureAwait(false);
 
-    private async Task<BindingDTO> ToDto(CDCSchema binding, List<MappedField> mappings, CancellationToken cancellationToken) {
+    /// <summary>Reads the Channel Members pointing at a Binding, which its DTO lists alongside the mappings.</summary>
+    private async Task<BindingDTO> LoadBindingDto(CDCSchema binding, List<MappedField> mappings,
+        CancellationToken cancellationToken) {
         var members = await _channels.GetMembersByBindingIdAsync(binding.Id, cancellationToken).ConfigureAwait(false) ?? [];
-
-        return new BindingDTO {
-            Id = binding.Id,
-            EntityName = binding.EntityName,
-            TargetTable = binding.DbSchemaFullName,
-            State = binding.BindingState.ToString(),
-            KeyMappingColumn = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName)?.TargetFieldName,
-            FieldMappingCount = mappings.Count(m => m.SalesforceFieldName != KeyMappingFieldName),
-            SoftDeleteEnabled = binding.SoftDeleteEnabled,
-            SoftDeleteColumnName = binding.SoftDeleteColumnName,
-            AvroSchemaId = binding.SchemaId,
-            ChannelMemberIds = members.Select(m => m.Id).ToList()
-        };
+        return binding.ToDto(mappings, members.Select(m => m.Id));
     }
-
-    private static CompatibilityResultDTO ToDto(FieldCompatibility compatibility) => new() {
-        SalesforceFieldName = compatibility.SalesforceFieldName,
-        TargetColumnName = compatibility.TargetColumnName,
-        FieldType = compatibility.FieldType.ToString(),
-        TargetDataType = compatibility.TargetDataType,
-        Level = compatibility.Level.ToString(),
-        Message = compatibility.Message
-    };
 
     #endregion
 }

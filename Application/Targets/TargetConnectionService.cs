@@ -1,5 +1,6 @@
 using Application.Bindings;
 using Application.Connections;
+using Application.Mappers;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using Database.Targets;
@@ -99,29 +100,17 @@ public sealed class TargetConnectionService : ITargetConnectionService {
 
     public async Task<TargetConnectionDTO> GetAsync(CancellationToken cancellationToken = default) {
         var connection = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
-        return ToDto(connection);
+        return connection.ToDto(DescribeSecretProtection(connection));
     }
 
     public IReadOnlyList<EngineDefinitionDTO> GetEngines() =>
-        _engines.All.Select(profile => new EngineDefinitionDTO {
-            Engine = profile.Engine.ToString(),
-            IsAvailable = profile.IsAvailable,
-            UnavailableReason = profile.UnavailableReason,
-            Fields = profile.Fields.Select(f => new FieldDefinitionDTO {
-                Name = f.Name,
-                Label = f.Label,
-                Kind = f.Kind.ToString(),
-                Required = f.Required,
-                Default = f.Default,
-                Choices = f.Choices?.ToList()
-            }).ToList()
-        }).ToList();
+        _engines.All.Select(profile => profile.ToDto()).ToList();
 
     public async Task<TargetConnectionDTO> SaveAsync(SaveTargetConnectionDTO request, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(request);
 
         var (profile, details) = Validate(request);
-        var model = ToModel(details);
+        var model = details.ToModel(Protect(details.Password));
 
         var existing = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
         if (existing is not null && existing.Identity != model.Identity) {
@@ -164,7 +153,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
 
     public async Task<RepointPreviewDTO> PreviewRepointAsync(CancellationToken cancellationToken = default) {
         var counts = await _repository.CountBindingsAsync(cancellationToken).ConfigureAwait(false);
-        return new RepointPreviewDTO { Bindings = counts.Bindings, FieldMappings = counts.FieldMappings };
+        return counts.ToPreviewDto();
     }
 
     public async Task<TargetConnectionDTO> RepointAsync(RepointTargetConnectionDTO request, CancellationToken cancellationToken = default) {
@@ -174,7 +163,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
                        ?? throw new NoTargetDatabaseException();
 
         var (profile, details) = Validate(request);
-        var model = ToModel(details);
+        var model = details.ToModel(Protect(details.Password));
 
         if (existing.Identity == model.Identity) {
             throw new ValidationException(
@@ -308,44 +297,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         return (profile, details);
     }
 
-    private TargetConnection ToModel(TargetConnectionDetails details) => new() {
-        Engine = details.Engine,
-        Host = details.Host,
-        Port = details.Port,
-        DatabaseName = details.DatabaseName,
-        Username = details.Username,
-        PasswordEncrypted = details.Password is null ? null : _protector.Protect(details.Password),
-        FilePath = details.FilePath,
-        Options = new Dictionary<string, string>(details.Options, StringComparer.Ordinal)
-    };
-
-    private TargetConnectionDTO ToDto(TargetConnection? connection) {
-        var secretProtection = DescribeSecretProtection(connection);
-
-        if (connection is null) {
-            return new TargetConnectionDTO { Exists = false, SecretProtection = secretProtection };
-        }
-
-        return new TargetConnectionDTO {
-            Exists = true,
-            SecretProtection = secretProtection,
-            ConnectionState = connection.ConnectionState.ToString(),
-            Engine = connection.Engine.ToString(),
-            Host = connection.Host,
-            Port = connection.Port,
-            DatabaseName = connection.DatabaseName,
-            Username = connection.Username,
-            FilePath = connection.FilePath,
-            Options = new Dictionary<string, string>(connection.Options, StringComparer.Ordinal),
-            HasPassword = connection.PasswordEncrypted is not null,
-            LastConnectedAt = connection.LastConnectedAt,
-            LastError = string.IsNullOrWhiteSpace(connection.LastError) ? null : new TargetConnectionFailureDTO {
-                Message = connection.LastError,
-                RawResponse = connection.LastErrorRaw ?? "",
-                OccurredAt = connection.LastErrorAt
-            }
-        };
-    }
+    private string? Protect(string? password) => password is null ? null : _protector.Protect(password);
 
     private SecretProtectionDTO DescribeSecretProtection(TargetConnection? connection) {
         if (_protector.IsAvailable) {
