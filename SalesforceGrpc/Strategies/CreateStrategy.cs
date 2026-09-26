@@ -73,7 +73,7 @@ public class CreateStrategy : IEventStrategy {
         var data = changeSet.ToDataObject();
 
         try {
-            var createdCount = await target.Create(dbSchema.DbSchemaFullName, data, cancellationToken).ConfigureAwait(false);
+            var createdCount = await target.Upsert(dbSchema.DbSchemaFullName, sfMappedKey, data, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
@@ -92,7 +92,7 @@ public class CreateStrategy : IEventStrategy {
         foreach (var (key, value) in pgFieldMappings) {
             var r = recSchema[key];
             if (r != null) {
-                Console.WriteLine("this is the field: " + r.Name + " and it came from the schema: " + recSchema.Name);
+                WriteLine("this is the field: " + r.Name + " and it came from the schema: " + recSchema.Name);
             }
         }
 

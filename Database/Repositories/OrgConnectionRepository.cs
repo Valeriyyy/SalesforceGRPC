@@ -213,6 +213,7 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
         // Deleted in dependency order rather than leaning on ON DELETE CASCADE, so the statements read as the
         // list of what Disconnect destroys and stay honest if a cascade rule is ever relaxed.
         const string sql = @"
+            DELETE FROM salesforce.channel_checkpoints;
             DELETE FROM salesforce.platform_event_channel_members;
             DELETE FROM salesforce.platform_event_channels;
             DELETE FROM salesforce.mapped_fields;
@@ -233,7 +234,7 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
 
         _logger.LogWarning(
             "Disconnected. Destroyed {Bindings} Binding(s), {Mappings} Field Mapping(s), {Schemas} Avro Schema(s), " +
-            "{Channels} mirrored Channel(s) and the Target Connection ({Target}). Nothing was changed inside Salesforce.",
+            "{Channels} mirrored Channel(s) with their Checkpoints and Starting Points, and the Target Connection ({Target}). Nothing was changed inside Salesforce.",
             counts.Bindings, counts.FieldMappings, counts.AvroSchemas, counts.Channels, counts.TargetConnection ?? "none");
 
         return counts;

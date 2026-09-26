@@ -41,6 +41,9 @@ public interface IPlatformEventChannelRepository {
     /// <summary>Makes one channel the Primary Channel, clearing the flag from every other row.</summary>
     Task<bool> SetPrimaryChannelAsync(int channelId, CancellationToken cancellationToken = default);
 
+    /// <summary>Sets where the worker begins a channel that has no Checkpoint.</summary>
+    Task<bool> SetStartingPointAsync(int channelId, StartingPoint startingPoint, CancellationToken cancellationToken = default);
+
     /// <summary>Clears the Primary Channel flag from every channel, leaving the worker with nothing to do.</summary>
     Task ClearPrimaryChannelAsync(CancellationToken cancellationToken = default);
 

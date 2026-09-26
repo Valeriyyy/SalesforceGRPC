@@ -49,4 +49,16 @@ public record SetSoftDeleteDTO {
 /// <summary>Selects the Primary Channel — the single channel the worker subscribes to.</summary>
 public record SetPrimaryChannelDTO {
     public int ChannelId { get; set; }
+
+    /// <summary>
+    /// Where to begin when the channel still has a Checkpoint: Resume (the default), Earliest or Latest.
+    /// Ignored when it has none, and Resume is refused once the Checkpoint is older than 72 hours.
+    /// </summary>
+    public string? Start { get; set; }
+}
+
+/// <summary>Sets where the worker begins a channel that has no Checkpoint.</summary>
+public record SetStartingPointDTO {
+    /// <summary>Latest or Earliest.</summary>
+    public string StartingPoint { get; set; } = "";
 }

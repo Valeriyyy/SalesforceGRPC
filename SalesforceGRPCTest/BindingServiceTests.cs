@@ -8,6 +8,7 @@ using Database.Repositories.Interfaces;
 using Database.Targets;
 using DTO;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using System.ComponentModel.DataAnnotations;
 
@@ -35,6 +36,8 @@ public class BindingServiceTests {
     private readonly IEntitySchemaProvider _entitySchemas = Substitute.For<IEntitySchemaProvider>();
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
     private readonly IOrgConnectionProvider _connections = Substitute.For<IOrgConnectionProvider>();
+    private readonly ICheckpointRepository _checkpoints = Substitute.For<ICheckpointRepository>();
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 9, 24, 12, 0, 0, TimeSpan.Zero));
 
     private const int MemberId = 5;
     private const int ChannelId = 1;
@@ -59,7 +62,8 @@ public class BindingServiceTests {
     }
 
     private BindingService NewService() =>
-        new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, NullLogger<BindingService>.Instance);
+        new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, _checkpoints,
+            _time, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 
@@ -277,7 +281,7 @@ public class BindingServiceTests {
         await NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct);
 
-        await _target.DidNotReceive().Create(Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
+        await _target.DidNotReceive().Upsert(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
         await _target.DidNotReceive().Update(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>(), Arg.Any<Dictionary<string, object>>());
         await _target.DidNotReceive().Delete(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>());
     }
@@ -451,6 +455,17 @@ public class BindingServiceTests {
             new SetKeyMappingDTO { TargetColumnName = "employee_count" }, Ct));
 
         Assert.Contains("employee_count", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SetKeyMapping_ToAColumnWithoutAUniqueConstraint_IsRejectedAndNothingIsSaved() {
+        ArrangeValidBinding();
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().SetKeyMappingAsync(BindingId,
+            new SetKeyMappingDTO { TargetColumnName = "phone" }, Ct));
+
+        Assert.Contains("unique constraint or primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
+        await _meta.DidNotReceive().ReplaceFieldMappings(Arg.Any<int>(), Arg.Any<IEnumerable<MappedField>>());
     }
 
     [Fact]
@@ -839,10 +854,87 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task GetSubscriptionPlan_DemotesAnActiveBindingWhoseKeyMappingColumnIsNotUnique() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        var table = AccountTable();
+        // A DBA dropped the constraint after the Binding was activated.
+        table.Columns.Single(c => c.ColumnName == "sf_id").ColumnConstraints.Clear();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Empty(plan.ActiveBindingsBySchemaId);
+        await _meta.Received(1).SetBindingState(BindingId, BindingState.Incomplete);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_KeepsAnActiveBindingWhoseKeyMappingColumnIsUnique() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Contains("SCHEMA_V1", plan.ActiveBindingsBySchemaId.Keys);
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_KeepsActiveBindings_WhenTheTargetDatabaseCannotBeRead() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>())
+            .Returns<TableMetadata?>(_ => throw new TimeoutException("unreachable"));
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        // Nothing is known to be wrong with the Binding, so it is not demoted; the worker's own failure
+        // handling deals with a database that cannot be reached.
+        Assert.Contains("SCHEMA_V1", plan.ActiveBindingsBySchemaId.Keys);
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_CarriesThePrimaryChannelsId_SoTheWorkerKnowsWhereToSaveCheckpoints() {
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(ChannelId, plan.ChannelId);
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_ResumesAfterTheChannelsCheckpoint_WhenItHasOne() {
+        var checkpoint = new Checkpoint { ChannelId = ChannelId, ReplayId = [1, 2, 3], SavedAt = DateTime.UtcNow };
+        ArrangePrimaryChannel(Binding(BindingState.Active), StartingPoint.Earliest);
+        _checkpoints.GetAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(checkpoint);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        // The Starting Point plays no part once a Checkpoint exists.
+        Assert.Equal(StartFrom.Resume, plan.StartPosition.From);
+        Assert.Same(checkpoint, plan.StartPosition.Checkpoint);
+    }
+
+    [Theory]
+    [InlineData(StartingPoint.Latest, StartFrom.Latest)]
+    [InlineData(StartingPoint.Earliest, StartFrom.Earliest)]
+    public async Task GetSubscriptionPlan_WithoutACheckpoint_StartsAtTheChannelsStartingPoint(
+        StartingPoint startingPoint, StartFrom expected) {
+        ArrangePrimaryChannel(Binding(BindingState.Active), startingPoint);
+        _checkpoints.GetAsync(ChannelId, Arg.Any<CancellationToken>()).Returns((Checkpoint?)null);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(expected, plan.StartPosition.From);
+        Assert.Null(plan.StartPosition.Checkpoint);
+    }
+
+    [Fact]
     public async Task SetPrimaryChannel_OnAPlatformEventChannel_IsRejected() {
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel("event"));
 
-        await Assert.ThrowsAsync<ValidationException>(() => NewService().SetPrimaryChannelAsync(ChannelId, Ct));
+        await Assert.ThrowsAsync<ValidationException>(() => NewService().SetPrimaryChannelAsync(new SetPrimaryChannelDTO { ChannelId = ChannelId }, Ct));
 
         await _channels.DidNotReceive().SetPrimaryChannelAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
@@ -851,20 +943,162 @@ public class BindingServiceTests {
     public async Task SetPrimaryChannel_OnAChannelThatDoesNotExist_IsNotFound() {
         _channels.GetChannelByIdAsync(77, Arg.Any<CancellationToken>()).Returns((PlatformEventChannelEntity?)null);
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => NewService().SetPrimaryChannelAsync(77, Ct));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => NewService().SetPrimaryChannelAsync(new SetPrimaryChannelDTO { ChannelId = 77 }, Ct));
     }
 
     [Fact]
     public async Task SetPrimaryChannel_TellsTheWorkerToRePlan() {
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
 
-        await NewService().SetPrimaryChannelAsync(ChannelId, Ct);
+        await NewService().SetPrimaryChannelAsync(new SetPrimaryChannelDTO { ChannelId = ChannelId }, Ct);
 
         _signal.Received().Signal();
     }
 
-    private void ArrangePrimaryChannel(CDCSchema binding) {
+    [Fact]
+    public async Task GetSubscriptionPlan_WithoutACheckpoint_StartsFromAOneTimeRestartChoice_OverTheStartingPoint() {
+        ArrangePrimaryChannel(Binding(BindingState.Active), StartingPoint.Latest);
+        var channel = await _channels.GetPrimaryChannelAsync(Ct);
+        channel!.RestartFrom = StartingPoint.Earliest;
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Equal(StartFrom.Earliest, plan.StartPosition.From);
+    }
+
+    #region Switching the Primary Channel with a Checkpoint
+
+    private Checkpoint ArrangeCheckpoint(TimeSpan age) {
+        var checkpoint = new Checkpoint {
+            ChannelId = ChannelId, ReplayId = [1, 2, 3], SavedAt = _time.GetUtcNow().UtcDateTime - age
+        };
+        _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
+        _checkpoints.GetAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(checkpoint);
+        return checkpoint;
+    }
+
+    [Fact]
+    public async Task SetPrimaryChannel_WithACheckpoint_ResumesFromItByDefault() {
+        ArrangeCheckpoint(TimeSpan.FromHours(5));
+
+        await NewService().SetPrimaryChannelAsync(new SetPrimaryChannelDTO { ChannelId = ChannelId }, Ct);
+
+        await _channels.Received(1).SetPrimaryChannelAsync(ChannelId, Arg.Any<CancellationToken>());
+        await _checkpoints.DidNotReceiveWithAnyArgs().DiscardAsync(default, default, default);
+    }
+
+    [Fact]
+    public async Task SetPrimaryChannel_Resume_WithACheckpointOlderThan72Hours_IsRefusedAndSaysWhy() {
+        ArrangeCheckpoint(TimeSpan.FromHours(73));
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().SetPrimaryChannelAsync(
+            new SetPrimaryChannelDTO { ChannelId = ChannelId, Start = "Resume" }, Ct));
+
+        Assert.Contains("72 hours", ex.Message, StringComparison.Ordinal);
+        await _channels.DidNotReceive().SetPrimaryChannelAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("Earliest", StartingPoint.Earliest)]
+    [InlineData("latest", StartingPoint.Latest)]
+    public async Task SetPrimaryChannel_EarliestOrLatest_DiscardsTheCheckpointAndStartsThereOnce(
+        string start, StartingPoint expected) {
+        // Expired, so choosing somewhere else is exactly what the user has to do.
+        ArrangeCheckpoint(TimeSpan.FromHours(100));
+
+        await NewService().SetPrimaryChannelAsync(new SetPrimaryChannelDTO { ChannelId = ChannelId, Start = start }, Ct);
+
+        await _checkpoints.Received(1).DiscardAsync(ChannelId, expected, Arg.Any<CancellationToken>());
+        await _channels.Received(1).SetPrimaryChannelAsync(ChannelId, Arg.Any<CancellationToken>());
+        // The one-time choice leaves the Channel's own Starting Point alone.
+        await _channels.DidNotReceiveWithAnyArgs().SetStartingPointAsync(default, default, default);
+    }
+
+    [Fact]
+    public async Task SetPrimaryChannel_WithoutACheckpoint_IgnoresTheChoiceAndUsesTheStartingPoint() {
+        _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
+        _checkpoints.GetAsync(ChannelId, Arg.Any<CancellationToken>()).Returns((Checkpoint?)null);
+
+        await NewService().SetPrimaryChannelAsync(new SetPrimaryChannelDTO { ChannelId = ChannelId, Start = "Earliest" }, Ct);
+
+        await _checkpoints.DidNotReceiveWithAnyArgs().DiscardAsync(default, default, default);
+        await _channels.Received(1).SetPrimaryChannelAsync(ChannelId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetPrimaryChannel_WithAStartThatIsNotAChoice_IsRejected() {
+        ArrangeCheckpoint(TimeSpan.FromHours(1));
+
+        await Assert.ThrowsAsync<ValidationException>(() => NewService().SetPrimaryChannelAsync(
+            new SetPrimaryChannelDTO { ChannelId = ChannelId, Start = "Yesterday" }, Ct));
+
+        await _channels.DidNotReceive().SetPrimaryChannelAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(5, true)]
+    [InlineData(73, false)]
+    public async Task GetChannelStart_ReportsTheCheckpointsAge_AndWhetherItCanStillBeResumedFrom(int ageHours, bool canResume) {
+        var checkpoint = ArrangeCheckpoint(TimeSpan.FromHours(ageHours));
+
+        var start = await NewService().GetChannelStartAsync(ChannelId, Ct);
+
+        Assert.True(start.HasCheckpoint);
+        Assert.Equal(checkpoint.SavedAt, start.CheckpointSavedAt);
+        Assert.Equal(canResume, start.CanResume);
+        Assert.Equal(nameof(StartingPoint.Latest), start.StartingPoint);
+    }
+
+    [Fact]
+    public async Task GetChannelStart_WithoutACheckpoint_SaysSo() {
+        _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
+
+        var start = await NewService().GetChannelStartAsync(ChannelId, Ct);
+
+        Assert.False(start.HasCheckpoint);
+        Assert.False(start.CanResume);
+        Assert.Null(start.CheckpointSavedAt);
+    }
+
+    #endregion
+
+    #region Starting Point
+
+    [Fact]
+    public async Task SetStartingPoint_StoresItOnTheChannel() {
+        _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
+
+        await NewService().SetStartingPointAsync(ChannelId, new SetStartingPointDTO { StartingPoint = "Earliest" }, Ct);
+
+        await _channels.Received(1).SetStartingPointAsync(ChannelId, StartingPoint.Earliest, Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("Resume")]
+    [InlineData("Soon")]
+    [InlineData("")]
+    public async Task SetStartingPoint_ToAnythingButEarliestOrLatest_IsRejected(string startingPoint) {
+        _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
+
+        await Assert.ThrowsAsync<ValidationException>(() => NewService().SetStartingPointAsync(
+            ChannelId, new SetStartingPointDTO { StartingPoint = startingPoint }, Ct));
+
+        await _channels.DidNotReceiveWithAnyArgs().SetStartingPointAsync(default, default, default);
+    }
+
+    [Fact]
+    public async Task SetStartingPoint_OnAChannelThatDoesNotExist_IsNotFound() {
+        _channels.GetChannelByIdAsync(77, Arg.Any<CancellationToken>()).Returns((PlatformEventChannelEntity?)null);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => NewService().SetStartingPointAsync(
+            77, new SetStartingPointDTO { StartingPoint = "Earliest" }, Ct));
+    }
+
+    #endregion
+
+    private void ArrangePrimaryChannel(CDCSchema binding, StartingPoint startingPoint = StartingPoint.Latest) {
         var channel = Channel(isPrimary: true);
+        channel.StartingPoint = startingPoint;
         channel.Members = [Member(binding.Id)];
         _channels.GetPrimaryChannelAsync(Arg.Any<CancellationToken>()).Returns(channel);
         _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([binding]);

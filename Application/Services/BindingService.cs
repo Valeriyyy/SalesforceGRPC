@@ -1,5 +1,6 @@
 using Application.Bindings;
 using Application.Connections;
+using Application.Mappers;
 using Application.Services.Interfaces;
 using Application.Targets;
 using Avro;
@@ -17,12 +18,6 @@ namespace Application.Services;
 /// <inheritdoc />
 public class BindingService : IBindingService {
 
-    /// <summary>
-    /// The sentinel Salesforce field name the Key Mapping is stored under. Every strategy reads it to build
-    /// its WHERE clause, so it is a contract with the worker, not an implementation detail of this service.
-    /// </summary>
-    private const string KeyMappingFieldName = "MappedSFKey";
-
     /// <summary>Change Data Capture channels. Platform event channels cannot carry a Binding.</summary>
     private const string DataChannelType = "data";
 
@@ -37,6 +32,8 @@ public class BindingService : IBindingService {
     private readonly IEntitySchemaProvider _entitySchemas;
     private readonly IConfigurationChangeSignal _changeSignal;
     private readonly IOrgConnectionProvider _connections;
+    private readonly ICheckpointRepository _checkpoints;
+    private readonly TimeProvider _time;
     private readonly ILogger<BindingService> _logger;
 
     public BindingService(
@@ -48,6 +45,8 @@ public class BindingService : IBindingService {
         IEntitySchemaProvider entitySchemas,
         IConfigurationChangeSignal changeSignal,
         IOrgConnectionProvider connections,
+        ICheckpointRepository checkpoints,
+        TimeProvider time,
         ILogger<BindingService> logger) {
         _meta = meta;
         _avroSchemas = avroSchemas;
@@ -57,6 +56,8 @@ public class BindingService : IBindingService {
         _entitySchemas = entitySchemas;
         _changeSignal = changeSignal;
         _connections = connections;
+        _checkpoints = checkpoints;
+        _time = time;
         _logger = logger;
     }
 
@@ -69,7 +70,7 @@ public class BindingService : IBindingService {
 
         // Without a Binding there is no Target Table to map against, so the fields stand alone.
         if (member.CdcSchemaId is not { } bindingId) {
-            return fields.Select(f => ToDto(f, null, null)).ToList();
+            return fields.Select(f => f.ToDto(null, SuggestKeyColumn(f, null))).ToList();
         }
 
         var binding = await _meta.GetSchemaById(bindingId).ConfigureAwait(false);
@@ -79,7 +80,7 @@ public class BindingService : IBindingService {
             : (await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false))?.Columns ?? [];
 
         var mappedByField = mappings
-            .Where(m => m.SalesforceFieldName != KeyMappingFieldName)
+            .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
             .ToDictionary(m => m.SalesforceFieldName, m => m.TargetFieldName, StringComparer.OrdinalIgnoreCase);
 
         var takenColumns = mappings
@@ -99,7 +100,7 @@ public class BindingService : IBindingService {
                 && !takenColumns.Contains(candidate)) {
                 suggestion = candidate;
             }
-            return ToDto(f, mapped, suggestion);
+            return f.ToDto(mapped, suggestion ?? SuggestKeyColumn(f, mapped));
         }).ToList();
     }
 
@@ -118,12 +119,7 @@ public class BindingService : IBindingService {
             // agrees with what CreateBindingAsync stored for it — an inline "{schema}.{table}" here would
             // always insert a dot, even for an engine with no schema, and never match.
             var fullName = BuildFullName(t.SchemaName, t.TableName);
-            return new TargetTableDTO {
-                SchemaName = t.SchemaName,
-                TableName = t.TableName,
-                FullName = fullName,
-                BoundEntityName = boundTables.GetValueOrDefault(fullName)
-            };
+            return t.ToDto(fullName, boundTables.GetValueOrDefault(fullName));
         }).ToList();
     }
 
@@ -141,14 +137,7 @@ public class BindingService : IBindingService {
             .GroupBy(m => m.TargetFieldName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().SalesforceFieldName, StringComparer.OrdinalIgnoreCase);
 
-        return table.Columns.Select(c => new TargetColumnDTO {
-            ColumnName = c.ColumnName,
-            DataType = c.DataType,
-            IsNullable = c.IsNullable,
-            MaxLength = c.MaxLength,
-            IsUnique = c.IsUnique,
-            MappedSalesforceFieldName = mappedByColumn.GetValueOrDefault(c.ColumnName)
-        }).ToList();
+        return table.Columns.Select(c => c.ToDto(mappedByColumn.GetValueOrDefault(c.ColumnName))).ToList();
     }
 
     #endregion
@@ -160,14 +149,14 @@ public class BindingService : IBindingService {
 
         var result = new List<BindingDTO>(bindings.Count);
         foreach (var binding in bindings) {
-            result.Add(await ToDto(binding, cancellationToken).ConfigureAwait(false));
+            result.Add(await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false));
         }
         return result;
     }
 
     public async Task<BindingDTO> GetBindingAsync(int bindingId, CancellationToken cancellationToken = default) {
         var binding = await RequireBinding(bindingId).ConfigureAwait(false);
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingDTO> CreateBindingAsync(int memberId, CreateBindingDTO dto,
@@ -220,7 +209,7 @@ public class BindingService : IBindingService {
 
         _logger.LogInformation("Created Binding {BindingId}: {Entity} -> {Table}", created.Id, created.EntityName, targetTable);
 
-        return await ToDto(created, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(created, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingDTO> SetFieldMappingsAsync(int bindingId, SetFieldMappingsDTO dto,
@@ -232,7 +221,7 @@ public class BindingService : IBindingService {
         var entityFields = await ReadEntityFieldNames(binding.EntityName, cancellationToken).ConfigureAwait(false);
 
         var existing = await ReadMappings(bindingId).ConfigureAwait(false);
-        var keyMapping = existing.FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName);
+        var keyMapping = existing.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
 
         var columns = table.Columns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
         var seenColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -301,14 +290,14 @@ public class BindingService : IBindingService {
         }
 
         var replacement = (await ReadMappings(bindingId).ConfigureAwait(false))
-            .Where(m => m.SalesforceFieldName != KeyMappingFieldName)
+            .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
             // A field mapped to this column would fight the WHERE clause, so it gives way.
             .Where(m => !string.Equals(m.TargetFieldName, column.ColumnName, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         replacement.Add(new MappedField {
             SchemaId = bindingId,
-            SalesforceFieldName = KeyMappingFieldName,
+            SalesforceFieldName = KeyMapping.FieldName,
             TargetFieldName = column.ColumnName
         });
 
@@ -354,7 +343,7 @@ public class BindingService : IBindingService {
         binding.SoftDeleteColumnName = columnName;
         _changeSignal.Signal();
 
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingValidationDTO> ValidateBindingAsync(int bindingId,
@@ -380,7 +369,7 @@ public class BindingService : IBindingService {
         _logger.LogInformation("Activated Binding {BindingId}: {Entity} -> {Table}",
             bindingId, binding.EntityName, binding.DbSchemaFullName);
 
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingDTO> DeactivateAsync(int bindingId, CancellationToken cancellationToken = default) {
@@ -397,7 +386,7 @@ public class BindingService : IBindingService {
         binding.BindingState = BindingState.Inactive;
         _changeSignal.Signal();
 
-        return await ToDto(binding, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteBindingAsync(int bindingId, CancellationToken cancellationToken = default) {
@@ -423,20 +412,84 @@ public class BindingService : IBindingService {
         return channel?.Id;
     }
 
-    public async Task SetPrimaryChannelAsync(int channelId, CancellationToken cancellationToken = default) {
-        var channel = await _channels.GetChannelByIdAsync(channelId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException($"Channel {channelId} was not found.");
+    public async Task SetPrimaryChannelAsync(SetPrimaryChannelDTO dto, CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var channel = await RequireChannel(dto.ChannelId, cancellationToken).ConfigureAwait(false);
 
         if (!string.Equals(channel.ChannelType, DataChannelType, StringComparison.OrdinalIgnoreCase)) {
             throw new ValidationException(
                 $"Channel '{channel.FullName}' carries platform events, not Change Data Capture, so it cannot be the Primary Channel.");
         }
 
-        await _channels.SetPrimaryChannelAsync(channelId, cancellationToken).ConfigureAwait(false);
+        var start = ParseStart(dto.Start);
+        var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+
+        // Without a Checkpoint there is nothing to choose between: the Starting Point applies.
+        if (checkpoint is not null) {
+            switch (start) {
+                case StartFrom.Resume when checkpoint.IsExpired(_time.GetUtcNow()):
+                    throw new ValidationException(
+                        $"Channel '{channel.FullName}' cannot Resume: its Checkpoint was saved {AgeHours(checkpoint):F0} hours ago, " +
+                        $"and Salesforce keeps change events for only {Checkpoint.Retention.TotalHours:F0} hours. Choose Earliest or Latest.");
+                case StartFrom.Earliest:
+                    await _checkpoints.DiscardAsync(channel.Id, StartingPoint.Earliest, cancellationToken).ConfigureAwait(false);
+                    break;
+                case StartFrom.Latest:
+                    await _checkpoints.DiscardAsync(channel.Id, StartingPoint.Latest, cancellationToken).ConfigureAwait(false);
+                    break;
+            }
+        }
+
+        await _channels.SetPrimaryChannelAsync(channel.Id, cancellationToken).ConfigureAwait(false);
         _changeSignal.Signal();
 
-        _logger.LogInformation("Primary Channel set to {Channel}", channel.FullName);
+        _logger.LogInformation("Primary Channel set to {Channel}, starting from {Start}", channel.FullName,
+            checkpoint is null ? $"its Starting Point ({channel.StartingPoint})" : start.ToString());
     }
+
+    public async Task<ChannelStartDTO> GetChannelStartAsync(int channelId, CancellationToken cancellationToken = default) {
+        var channel = await RequireChannel(channelId, cancellationToken).ConfigureAwait(false);
+        var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+
+        return channel.ToStartDto(checkpoint,
+            canResume: checkpoint is not null && !checkpoint.IsExpired(_time.GetUtcNow()));
+    }
+
+    public async Task<ChannelStartDTO> SetStartingPointAsync(int channelId, SetStartingPointDTO dto,
+        CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var channel = await RequireChannel(channelId, cancellationToken).ConfigureAwait(false);
+
+        if (!Enum.TryParse<StartingPoint>(dto.StartingPoint, ignoreCase: true, out var startingPoint)
+            || !Enum.IsDefined(startingPoint)) {
+            throw new ValidationException(
+                $"'{dto.StartingPoint}' is not a Starting Point. Choose {nameof(StartingPoint.Latest)} or {nameof(StartingPoint.Earliest)}.");
+        }
+
+        // No signal: once the worker is streaming this channel it has a Checkpoint, which the Starting Point
+        // never overrides, so a re-plan would change nothing.
+        await _channels.SetStartingPointAsync(channel.Id, startingPoint, cancellationToken).ConfigureAwait(false);
+
+        return await GetChannelStartAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static StartFrom ParseStart(string? start) {
+        if (string.IsNullOrWhiteSpace(start)) {
+            return StartFrom.Resume;
+        }
+
+        if (Enum.TryParse<StartFrom>(start, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed)) {
+            return parsed;
+        }
+
+        throw new ValidationException(
+            $"'{start}' is not a start. Choose {nameof(StartFrom.Resume)}, {nameof(StartFrom.Earliest)} or {nameof(StartFrom.Latest)}.");
+    }
+
+    private double AgeHours(Checkpoint checkpoint) =>
+        (_time.GetUtcNow() - new DateTimeOffset(DateTime.SpecifyKind(checkpoint.SavedAt, DateTimeKind.Utc))).TotalHours;
 
     public async Task<SubscriptionPlan> GetSubscriptionPlanAsync(CancellationToken cancellationToken = default) {
         // Whether the connection is usable, not merely present: a connection that has never authenticated
@@ -466,17 +519,72 @@ public class BindingService : IBindingService {
                 !entityNames.Contains(binding.EntityName)) {
                 continue;
             }
+
+            if (targetState is ConnectionState.Connected &&
+                await DemoteIfKeyMappingIsNotUnique(binding, cancellationToken).ConfigureAwait(false)) {
+                continue;
+            }
             active[schemaId] = binding;
         }
+
+        // A one-time restart position, left when a Checkpoint was discarded, outranks the Starting Point.
+        var checkpoint = await _checkpoints.GetAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+        var start = checkpoint is not null
+            ? StartPosition.ResumeAfter(checkpoint)
+            : (channel.RestartFrom ?? channel.StartingPoint) is StartingPoint.Earliest ? StartPosition.Earliest : StartPosition.Latest;
 
         return new SubscriptionPlan {
             HasConnection = hasConnection,
             TargetConnectionState = targetState,
             TopicName = $"/data/{channel.FullName}",
             ChannelFullName = channel.FullName,
+            ChannelId = channel.Id,
+            StartPosition = start,
             ActiveBindingsBySchemaId = active,
             ChannelEntityNames = entityNames
         };
+    }
+
+    /// <summary>
+    /// Sets an Active Binding back to Incomplete when its Key Mapping column has lost its unique constraint.
+    /// </summary>
+    /// <remarks>
+    /// Delivery is at-least-once (ADR 0005), so a repeated CREATE has to land on the row it already wrote,
+    /// and only a unique key lets it. Without one, the repeat fails the write and replays the same batch
+    /// forever. The column may have lost its constraint after activation (a DBA dropped it), or the Binding
+    /// may date from before the constraint was required. A table that cannot be read is not proof of
+    /// anything, so the Binding is kept and the worker's own failure handling takes over.
+    /// </remarks>
+    private async Task<bool> DemoteIfKeyMappingIsNotUnique(CDCSchema binding, CancellationToken cancellationToken) {
+        ColumnMetadata? keyColumn;
+        try {
+            var keyMapping = (await ReadMappings(binding.Id).ConfigureAwait(false))
+                .FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
+            if (keyMapping is null) {
+                return false;
+            }
+
+            var table = await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false);
+            keyColumn = table?.Columns.FirstOrDefault(c =>
+                string.Equals(c.ColumnName, keyMapping.TargetFieldName, StringComparison.OrdinalIgnoreCase));
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogWarning(ex, "Could not read the Key Mapping column of Binding {BindingId} ({Table}); keeping it Active",
+                binding.Id, binding.DbSchemaFullName);
+            return false;
+        }
+
+        if (keyColumn is null || keyColumn.IsUnique) {
+            return false;
+        }
+
+        await _meta.SetBindingState(binding.Id, BindingState.Incomplete).ConfigureAwait(false);
+        binding.BindingState = BindingState.Incomplete;
+        _logger.LogWarning(
+            "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because its Key Mapping column {Column} " +
+            "has no unique constraint. Change events can arrive more than once, and a repeated CREATE needs a unique " +
+            "key to land on the row it already wrote. Add a unique constraint or primary key to {Column}, then activate it again.",
+            binding.Id, binding.EntityName, binding.DbSchemaFullName, keyColumn.ColumnName, keyColumn.ColumnName);
+        return true;
     }
 
     #endregion
@@ -507,17 +615,17 @@ public class BindingService : IBindingService {
         var entityFields = ReadFields(avro).ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
         var columns = table.Columns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
 
-        var keyMapping = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName);
+        var keyMapping = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
         if (keyMapping is null) {
             result.Blockers.Add(
                 "No Key Mapping. Choose the column holding the Salesforce record ID — updates and deletes build their WHERE clause from it.");
         } else if (!columns.TryGetValue(keyMapping.TargetFieldName, out var keyColumn)) {
             result.Blockers.Add($"Key Mapping column '{keyMapping.TargetFieldName}' no longer exists on '{binding.DbSchemaFullName}'.");
         } else {
-            result.Results.Add(ToDto(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, engine)));
+            result.Results.Add(TypeCompatibilityChecker.CheckKeyColumn(keyColumn, engine).ToDto());
         }
 
-        var fieldMappings = mappings.Where(m => m.SalesforceFieldName != KeyMappingFieldName).ToList();
+        var fieldMappings = mappings.Where(m => m.SalesforceFieldName != KeyMapping.FieldName).ToList();
         if (fieldMappings.Count == 0) {
             result.Blockers.Add("No Field Mapping. A Binding with nothing mapped would write only record IDs.");
         }
@@ -535,8 +643,7 @@ public class BindingService : IBindingService {
                 continue;
             }
 
-            result.Results.Add(ToDto(TypeCompatibilityChecker.Check(
-                field.Name, field.FieldType, column, engine)));
+            result.Results.Add(TypeCompatibilityChecker.Check(field.Name, field.FieldType, column, engine).ToDto());
         }
 
         AddUnmappedNotNullWarnings(result, table, mappings, binding);
@@ -548,7 +655,7 @@ public class BindingService : IBindingService {
                 result.Blockers.Add(
                     $"Soft delete column '{binding.SoftDeleteColumnName}' no longer exists on '{binding.DbSchemaFullName}'.");
             } else {
-                result.Results.Add(ToDto(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, engine)));
+                result.Results.Add(TypeCompatibilityChecker.CheckSoftDeleteColumn(softDeleteColumn, engine).ToDto());
             }
         }
 
@@ -604,7 +711,7 @@ public class BindingService : IBindingService {
             }
         }
 
-        return await ToDto(binding, mappings, cancellationToken).ConfigureAwait(false);
+        return await LoadBindingDto(binding, mappings, cancellationToken).ConfigureAwait(false);
     }
 
     private static string DescribeFailure(CDCSchema binding, BindingValidationDTO validation) {
@@ -640,6 +747,10 @@ public class BindingService : IBindingService {
     private async Task<PlatformEventChannelMemberEntity> RequireMember(int memberId, CancellationToken cancellationToken) =>
         await _channels.GetMemberByIdAsync(memberId, cancellationToken).ConfigureAwait(false)
         ?? throw new KeyNotFoundException($"Channel member {memberId} was not found.");
+
+    private async Task<PlatformEventChannelEntity> RequireChannel(int channelId, CancellationToken cancellationToken) =>
+        await _channels.GetChannelByIdAsync(channelId, cancellationToken).ConfigureAwait(false)
+        ?? throw new KeyNotFoundException($"Channel {channelId} was not found.");
 
     private async Task<CDCSchema> RequireBinding(int bindingId) =>
         await _meta.GetSchemaById(bindingId).ConfigureAwait(false)
@@ -723,17 +834,7 @@ public class BindingService : IBindingService {
 
     #endregion
 
-    #region Mapping to DTOs
-
-    private static BindableFieldDTO ToDto(EntityField field, string? mappedColumn, string? suggestion) => new() {
-        Name = field.Name,
-        FieldType = field.FieldType.ToString(),
-        AvroType = field.AvroType,
-        IsNullable = field.IsNullable,
-        ParentName = field.ParentName,
-        MappedColumnName = mappedColumn,
-        SuggestedColumnName = suggestion ?? SuggestKeyColumn(field, mappedColumn)
-    };
+    #region Building DTOs
 
     /// <summary>
     /// Offers a conventional Key Mapping column against the Salesforce record ID field, so the one field that
@@ -744,34 +845,16 @@ public class BindingService : IBindingService {
             ? KeyColumnCandidates[0]
             : null;
 
-    private async Task<BindingDTO> ToDto(CDCSchema binding, CancellationToken cancellationToken) =>
-        await ToDto(binding, await ReadMappings(binding.Id).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+    private async Task<BindingDTO> LoadBindingDto(CDCSchema binding, CancellationToken cancellationToken) =>
+        await LoadBindingDto(binding, await ReadMappings(binding.Id).ConfigureAwait(false), cancellationToken)
+            .ConfigureAwait(false);
 
-    private async Task<BindingDTO> ToDto(CDCSchema binding, List<MappedField> mappings, CancellationToken cancellationToken) {
+    /// <summary>Reads the Channel Members pointing at a Binding, which its DTO lists alongside the mappings.</summary>
+    private async Task<BindingDTO> LoadBindingDto(CDCSchema binding, List<MappedField> mappings,
+        CancellationToken cancellationToken) {
         var members = await _channels.GetMembersByBindingIdAsync(binding.Id, cancellationToken).ConfigureAwait(false) ?? [];
-
-        return new BindingDTO {
-            Id = binding.Id,
-            EntityName = binding.EntityName,
-            TargetTable = binding.DbSchemaFullName,
-            State = binding.BindingState.ToString(),
-            KeyMappingColumn = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMappingFieldName)?.TargetFieldName,
-            FieldMappingCount = mappings.Count(m => m.SalesforceFieldName != KeyMappingFieldName),
-            SoftDeleteEnabled = binding.SoftDeleteEnabled,
-            SoftDeleteColumnName = binding.SoftDeleteColumnName,
-            AvroSchemaId = binding.SchemaId,
-            ChannelMemberIds = members.Select(m => m.Id).ToList()
-        };
+        return binding.ToDto(mappings, members.Select(m => m.Id));
     }
-
-    private static CompatibilityResultDTO ToDto(FieldCompatibility compatibility) => new() {
-        SalesforceFieldName = compatibility.SalesforceFieldName,
-        TargetColumnName = compatibility.TargetColumnName,
-        FieldType = compatibility.FieldType.ToString(),
-        TargetDataType = compatibility.TargetDataType,
-        Level = compatibility.Level.ToString(),
-        Message = compatibility.Message
-    };
 
     #endregion
 }

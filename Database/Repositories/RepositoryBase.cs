@@ -25,12 +25,16 @@ public abstract class RepositoryBase : IRepository {
 
     #region Data Queries
 
-    public abstract Task<int> Create(string table, Dictionary<string, object> data,
+    public abstract Task<int> Upsert(string table, string keyColumn, Dictionary<string, object> data,
         CancellationToken cancellationToken = default);
     public abstract Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data);
     public abstract Task<int> Delete(string table, string sfIdColumnName, List<string> recordIds);
     public abstract Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds);
     public abstract Task<int> UnDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds);
+
+    /// <summary>Whether a data column is the key column, which an upsert matches on and never overwrites.</summary>
+    protected static bool IsKey(string column, string keyColumn) =>
+        string.Equals(column, keyColumn, StringComparison.OrdinalIgnoreCase);
     #endregion
     
     #region Metadata Queries

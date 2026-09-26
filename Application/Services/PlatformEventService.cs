@@ -1,9 +1,9 @@
+using Application.Mappers;
 using Application.Services.Interfaces;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using DTO;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using Salesforce.Clients;
 using Salesforce.Dtos;
 using System.ComponentModel.DataAnnotations;
@@ -21,7 +21,6 @@ namespace Application.Services;
 /// entity names are wanted, and Salesforce derives DeveloperName itself.
 /// </remarks>
 public class PlatformEventService : IPlatformEventService {
-    private const string ChannelSuffix = "__chn";
     private const string ChangeEventSuffix = "ChangeEvent";
     private const string ChannelTypeData = "data";
     private const string ChannelTypeEvent = "event";
@@ -73,7 +72,7 @@ public class PlatformEventService : IPlatformEventService {
         var channelType = NormalizeChannelType(request.ChannelType);
         var eventType = NormalizeEventType(request.EventType);
 
-        var developerName = fullName[..^ChannelSuffix.Length];
+        var developerName = fullName[..^ChannelFullName.Suffix.Length];
         var existing = await _toolingClient.GetChannelByDeveloperNameAsync(developerName, cancellationToken)
             .ConfigureAwait(false);
         if (existing is not null) {
@@ -178,7 +177,7 @@ public class PlatformEventService : IPlatformEventService {
             EventChannel = channel.FullName,
             SelectedEntity = selectedEntity,
             FilterExpression = string.IsNullOrWhiteSpace(request.FilterExpression) ? null : request.FilterExpression.Trim(),
-            EnrichedFields = ToEnrichedFields(request.EnrichedFields)
+            EnrichedFields = ChannelMapper.ToEnrichedFields(request.EnrichedFields)
         };
 
         var fullName = SalesforceToolingClient.BuildMemberFullName(channel.FullName, selectedEntity);
@@ -190,7 +189,7 @@ public class PlatformEventService : IPlatformEventService {
                       ?? throw new InvalidOperationException(
                           $"Channel member {saveResult.Id} was created but could not be read back from Salesforce.");
 
-        return await _repo.UpsertMemberAsync(MapMember(created, channel.Id, fullName), cancellationToken).ConfigureAwait(false);
+        return await _repo.UpsertMemberAsync(created.ToEntity(channel.Id, fullName), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -215,7 +214,7 @@ public class PlatformEventService : IPlatformEventService {
             EventChannel = channel.FullName,
             SelectedEntity = existing.SelectedEntity,
             FilterExpression = string.IsNullOrWhiteSpace(request.FilterExpression) ? null : request.FilterExpression.Trim(),
-            EnrichedFields = ToEnrichedFields(request.EnrichedFields)
+            EnrichedFields = ChannelMapper.ToEnrichedFields(request.EnrichedFields)
         };
 
         await _toolingClient
@@ -226,7 +225,7 @@ public class PlatformEventService : IPlatformEventService {
                       ?? throw new InvalidOperationException(
                           $"Channel member {existing.SfId} was updated but could not be read back from Salesforce.");
 
-        return await _repo.UpsertMemberAsync(MapMember(updated, channel.Id, existing.FullName), cancellationToken)
+        return await _repo.UpsertMemberAsync(updated.ToEntity(channel.Id, existing.FullName), cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -324,7 +323,7 @@ public class PlatformEventService : IPlatformEventService {
                 continue;
             }
             member.Id ??= memberSummary.Id;
-            members.Add(MapMember(member, channelId, member.FullName));
+            members.Add(member.ToEntity(channelId, member.FullName));
         }
 
         await _repo.ReplaceMembersForChannelAsync(channelId, members, cancellationToken).ConfigureAwait(false);
@@ -337,7 +336,7 @@ public class PlatformEventService : IPlatformEventService {
     /// </summary>
     private async Task<PlatformEventChannelEntity> MirrorChannelAsync(PlatformEventChannel channel, CancellationToken cancellationToken) {
         try {
-            return await _repo.UpsertChannelAsync(MapChannel(channel), cancellationToken).ConfigureAwait(false);
+            return await _repo.UpsertChannelAsync(channel.ToEntity(), cancellationToken).ConfigureAwait(false);
         } catch (Exception ex) {
             _logger.LogError(ex,
                 "Channel {SfId} was saved in Salesforce but the local mirror could not be updated. Run a resync to repair it.",
@@ -346,69 +345,15 @@ public class PlatformEventService : IPlatformEventService {
         }
     }
 
-    private static PlatformEventChannelEntity MapChannel(PlatformEventChannel channel) {
-        var developerName = channel.DeveloperName
-                            ?? throw new InvalidOperationException("Salesforce returned a channel without a DeveloperName.");
-
-        return new PlatformEventChannelEntity {
-            SfId = channel.Id ?? throw new InvalidOperationException("Salesforce returned a channel without an Id."),
-            FullName = channel.FullName ?? BuildChannelFullName(developerName, channel.NamespacePrefix),
-            DeveloperName = developerName,
-            MasterLabel = channel.MasterLabel ?? channel.Metadata?.Label,
-            ChannelType = channel.ChannelType ?? channel.Metadata?.ChannelType
-                          ?? throw new InvalidOperationException("Salesforce returned a channel without a ChannelType."),
-            EventType = channel.EventType ?? channel.Metadata?.EventType,
-            NamespacePrefix = channel.NamespacePrefix,
-            ManageableState = channel.ManageableState
-        };
-    }
-
-    private static PlatformEventChannelMemberEntity MapMember(PlatformEventChannelMember member, int channelId, string? fullName) {
-        // Metadata carries the readable entity name; the top-level field is an EntityDefinition ID.
-        var selectedEntity = member.Metadata?.SelectedEntity ?? member.SelectedEntity
-            ?? throw new InvalidOperationException("Salesforce returned a channel member without a SelectedEntity.");
-
-        var enrichedFieldNames = member.Metadata?.EnrichedFields?
-            .Select(f => f.Name)
-            .Where(n => !string.IsNullOrWhiteSpace(n))
-            .ToList();
-
-        return new PlatformEventChannelMemberEntity {
-            ChannelId = channelId,
-            SfId = member.Id ?? throw new InvalidOperationException("Salesforce returned a channel member without an Id."),
-            FullName = member.FullName ?? fullName ?? member.DeveloperName
-                       ?? throw new InvalidOperationException("Salesforce returned a channel member without a FullName."),
-            DeveloperName = member.DeveloperName,
-            SelectedEntity = selectedEntity,
-            FilterExpression = member.Metadata?.FilterExpression ?? member.FilterExpression,
-            EnrichedFields = enrichedFieldNames is { Count: > 0 } ? JsonConvert.SerializeObject(enrichedFieldNames) : null
-        };
-    }
-
-    private static string BuildChannelFullName(string developerName, string? namespacePrefix) =>
-        string.IsNullOrWhiteSpace(namespacePrefix)
-            ? $"{developerName}{ChannelSuffix}"
-            : $"{namespacePrefix}__{developerName}{ChannelSuffix}";
-
-    private static List<EnrichedField>? ToEnrichedFields(List<string>? names) {
-        if (names is null || names.Count == 0) {
-            return null;
-        }
-        return names
-            .Where(n => !string.IsNullOrWhiteSpace(n))
-            .Select(n => new EnrichedField { Name = n.Trim() })
-            .ToList();
-    }
-
     private static void ValidateChannelFullName(string fullName) {
         if (string.IsNullOrWhiteSpace(fullName)) {
             throw new ValidationException("FullName is required.");
         }
-        if (!fullName.EndsWith(ChannelSuffix, StringComparison.Ordinal)) {
-            throw new ValidationException($"FullName must end with '{ChannelSuffix}', for example 'SalesEvents{ChannelSuffix}'.");
+        if (!fullName.EndsWith(ChannelFullName.Suffix, StringComparison.Ordinal)) {
+            throw new ValidationException($"FullName must end with '{ChannelFullName.Suffix}', for example 'SalesEvents{ChannelFullName.Suffix}'.");
         }
 
-        var developerName = fullName[..^ChannelSuffix.Length];
+        var developerName = fullName[..^ChannelFullName.Suffix.Length];
         if (!DeveloperNamePattern.IsMatch(developerName)) {
             throw new ValidationException(
                 $"'{developerName}' is not a valid channel name. It must start with a letter, contain only letters, " +

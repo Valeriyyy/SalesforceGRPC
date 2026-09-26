@@ -62,6 +62,7 @@ SqlMapper.AddTypeHandler(new JsonStringDictionaryTypeHandler());
 builder.Services.AddSingleton<IMetaRepository, MetaRepository>();
 builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
+builder.Services.AddSingleton<ICheckpointRepository, CheckpointRepository>();
 builder.Services.AddSingleton<IOrgConnectionRepository, OrgConnectionRepository>();
 
 #region Data Protection

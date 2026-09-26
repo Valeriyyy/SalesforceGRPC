@@ -20,16 +20,23 @@ public class MySqlRepository : RepositoryBase {
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.MySql;
 
     #region Data Queries
-    public override async Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default) {
+    /// <inheritdoc />
+    public override async Task<int> Upsert(string table, string keyColumn, Dictionary<string, object> data,
+        CancellationToken cancellationToken = default) {
         var columns = string.Join(", ", data.Keys);
         var parameters = string.Join(", ", data.Keys.Select(k => $"@{k}"));
-        var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters})";
+        // VALUES() rather than the 8.0.19 row alias, so MariaDB and older MySQL servers accept it too. With
+        // nothing but the key to write, the key is set to itself: MySQL has no DO NOTHING.
+        var updates = data.Keys.Where(k => !IsKey(k, keyColumn)).Select(k => $"{k} = VALUES({k})").ToList();
+        var onDuplicate = updates.Count == 0 ? $"{keyColumn} = {keyColumn}" : string.Join(", ", updates);
+        var sql = $"INSERT INTO {table} ({columns}) VALUES ({parameters}) ON DUPLICATE KEY UPDATE {onDuplicate}";
         if (_debugQuery) {
-            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "CREATE", sql, data);
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "UPSERT", sql, data);
         }
 
         await using var connection = new MySqlConnection(_connectionString);
-        return await connection.ExecuteAsync(sql, data).ConfigureAwait(false);
+        return await connection.ExecuteAsync(new CommandDefinition(sql, data, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
     }
 
     public override async Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data) {

@@ -7,7 +7,7 @@ namespace Application.Bindings;
 /// </summary>
 /// <remarks>
 /// This is the whole of the worker's configuration decision, pulled out of the streaming loop so it can be
-/// unit tested. The loop itself stays untested.
+/// unit tested on its own.
 /// </remarks>
 public sealed record SubscriptionPlan {
     /// <summary>
@@ -17,6 +17,12 @@ public sealed record SubscriptionPlan {
 
     /// <summary>The Primary Channel's full name, for logging. Null when there is no Primary Channel.</summary>
     public string? ChannelFullName { get; init; }
+
+    /// <summary>The Primary Channel's local ID, which its Checkpoint is saved against. Null when there is none.</summary>
+    public int? ChannelId { get; init; }
+
+    /// <summary>Where in the Primary Channel's stream the worker begins.</summary>
+    public StartPosition StartPosition { get; init; } = StartPosition.Latest;
 
     /// <summary>
     /// The Active Bindings for the Entities this channel carries, keyed by Salesforce Avro Schema Id.

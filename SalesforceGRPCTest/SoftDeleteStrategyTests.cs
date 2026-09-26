@@ -112,6 +112,6 @@ public class SoftDeleteStrategyTests {
         await NewUndeleteStrategy().ProcessEvent(DeleteEvent(), AccountSchema(), binding, Ct);
 
         await _target.DidNotReceive().UnDelete(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<List<string>>());
-        await _target.DidNotReceive().Create(Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
+        await _target.DidNotReceive().Upsert(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>());
     }
 }

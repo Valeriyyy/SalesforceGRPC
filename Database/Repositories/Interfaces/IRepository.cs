@@ -13,7 +13,16 @@ public interface IRepository {
     TargetDatabaseEngine Engine { get; }
 
     #region Data Queries
-    Task<int> Create(string table, Dictionary<string, object> data, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Inserts a row, or updates every supplied column of the row whose <paramref name="keyColumn"/> already
+    /// holds the same value.
+    /// </summary>
+    /// <remarks>
+    /// How a CREATE is written. Delivery is at-least-once (ADR 0005), so a CREATE can arrive for a record
+    /// that is already there, and it has to land on that row rather than add a second one or fail. Relies on
+    /// a unique constraint over <paramref name="keyColumn"/>, which the Key Mapping is required to have.
+    /// </remarks>
+    Task<int> Upsert(string table, string keyColumn, Dictionary<string, object> data, CancellationToken cancellationToken = default);
     Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data);
     Task<int> Delete(string table, string sfIdColumnName, List<string> recordIds);
 

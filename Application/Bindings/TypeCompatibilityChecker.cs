@@ -81,9 +81,11 @@ public static class TypeCompatibilityChecker {
             ColumnFamily.Text when column.MaxLength is int len && len < SalesforceIdLength =>
                 (CompatibilityLevel.Error,
                     $"Key Mapping column '{column.ColumnName}' holds {len} characters but a Salesforce record ID is {SalesforceIdLength}. A truncated ID would match the wrong rows."),
+            // An Error, never a Warning (ADR 0005): an event can arrive more than once, and only a unique key
+            // lets a repeated CREATE land on the row it already wrote.
             ColumnFamily.Text when !column.IsUnique =>
-                (CompatibilityLevel.Warning,
-                    $"Key Mapping column '{column.ColumnName}' has no unique constraint, so one Salesforce record could update more rows than intended."),
+                (CompatibilityLevel.Error,
+                    $"Key Mapping column '{column.ColumnName}' needs a unique constraint or primary key. Change events can be delivered more than once, and without one a repeated CREATE cannot find the row it already wrote."),
             ColumnFamily.Text =>
                 (CompatibilityLevel.Compatible, $"Key Mapping column '{column.ColumnName}' can hold a Salesforce record ID."),
             _ =>

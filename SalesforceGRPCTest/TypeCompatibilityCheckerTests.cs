@@ -240,11 +240,12 @@ public class TypeCompatibilityCheckerTests {
     }
 
     [Fact]
-    public void CheckKeyColumn_WithoutAUniqueConstraint_WarnsThatUpdatesCouldTouchExtraRows() {
+    public void CheckKeyColumn_WithoutAUniqueConstraint_IsAnError_BecauseARepeatedCreateWouldAddASecondRow() {
         var result = TypeCompatibilityChecker.CheckKeyColumn(Column("text"), TargetDatabaseEngine.Postgres);
 
-        Assert.Equal(CompatibilityLevel.Warning, result.Level);
-        Assert.Contains("unique", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(CompatibilityLevel.Error, result.Level);
+        Assert.Contains("unique constraint or primary key", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("more than once", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
