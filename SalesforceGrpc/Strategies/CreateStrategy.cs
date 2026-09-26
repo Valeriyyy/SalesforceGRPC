@@ -92,7 +92,7 @@ public class CreateStrategy : IEventStrategy {
         foreach (var (key, value) in pgFieldMappings) {
             var r = recSchema[key];
             if (r != null) {
-                Console.WriteLine("this is the field: " + r.Name + " and it came from the schema: " + recSchema.Name);
+                WriteLine("this is the field: " + r.Name + " and it came from the schema: " + recSchema.Name);
             }
         }
 
