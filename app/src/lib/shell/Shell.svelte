@@ -18,7 +18,7 @@
 </script>
 
 <div class="flex h-screen">
-    <Navigation layout="sidebar" class="shrink-0 flex flex-col border-r border-surface-200-800">
+    <Navigation layout="sidebar" class="shell-nav shrink-0 flex flex-col border-r border-surface-200-800">
         <Navigation.Header class="px-2 pb-6 pt-2">
             <span class="text-lg font-bold tracking-tight">{shell.appName}</span>
         </Navigation.Header>
