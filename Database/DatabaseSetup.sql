@@ -274,6 +274,13 @@ CREATE TABLE IF NOT EXISTS salesforce.org_connection (
     bootstrap_consumer_secret text NULL,
     bootstrap_refresh_token text NULL,
 
+    -- What the last Bootstrap's Self-Configuration did, and what it left to do by hand. Overwritten by each
+    -- Bootstrap; NULL until one has completed.
+    self_configuration_at timestamptz NULL,
+    self_configuration_configured bool NULL,
+    self_configuration_summary text NULL,
+    self_configuration_manual_steps jsonb NULL, -- JSON array of strings
+
     date_created timestamptz DEFAULT now() NOT NULL,
     date_updated timestamptz NULL,
 

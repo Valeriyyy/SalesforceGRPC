@@ -3,6 +3,7 @@ import "../assets/css/app.css";
 
 import PageHost from "../lib/shell/PageHost.svelte";
 import type { PageView } from "../lib/views";
+import OrgConnection from "./org-connection/OrgConnection.svelte";
 import Overview from "./overview/Overview.svelte";
 import Placeholder from "./Placeholder.svelte";
 
@@ -10,7 +11,8 @@ import Placeholder from "./Placeholder.svelte";
 // built (ADR 0006). The key is the component name the controller passes to SveltePage.For.
 const componentRegistry: Record<string, Component<{ page: any }>> = {
     overview: Overview,
-    placeholder: Placeholder
+    placeholder: Placeholder,
+    "org-connection": OrgConnection
 };
 
 function decodeProps(encodedProps: string): PageView<unknown> | null {

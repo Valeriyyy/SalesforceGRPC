@@ -198,6 +198,12 @@ public sealed class OrgConnectionService : IOrgConnectionService {
             session.AccessToken!, session.InstanceUrl!, connection.SigningCertificate, cancellationToken)
             .ConfigureAwait(false);
 
+        // Kept on the connection, not only logged: a user who reaches this point is mid-setup, and the steps left
+        // to do by hand have to be in front of them on the Org Connection page.
+        await _repository.SaveSelfConfigurationAsync(configuration.Configured, configuration.Summary,
+            configuration.ManualSteps, _time.GetUtcNow().UtcDateTime, cancellationToken).ConfigureAwait(false);
+        _provider.Invalidate();
+
         if (configuration.Configured) {
             _logger.LogInformation("Self-Configuration complete: {Summary}", configuration.Summary);
         } else {

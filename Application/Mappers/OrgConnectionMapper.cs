@@ -1,6 +1,7 @@
 using Database.Models;
 using Database.Repositories.Interfaces;
 using DTO;
+using Salesforce.Auth;
 
 namespace Application.Mappers;
 
@@ -34,7 +35,16 @@ public static class OrgConnectionMapper {
             CertificateFingerprint = connection.CertificateFingerprint,
             CertificateExpiresAt = connection.CertificateExpiresAt,
             CallbackUrl = callbackUrl,
-            HasBootstrapSession = connection.BootstrapConsumerSecret is not null,
+            HasConsumerSecret = connection.BootstrapConsumerSecret is not null,
+            IsApproved = connection.BootstrapRefreshToken is not null,
+            SelfConfiguration = connection.SelfConfigurationAt is { } at
+                ? new SelfConfigurationDTO {
+                    At = at,
+                    Configured = connection.SelfConfigurationConfigured ?? false,
+                    Summary = connection.SelfConfigurationSummary ?? "",
+                    ManualSteps = [.. connection.SelfConfigurationManualSteps]
+                }
+                : null,
             SecretProtection = secretProtection
         };
     }
@@ -59,12 +69,29 @@ public static class OrgConnectionMapper {
             return null;
         }
 
-        // Both halves reach the user: the translated summary, and Salesforce's own words underneath it. The
-        // raw text is stored separately precisely so this does not have to reconstruct it from a summary.
+        // Only the one-line summary and Salesforce's raw body are stored. Translating the raw body again gives
+        // back its error, description and guidance as separate fields, which is how the page shows every
+        // Salesforce failure — and it picks up any guidance added to the table since the failure was recorded.
+        if (!string.IsNullOrWhiteSpace(connection.LastErrorRaw)) {
+            var translated = OAuthErrorTranslator.Translate(connection.LastErrorRaw,
+                connection.CertificateFingerprint, connection.IsSandbox);
+
+            return new OAuthFailureDTO {
+                Error = translated.Error,
+                ErrorDescription = translated.ErrorDescription,
+                Guidance = translated.Guidance,
+                RawResponse = connection.LastErrorRaw,
+                OccurredAt = connection.LastErrorAt
+            };
+        }
+
+        // A failure this application raised itself (no org id in a token response) has no Salesforce body; its
+        // summary, "error: description", is all there is.
+        var separator = connection.LastError.IndexOf(": ", StringComparison.Ordinal);
         return new OAuthFailureDTO {
-            Error = connection.ConnectionState.ToString(),
-            ErrorDescription = connection.LastError,
-            RawResponse = connection.LastErrorRaw ?? "",
+            Error = separator > 0 ? connection.LastError[..separator] : "error",
+            ErrorDescription = separator > 0 ? connection.LastError[(separator + 2)..] : connection.LastError,
+            RawResponse = "",
             OccurredAt = connection.LastErrorAt
         };
     }

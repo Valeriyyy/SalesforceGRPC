@@ -45,11 +45,37 @@ public record OrgConnectionDTO {
     /// </summary>
     public string CallbackUrl { get; set; } = "";
 
-    /// <summary>True while the Bootstrap session is still held, meaning Self-Configuration can be retried.</summary>
-    public bool HasBootstrapSession { get; set; }
+    /// <summary>
+    /// True while the Consumer Secret is stored, so the browser approval can run. Discarded on the first success.
+    /// </summary>
+    public bool HasConsumerSecret { get; set; }
+
+    /// <summary>
+    /// True while the Bootstrap refresh token is held: the Administering User approved, and no JWT token has
+    /// succeeded since. Tells "ready to approve" apart from "approved, not working yet".
+    /// </summary>
+    public bool IsApproved { get; set; }
+
+    /// <summary>What the last Bootstrap's Self-Configuration did, or null when no Bootstrap has completed.</summary>
+    public SelfConfigurationDTO? SelfConfiguration { get; set; }
 
     /// <summary>Whether stored secrets can currently be read. See <see cref="SecretProtectionDTO"/>.</summary>
     public SecretProtectionDTO SecretProtection { get; set; } = new();
+}
+
+/// <summary>
+/// What Self-Configuration did during the last Bootstrap, kept so the steps left to do by hand are in front of
+/// the user rather than only in the log.
+/// </summary>
+public record SelfConfigurationDTO {
+    public DateTime At { get; set; }
+
+    /// <summary>True when the org was configured. False means <see cref="ManualSteps"/> are left to do.</summary>
+    public bool Configured { get; set; }
+
+    public string Summary { get; set; } = "";
+
+    public List<string> ManualSteps { get; set; } = [];
 }
 
 /// <summary>
