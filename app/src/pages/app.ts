@@ -4,9 +4,11 @@ import "../assets/css/app.css";
 // import Layout from "../layouts/Layout.svelte";
 
 import App from "./App.svelte";
+import OverviewPrototype from "./overview-prototype/OverviewPrototype.svelte"; // PROTOTYPE — remove with the route
 
 const componentRegistry: Record<string, any> = {
-    app: App
+    app: App,
+    "overview-prototype": OverviewPrototype // PROTOTYPE
 };
 
 function decodeProps(encodedProps: string): any {
