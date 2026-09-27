@@ -577,7 +577,7 @@ public class BindingService : IBindingService {
             return false;
         }
 
-        await _meta.SetBindingState(binding.Id, BindingState.Incomplete).ConfigureAwait(false);
+        await _meta.ForceBindingIncomplete(binding.Id, _time.GetUtcNow().UtcDateTime).ConfigureAwait(false);
         binding.BindingState = BindingState.Incomplete;
         _logger.LogWarning(
             "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because its Key Mapping column {Column} " +
