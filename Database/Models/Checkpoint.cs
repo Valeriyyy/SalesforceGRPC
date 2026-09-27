@@ -22,5 +22,11 @@ public sealed class Checkpoint {
     public static readonly TimeSpan Retention = TimeSpan.FromHours(72);
 
     /// <summary>Whether Salesforce will have discarded the events after this position by <paramref name="now"/>.</summary>
-    public bool IsExpired(DateTimeOffset now) => now - new DateTimeOffset(DateTime.SpecifyKind(SavedAt, DateTimeKind.Utc)) > Retention;
+    public bool IsExpired(DateTimeOffset now) => Age(now) > Retention;
+
+    /// <summary>How long ago it was saved.</summary>
+    public TimeSpan Age(DateTimeOffset now) => now - new DateTimeOffset(DateTime.SpecifyKind(SavedAt, DateTimeKind.Utc));
+
+    /// <summary>How long until Salesforce discards the events after this position; zero once it has.</summary>
+    public TimeSpan ExpiresIn(DateTimeOffset now) => Age(now) >= Retention ? TimeSpan.Zero : Retention - Age(now);
 }

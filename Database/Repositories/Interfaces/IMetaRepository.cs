@@ -34,8 +34,20 @@ public interface IMetaRepository {
     Task<bool> UpdateBinding(int bindingId, string dbSchemaFullName, bool softDeleteEnabled,
         string? softDeleteColumnName);
 
-    /// <summary>Moves a Binding to a new <see cref="BindingState"/>.</summary>
+    /// <summary>
+    /// Moves a Binding to a new <see cref="BindingState"/>, clearing any record that the worker forced it to
+    /// Incomplete.
+    /// </summary>
     Task<bool> SetBindingState(int bindingId, BindingState state);
+
+    /// <summary>
+    /// Sets an Active Binding back to Incomplete on the worker's behalf, recording when, so it can be told apart
+    /// from a Binding that was never finished.
+    /// </summary>
+    Task<bool> ForceBindingIncomplete(int bindingId, DateTime forcedAt);
+
+    /// <summary>How many Bindings are in each state, read fresh rather than from the schema cache.</summary>
+    Task<BindingStateCounts> CountBindingsByStateAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Deletes a Binding and, by cascade of the write below, its Field Mappings.</summary>
     Task<bool> DeleteBinding(int bindingId);
@@ -54,4 +66,17 @@ public interface IMetaRepository {
     Task ReplaceFieldMappings(int bindingId, IEnumerable<MappedField> mappings);
 
     #endregion
+}
+
+/// <summary>How many Bindings are in each <see cref="BindingState"/>.</summary>
+public sealed record BindingStateCounts {
+    public int Active { get; init; }
+
+    /// <summary>Every Incomplete Binding, including those counted in <see cref="ForcedIncomplete"/>.</summary>
+    public int Incomplete { get; init; }
+
+    public int Inactive { get; init; }
+
+    /// <summary>Incomplete Bindings the worker set back from Active because their Key Mapping lost its unique constraint.</summary>
+    public int ForcedIncomplete { get; init; }
 }

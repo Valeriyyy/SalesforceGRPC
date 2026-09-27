@@ -276,13 +276,44 @@ public class MetaRepository : IMetaRepository {
 
         const string sql = @"
             UPDATE salesforce.cdc_schemas
-            SET binding_state = @State
+            SET binding_state = @State, forced_incomplete_at = NULL
             WHERE id = @BindingId";
 
         var affectedRows = await connection.ExecuteAsync(sql,
             new { BindingId = bindingId, State = state.ToString() }).ConfigureAwait(false);
 
         return affectedRows > 0;
+    }
+
+    public async Task<bool> ForceBindingIncomplete(int bindingId, DateTime forcedAt) {
+        InvalidateBinding(bindingId);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        const string sql = @"
+            UPDATE salesforce.cdc_schemas
+            SET binding_state = 'Incomplete', forced_incomplete_at = @At
+            WHERE id = @BindingId";
+
+        var affectedRows = await connection.ExecuteAsync(sql,
+            new { BindingId = bindingId, At = DateTime.SpecifyKind(forcedAt, DateTimeKind.Utc) }).ConfigureAwait(false);
+
+        return affectedRows > 0;
+    }
+
+    public async Task<BindingStateCounts> CountBindingsByStateAsync(CancellationToken cancellationToken = default) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        const string sql = @"
+            SELECT
+                count(*) FILTER (WHERE binding_state = 'Active')::int as Active,
+                count(*) FILTER (WHERE binding_state = 'Incomplete')::int as Incomplete,
+                count(*) FILTER (WHERE binding_state = 'Inactive')::int as Inactive,
+                count(*) FILTER (WHERE binding_state = 'Incomplete' AND forced_incomplete_at IS NOT NULL)::int as ForcedIncomplete
+            FROM salesforce.cdc_schemas";
+
+        return await connection.QuerySingleAsync<BindingStateCounts>(
+            new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
     public async Task<bool> DeleteBinding(int bindingId) {

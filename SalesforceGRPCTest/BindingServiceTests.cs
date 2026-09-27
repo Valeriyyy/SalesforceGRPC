@@ -865,7 +865,7 @@ public class BindingServiceTests {
         var plan = await NewService().GetSubscriptionPlanAsync(Ct);
 
         Assert.Empty(plan.ActiveBindingsBySchemaId);
-        await _meta.Received(1).SetBindingState(BindingId, BindingState.Incomplete);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, Arg.Any<DateTime>());
     }
 
     [Fact]
@@ -877,6 +877,7 @@ public class BindingServiceTests {
 
         Assert.Contains("SCHEMA_V1", plan.ActiveBindingsBySchemaId.Keys);
         await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+        await _meta.DidNotReceive().ForceBindingIncomplete(Arg.Any<int>(), Arg.Any<DateTime>());
     }
 
     [Fact]
@@ -892,6 +893,7 @@ public class BindingServiceTests {
         // handling deals with a database that cannot be reached.
         Assert.Contains("SCHEMA_V1", plan.ActiveBindingsBySchemaId.Keys);
         await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+        await _meta.DidNotReceive().ForceBindingIncomplete(Arg.Any<int>(), Arg.Any<DateTime>());
     }
 
     [Fact]

@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS salesforce.cdc_schemas (
       binding_state varchar(20) DEFAULT 'Incomplete' NOT NULL, -- Incomplete, Active or Inactive
       soft_delete_enabled bool DEFAULT false NULL,
       soft_delete_column_name varchar NULL,
+      forced_incomplete_at timestamptz NULL, -- Set when the worker forces an Active Binding back to Incomplete
       CONSTRAINT cdc_schemas_pkey PRIMARY KEY (id),
       CONSTRAINT cdc_schemas_binding_state_check
           CHECK (binding_state IN ('Incomplete', 'Active', 'Inactive')),
@@ -92,6 +93,7 @@ COMMENT ON TABLE salesforce.cdc_schemas IS 'One row per Binding: which Entity la
 COMMENT ON COLUMN salesforce.cdc_schemas.entity_name IS 'Entity name, e.g. AccountChangeEvent';
 COMMENT ON COLUMN salesforce.cdc_schemas.db_schema_full_name IS 'Schema-qualified Target Table, e.g. salesforce.account';
 COMMENT ON COLUMN salesforce.cdc_schemas.binding_state IS 'Incomplete (never applied), Active (worker applies it) or Inactive (switched off, mappings kept)';
+COMMENT ON COLUMN salesforce.cdc_schemas.forced_incomplete_at IS 'When the worker set this Active Binding back to Incomplete; NULL unless that is why it is Incomplete';
 
 
 -- salesforce.mapped_fields definition
