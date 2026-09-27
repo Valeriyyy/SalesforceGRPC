@@ -44,7 +44,7 @@ public interface IMetaRepository {
     /// Sets an Active Binding back to Incomplete on the worker's behalf, recording when, so it can be told apart
     /// from a Binding that was never finished.
     /// </summary>
-    Task<bool> ForceBindingIncomplete(int bindingId, DateTime at);
+    Task<bool> ForceBindingIncomplete(int bindingId, DateTime forcedAt);
 
     /// <summary>How many Bindings are in each state, read fresh rather than from the schema cache.</summary>
     Task<BindingStateCounts> CountBindingsByStateAsync(CancellationToken cancellationToken = default);

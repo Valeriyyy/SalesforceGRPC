@@ -104,8 +104,8 @@ public sealed class PipelineStatusService : IPipelineStatusService {
         TimeSpan? expiresIn = null;
         if (checkpoint is not null) {
             var now = _time.GetUtcNow();
-            age = now - new DateTimeOffset(DateTime.SpecifyKind(checkpoint.SavedAt, DateTimeKind.Utc));
-            expiresIn = age >= Checkpoint.Retention ? TimeSpan.Zero : Checkpoint.Retention - age;
+            age = checkpoint.Age(now);
+            expiresIn = checkpoint.ExpiresIn(now);
 
             if (checkpoint.IsExpired(now)) {
                 reasons.Add(StageReason.CheckpointExpired);

@@ -285,7 +285,7 @@ public class MetaRepository : IMetaRepository {
         return affectedRows > 0;
     }
 
-    public async Task<bool> ForceBindingIncomplete(int bindingId, DateTime at) {
+    public async Task<bool> ForceBindingIncomplete(int bindingId, DateTime forcedAt) {
         InvalidateBinding(bindingId);
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -296,7 +296,7 @@ public class MetaRepository : IMetaRepository {
             WHERE id = @BindingId";
 
         var affectedRows = await connection.ExecuteAsync(sql,
-            new { BindingId = bindingId, At = DateTime.SpecifyKind(at, DateTimeKind.Utc) }).ConfigureAwait(false);
+            new { BindingId = bindingId, At = DateTime.SpecifyKind(forcedAt, DateTimeKind.Utc) }).ConfigureAwait(false);
 
         return affectedRows > 0;
     }

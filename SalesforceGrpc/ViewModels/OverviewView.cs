@@ -68,8 +68,8 @@ public sealed record StageView(
         PrimaryChannelStage channel => Join(
             channel.ChannelFullName,
             Plural(channel.MemberCount, "Channel Member"),
-            channel.CheckpointAge is { } age
-                ? $"Checkpoint {Duration(age)} ago"
+            channel is { CheckpointAge: { } age, CheckpointExpiresIn: { } left }
+                ? $"Checkpoint {Duration(age)} ago, expires in {Duration(left)}"
                 : $"no Checkpoint yet, starts at {channel.StartingPoint}"),
         TargetConnectionStage target when target.Engine is null => "Not set up yet",
         TargetConnectionStage target => Join(

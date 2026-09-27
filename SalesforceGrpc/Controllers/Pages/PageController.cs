@@ -14,7 +14,7 @@ namespace SalesforceGrpc.Controllers.Pages;
 public abstract class PageController(IPipelineStatusService pipeline) : Controller {
     protected async Task<IActionResult> SveltePageAsync<TPage>(string component, string title, NavKey nav,
         Func<PipelineStatus, TPage> page, CancellationToken cancellationToken) {
-        var status = await pipeline.GetAsync(cancellationToken);
+        var status = await pipeline.GetAsync(cancellationToken).ConfigureAwait(false);
         var view = new PageView<TPage>(ShellView.For(nav, status), page(status));
         return View("SveltePage", SveltePage.For(component, title, view));
     }
