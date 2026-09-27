@@ -1,5 +1,6 @@
 using Application.Bindings;
 using Application.Connections;
+using Application.Pipeline;
 using Application.Services;
 using Application.Services.Interfaces;
 using Application.Targets;
@@ -129,6 +130,7 @@ builder.Services.AddSingleton<ITargetEngineCatalog, TargetEngineCatalog>();
 builder.Services.AddSingleton<ITargetConnectionRepository, TargetConnectionRepository>();
 builder.Services.AddSingleton<ITargetConnectionProvider, TargetConnectionProvider>();
 builder.Services.AddScoped<ITargetConnectionService, TargetConnectionService>();
+builder.Services.AddScoped<IPipelineStatusService, PipelineStatusService>();
 #endregion
 
 builder.Services.AddTransient<IEventStrategy, CreateStrategy>();

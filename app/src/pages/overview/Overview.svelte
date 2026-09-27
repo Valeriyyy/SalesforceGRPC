@@ -1,12 +1,8 @@
-<!-- PROTOTYPE — Variant A "Card row": the spec's layout. Four Stage cards in one row with connectors. -->
-<script lang="ts" module>
-    export const name = "Card row";
-</script>
-
+<!-- The Overview: the Pipeline as four Stage cards in setup order, then the reserved worker-status card. -->
 <script lang="ts">
     import { ChevronRight, PartyPopper } from "@lucide/svelte";
-    import type { OverviewView } from "./views";
-    import StatusBadge from "./StatusBadge.svelte";
+    import type { OverviewView } from "../../lib/views";
+    import StatusBadge from "../../lib/StatusBadge.svelte";
     import WorkerStatusCard from "./WorkerStatusCard.svelte";
 
     let { page }: { page: OverviewView } = $props();

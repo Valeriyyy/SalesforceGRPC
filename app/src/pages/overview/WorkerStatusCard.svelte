@@ -1,4 +1,4 @@
-<!-- PROTOTYPE — reserved slot for the worker's runtime status (always present, fixed size). -->
+<!-- Reserved for the worker's runtime status: always present at a fixed size, so the layout does not jump when it arrives. -->
 <script lang="ts">
     import { Activity } from "@lucide/svelte";
     let { focus = false, class: klass = "" }: { focus?: boolean; class?: string } = $props();

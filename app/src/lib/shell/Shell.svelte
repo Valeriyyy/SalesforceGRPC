@@ -1,10 +1,10 @@
-<!-- PROTOTYPE — the left-nav shell shared by every variant. -->
+<!-- The left-nav shell every page is mounted inside (see app.ts). -->
 <script lang="ts">
     import type { Snippet } from "svelte";
     import { Navigation } from "@skeletonlabs/skeleton-svelte";
     import { LayoutDashboard, Moon, Sun } from "@lucide/svelte";
-    import type { ShellView } from "./views";
-    import { statusMeta } from "./status";
+    import type { ShellView } from "../views";
+    import { statusMeta } from "../status";
 
     let { shell, children }: { shell: ShellView; children: Snippet } = $props();
 

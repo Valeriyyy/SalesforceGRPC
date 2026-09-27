@@ -1,9 +1,10 @@
+@model SalesforceGrpc.ViewModels.SveltePage
 <!DOCTYPE html>
 <html lang="en" data-theme="cerberus">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>@ViewData["Title"]</title>
+    <title>@Model.Title · SalesforceGRPC</title>
     <script>
         /* Apply the saved light/dark choice (or the OS preference) before first paint. */
         (function () {
@@ -18,8 +19,8 @@
 </head>
 <body>
 <div id="app"
-     data-component="@ViewData["Component"]"
-     data-props='@ViewData["Props"]'>
+     data-component="@Model.Component"
+     data-props="@Model.Props">
     @RenderBody()
 </div>
 <vite-entry src="src/pages/app.ts" />

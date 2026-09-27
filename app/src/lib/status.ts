@@ -1,4 +1,4 @@
-// PROTOTYPE — how each Stage Status looks.
+// How each Stage Status looks, wherever it is shown.
 import { CircleCheck, CircleDashed, Hourglass, TriangleAlert } from "@lucide/svelte";
 import type { StageStatus } from "./views";
 
