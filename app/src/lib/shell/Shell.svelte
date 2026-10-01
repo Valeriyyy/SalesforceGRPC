@@ -3,8 +3,8 @@
     import type { Snippet } from "svelte";
     import { Navigation } from "@skeletonlabs/skeleton-svelte";
     import { LayoutDashboard, Moon, Sun } from "@lucide/svelte";
-    import type { ShellView } from "../views";
-    import { statusMeta } from "../status";
+    import type { ShellView } from "../types/views";
+    import { statusMeta } from "../utils/status";
 
     let { shell, children }: { shell: ShellView; children: Snippet } = $props();
 

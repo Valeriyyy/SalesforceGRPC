@@ -1,9 +1,9 @@
 <!-- Above the page: the blocking Secret Protection alert, and the one-time notice from the way back from Salesforce. -->
 <script lang="ts">
     import { CircleCheck, ShieldAlert, X } from "@lucide/svelte";
-    import type { ApiFailure } from "../../lib/api";
-    import SalesforceError from "../../lib/SalesforceError.svelte";
-    import type { OrgConnectionNotice, SecretProtectionView } from "../../lib/views";
+    import type { ApiFailure } from "../../lib/api/client";
+    import SalesforceError from "../../lib/components/SalesforceError.svelte";
+    import type { OrgConnectionNotice, SecretProtectionView } from "../../lib/types/views";
 
     let { secretProtection, notice }: { secretProtection: SecretProtectionView; notice: OrgConnectionNotice | null } = $props();
 

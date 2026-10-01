@@ -1,6 +1,6 @@
 // Calls to this application's api/* endpoints, with their error bodies turned into one typed failure. Pages act
 // through these and then reload on success (ADR 0006): the server rebuilds the page and the shell from one read.
-import type { SalesforceErrorView } from "./views";
+import type { SalesforceErrorView } from "../types/views";
 
 /** Why a call failed, in the three shapes the controllers answer with. */
 export type ApiFailure =

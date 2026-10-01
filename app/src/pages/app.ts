@@ -2,10 +2,10 @@ import { mount, type Component } from "svelte";
 import "../assets/css/app.css";
 
 import PageHost from "../lib/shell/PageHost.svelte";
-import type { PageView } from "../lib/views";
+import type { PageView } from "../lib/types/views";
 import OrgConnection from "./org-connection/OrgConnection.svelte";
 import Overview from "./overview/Overview.svelte";
-import Placeholder from "./Placeholder.svelte";
+import Placeholder from "./placeholder/Placeholder.svelte";
 
 // Every page is wrapped in the shared Shell, and receives the page half of the PageView its view controller
 // built (ADR 0006). The key is the component name the controller passes to SveltePage.For.

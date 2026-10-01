@@ -2,8 +2,8 @@
      the fixed guide for orgs that do not allow the browser approval. Either way, the certificate to upload. -->
 <script lang="ts">
     import { Download } from "@lucide/svelte";
-    import { when } from "../../lib/format";
-    import type { CertificateView, SelfConfigurationView } from "../../lib/views";
+    import { when } from "../../lib/utils/format";
+    import type { CertificateView, SelfConfigurationView } from "../../lib/types/views";
 
     let { outcome, certificate }: { outcome: SelfConfigurationView | null; certificate: CertificateView | null } = $props();
 

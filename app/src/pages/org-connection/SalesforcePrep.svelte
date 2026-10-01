@@ -1,6 +1,6 @@
 <!-- What the user does in Salesforce Setup before anything else. None of it can be detected from here. -->
 <script lang="ts">
-    import CopyField from "../../lib/CopyField.svelte";
+    import CopyField from "../../lib/components/CopyField.svelte";
 
     let { callbackUrl }: { callbackUrl: string } = $props();
 </script>

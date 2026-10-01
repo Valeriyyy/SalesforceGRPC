@@ -3,8 +3,8 @@
      created in the meantime makes the server refuse rather than destroy something the user never saw. -->
 <script lang="ts">
     import { TriangleAlert } from "@lucide/svelte";
-    import { getJson, postJson, type ApiFailure } from "../../lib/api";
-    import SalesforceError from "../../lib/SalesforceError.svelte";
+    import { getJson, postJson, type ApiFailure } from "../../lib/api/client";
+    import SalesforceError from "../../lib/components/SalesforceError.svelte";
     import type { ConfirmDisconnect, DisconnectPreview } from "./requests";
 
     let { orgId }: { orgId: string | null } = $props();

@@ -2,9 +2,9 @@
      the raw response behind a disclosure — the only text a user can search for when the guidance has nothing. -->
 <script lang="ts">
     import { Check, CircleAlert, Copy } from "@lucide/svelte";
-    import type { ApiFailure } from "./api";
-    import { copyText } from "./clipboard";
-    import { when } from "./format";
+    import type { ApiFailure } from "../api/client";
+    import { copyText } from "../utils/clipboard";
+    import { when } from "../utils/format";
 
     let { failure, title = "Salesforce refused the request", class: cls = "" }:
         { failure: ApiFailure; title?: string; class?: string } = $props();

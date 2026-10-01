@@ -2,9 +2,9 @@
      validator. Its values outlive a failed save, so nothing the user typed (the secret included) is lost. -->
 <script lang="ts">
     import { untrack } from "svelte";
-    import type { ApiFailure } from "../../lib/api";
-    import SalesforceError from "../../lib/SalesforceError.svelte";
-    import type { OrgConnectionDetailsView } from "../../lib/views";
+    import type { ApiFailure } from "../../lib/api/client";
+    import SalesforceError from "../../lib/components/SalesforceError.svelte";
+    import type { OrgConnectionDetailsView } from "../../lib/types/views";
     import type { SaveOrgConnection } from "./requests";
 
     /** new: nothing saved yet. edit: change saved details, secret optional. secretOnly: only the discarded secret. */

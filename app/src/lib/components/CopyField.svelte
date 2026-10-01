@@ -1,7 +1,7 @@
 <!-- A read-only value with a copy button, for text the user pastes somewhere else verbatim. -->
 <script lang="ts">
     import { Check, Copy } from "@lucide/svelte";
-    import { copyText } from "./clipboard";
+    import { copyText } from "../utils/clipboard";
 
     let { label, value, hint = "" }: { label: string; value: string; hint?: string } = $props();
 

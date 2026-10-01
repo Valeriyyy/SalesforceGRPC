@@ -3,10 +3,10 @@
      action goes through api/orgconnection and reloads on success, so the page and the sidebar come from one read. -->
 <script lang="ts">
     import { Check, CircleCheck, CircleX, ExternalLink, Hourglass, Pencil } from "@lucide/svelte";
-    import { postJson, putJson, type ApiFailure, type ApiResult } from "../../lib/api";
-    import { when } from "../../lib/format";
-    import SalesforceError from "../../lib/SalesforceError.svelte";
-    import type { OrgConnectionView } from "../../lib/views";
+    import { postJson, putJson, type ApiFailure, type ApiResult } from "../../lib/api/client";
+    import { when } from "../../lib/utils/format";
+    import SalesforceError from "../../lib/components/SalesforceError.svelte";
+    import type { OrgConnectionView } from "../../lib/types/views";
     import Alerts from "./Alerts.svelte";
     import ConnectionForm from "./ConnectionForm.svelte";
     import DisconnectDialog from "./DisconnectDialog.svelte";

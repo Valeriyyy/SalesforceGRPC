@@ -1,6 +1,6 @@
 // How each Stage Status looks, wherever it is shown.
 import { CircleCheck, CircleDashed, Hourglass, TriangleAlert } from "@lucide/svelte";
-import type { StageStatus } from "./views";
+import type { StageStatus } from "../types/views";
 
 export const statusMeta = {
     ok: { label: "OK", icon: CircleCheck, text: "text-success-600-400", badge: "preset-filled-success-500" },
