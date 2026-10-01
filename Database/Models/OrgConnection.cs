@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Database.Models;
 
 /// <summary>
@@ -86,6 +88,22 @@ public class OrgConnection {
 
     /// <summary>Data Protection ciphertext of the Bootstrap refresh token, purged alongside the secret.</summary>
     public string? BootstrapRefreshToken { get; set; }
+
+    /// <summary>When the last Bootstrap ran Self-Configuration. Null until one has completed.</summary>
+    public DateTime? SelfConfigurationAt { get; set; }
+
+    /// <summary>Whether that Self-Configuration configured the org. False leaves Manual Registration steps.</summary>
+    public bool? SelfConfigurationConfigured { get; set; }
+
+    public string? SelfConfigurationSummary { get; set; }
+
+    /// <summary>The steps left to do in Setup, as the JSON array stored in the jsonb column.</summary>
+    public string? SelfConfigurationManualStepsJson { get; set; }
+
+    public IReadOnlyList<string> SelfConfigurationManualSteps =>
+        string.IsNullOrWhiteSpace(SelfConfigurationManualStepsJson)
+            ? []
+            : JsonSerializer.Deserialize<List<string>>(SelfConfigurationManualStepsJson) ?? [];
 
     public DateTime DateCreated { get; set; }
     public DateTime? DateUpdated { get; set; }

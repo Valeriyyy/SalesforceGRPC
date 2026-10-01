@@ -1,6 +1,6 @@
 <script lang="ts">
-    import type { StageStatus } from "./views";
-    import { statusMeta } from "./status";
+    import type { StageStatus } from "../types/views";
+    import { statusMeta } from "../utils/status";
     let { status }: { status: StageStatus } = $props();
     const meta = $derived(statusMeta[status]);
 </script>

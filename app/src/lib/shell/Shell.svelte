@@ -3,8 +3,8 @@
     import type { Snippet } from "svelte";
     import { Navigation } from "@skeletonlabs/skeleton-svelte";
     import { LayoutDashboard, Moon, Sun } from "@lucide/svelte";
-    import type { ShellView } from "../views";
-    import { statusMeta } from "../status";
+    import type { ShellView } from "../types/views";
+    import { statusMeta } from "../utils/status";
 
     let { shell, children }: { shell: ShellView; children: Snippet } = $props();
 
@@ -18,7 +18,7 @@
 </script>
 
 <div class="flex h-screen">
-    <Navigation layout="sidebar" class="shrink-0 flex flex-col border-r border-surface-200-800">
+    <Navigation layout="sidebar" class="shell-nav shrink-0 flex flex-col border-r border-surface-200-800">
         <Navigation.Header class="px-2 pb-6 pt-2">
             <span class="text-lg font-bold tracking-tight">{shell.appName}</span>
         </Navigation.Header>

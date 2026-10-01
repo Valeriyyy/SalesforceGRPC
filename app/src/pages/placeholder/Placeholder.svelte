@@ -1,7 +1,7 @@
 <!-- A Stage page that is not built yet. Rendered inside the shell so the nav and action buttons do not 404. -->
 <script lang="ts">
     import { Construction } from "@lucide/svelte";
-    import type { PlaceholderView } from "../lib/views";
+    import type { PlaceholderView } from "../../lib/types/views";
 
     let { page }: { page: PlaceholderView } = $props();
 </script>

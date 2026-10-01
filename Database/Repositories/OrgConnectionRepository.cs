@@ -4,6 +4,7 @@ using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using System.Text.Json;
 
 namespace Database.Repositories;
 
@@ -41,6 +42,10 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
                 last_error_at AS LastErrorAt,
                 bootstrap_consumer_secret AS BootstrapConsumerSecret,
                 bootstrap_refresh_token AS BootstrapRefreshToken,
+                self_configuration_at AS SelfConfigurationAt,
+                self_configuration_configured AS SelfConfigurationConfigured,
+                self_configuration_summary AS SelfConfigurationSummary,
+                self_configuration_manual_steps AS SelfConfigurationManualStepsJson,
                 date_created AS DateCreated,
                 date_updated AS DateUpdated";
 
@@ -168,6 +173,27 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
         await connection.ExecuteAsync(new CommandDefinition(sql,
             new { ConsumerSecret = encryptedConsumerSecret, RefreshToken = encryptedRefreshToken },
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    public async Task SaveSelfConfigurationAsync(bool configured, string summary, IReadOnlyList<string> manualSteps,
+        DateTime at, CancellationToken cancellationToken = default) {
+        const string sql = @"
+            UPDATE salesforce.org_connection SET
+                self_configuration_at = @At,
+                self_configuration_configured = @Configured,
+                self_configuration_summary = @Summary,
+                self_configuration_manual_steps = CAST(@ManualSteps AS jsonb),
+                date_updated = now()";
+
+        LogQuery("UPDATE", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition(sql, new {
+            At = at,
+            Configured = configured,
+            Summary = summary,
+            ManualSteps = JsonSerializer.Serialize(manualSteps)
+        }, cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
     public async Task PurgeBootstrapSecretsAsync(CancellationToken cancellationToken = default) {

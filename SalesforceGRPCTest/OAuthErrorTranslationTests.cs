@@ -39,6 +39,32 @@ public class OAuthErrorTranslationTests {
         Assert.Contains("Consumer Key", result.Guidance!);
     }
 
+    /// <summary>
+    /// What Salesforce actually sends when the Consumer Secret does not belong to the Consumer Key. By then the
+    /// browser approval has already accepted the Consumer Key, so blaming the key sends the user the wrong way.
+    /// </summary>
+    [Fact]
+    public void InvalidClientCredentials_PointsAtTheConsumerSecret() {
+        var result = OAuthErrorTranslator.Translate(Body("invalid_client", "invalid client credentials"));
+
+        Assert.Contains("Consumer Secret", result.Guidance!);
+        Assert.DoesNotContain("does not match an External Client App", result.Guidance!);
+    }
+
+    /// <summary>
+    /// The same words from the JWT Bearer flow, which sends no Consumer Secret: the certificate on the External
+    /// Client App is not the one this connection signs with — typically after a Disconnect, which generates a
+    /// new keypair.
+    /// </summary>
+    [Fact]
+    public void InvalidClientCredentials_FromTheJwtFlow_PointsAtTheSigningCertificate() {
+        var result = OAuthErrorTranslator.Translate(Body("invalid_client", "invalid client credentials"), Fingerprint);
+
+        Assert.Contains("Signing Certificate", result.Guidance!);
+        Assert.Contains(Fingerprint, result.Guidance!);
+        Assert.DoesNotContain("Consumer Secret", result.Guidance!);
+    }
+
     [Fact]
     public void InactiveUser_PointsAtTheRunAsUser() {
         var result = OAuthErrorTranslator.Translate(Body("invalid_grant", "inactive user"));

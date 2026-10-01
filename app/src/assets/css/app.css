@@ -6,3 +6,16 @@
 
 /* Light/dark is chosen by the shell (data-mode on <html>), not by the media query alone. */
 @custom-variant dark (&:where([data-mode=dark], [data-mode=dark] *));
+
+/* Navigating is a full page load (ADR 0006). The browser keeps the old page on screen and crossfades into the new one
+   once it has rendered, instead of showing a blank page in between. The sidebar is named so it stays put while only
+   the content changes. Browsers without cross-document view transitions simply navigate as before. */
+@media (prefers-reduced-motion: no-preference) {
+    @view-transition {
+        navigation: auto;
+    }
+}
+
+.shell-nav {
+    view-transition-name: shell-nav;
+}

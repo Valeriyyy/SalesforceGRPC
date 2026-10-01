@@ -126,6 +126,24 @@ public static class OAuthErrorTranslator {
                 "the first is fine. Policy changes propagate with a delay — retry in a minute before changing " +
                 "anything else.",
 
+            // The same words from two flows, which the fingerprint tells apart: only the JWT Bearer flow signs
+            // with a certificate and passes its fingerprint; the Bootstrap's code exchange sends a Consumer Secret
+            // instead. From the JWT flow it means the External Client App holds a different certificate — most
+            // often after a Disconnect, which generates a new keypair the app has never been given.
+            "invalid_client" when text.Contains("invalid client credentials") && fingerprint is not null =>
+                "Salesforce did not accept this connection's Signing Certificate. The External Client App must " +
+                $"hold the certificate with fingerprint {fingerprint}; a Disconnect generates a new one, so after " +
+                "reconnecting it has to be uploaded again. Download it from this page, replace the certificate in " +
+                "the app's OAuth settings (JWT Bearer flow), save, then verify the connection.",
+
+            // From the Bootstrap's code exchange, the only flow that sends a secret. The browser approval has
+            // already accepted the Consumer Key by then, so the key is not the suspect.
+            "invalid_client" when text.Contains("invalid client credentials") =>
+                "Salesforce rejected the Consumer Secret for this Consumer Key. The Consumer Key was already " +
+                "accepted by the browser approval, so copy the Consumer Secret again from the External Client " +
+                "App's Consumer Key and Secret page, save the connection details, and retry. If the app was " +
+                "just created or edited, wait a few minutes first: Salesforce applies those changes with a delay.",
+
             "invalid_client_id" or "invalid_client" =>
                 "The Consumer Key does not match an External Client App in this org. Copy it again from the " +
                 "app in Setup, or confirm the app still exists.",

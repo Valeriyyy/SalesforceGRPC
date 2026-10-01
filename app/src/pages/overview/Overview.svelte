@@ -1,8 +1,8 @@
 <!-- The Overview: the Pipeline as four Stage cards in setup order, then the reserved worker-status card. -->
 <script lang="ts">
     import { ChevronRight, PartyPopper } from "@lucide/svelte";
-    import type { OverviewView } from "../../lib/views";
-    import StatusBadge from "../../lib/StatusBadge.svelte";
+    import type { OverviewView } from "../../lib/types/views";
+    import StatusBadge from "../../lib/components/StatusBadge.svelte";
     import WorkerStatusCard from "./WorkerStatusCard.svelte";
 
     let { page }: { page: OverviewView } = $props();

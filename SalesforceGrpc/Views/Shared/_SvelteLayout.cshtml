@@ -16,6 +16,15 @@
             document.documentElement.setAttribute("data-mode", mode);
         })();
     </script>
+    <style>
+        /* Painted before any stylesheet or script arrives, so a navigation never flashes the wrong colour. The
+           values are cerberus' root background (surface-50 / surface-950); the theme takes over once it loads. */
+        html { color-scheme: light; background-color: oklch(0.99 0 0); }
+        html[data-mode="dark"] { color-scheme: dark; background-color: oklch(0.18 0 0); }
+    </style>
+    @* In <head>, so the stylesheet blocks the first paint and the entry script can block rendering until the page
+       has mounted (see ViteEntryTagHelper). Module scripts run after the document is parsed, so #app exists. *@
+    <vite-entry src="src/pages/app.ts" css="src/assets/css/app.css" />
 </head>
 <body>
 <div id="app"
@@ -23,6 +32,5 @@
      data-props="@Model.Props">
     @RenderBody()
 </div>
-<vite-entry src="src/pages/app.ts" />
 </body>
 </html>

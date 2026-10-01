@@ -53,6 +53,12 @@ public interface IOrgConnectionRepository {
     /// </summary>
     Task RecordFailureAsync(string error, string? rawResponse, DateTime at, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Records what the Bootstrap's Self-Configuration did, replacing the previous Bootstrap's outcome.
+    /// </summary>
+    Task SaveSelfConfigurationAsync(bool configured, string summary, IReadOnlyList<string> manualSteps, DateTime at,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Stores the encrypted Bootstrap session material.</summary>
     Task SaveBootstrapSecretsAsync(string? encryptedConsumerSecret, string? encryptedRefreshToken,
         CancellationToken cancellationToken = default);

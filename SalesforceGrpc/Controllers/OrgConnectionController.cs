@@ -1,6 +1,8 @@
 using Application.Connections;
+using Application.Pipeline;
 using DTO;
 using Microsoft.AspNetCore.Mvc;
+using SalesforceGrpc.ViewModels;
 using Salesforce.Auth;
 using System.ComponentModel.DataAnnotations;
 using System.Data.Common;
@@ -26,7 +28,7 @@ namespace SalesforceGrpc.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
-public class OrgConnectionController : ControllerBase {
+public class OrgConnectionController : Controller {
     private readonly IOrgConnectionService _connections;
     private readonly ILogger<OrgConnectionController> _logger;
 
@@ -82,41 +84,82 @@ public class OrgConnectionController : ControllerBase {
     /// Starts the Bootstrap and redirects straight to Salesforce.
     /// </summary>
     /// <remarks>
-    /// For a plain link or a browser address bar, where there is no script to follow a URL returned as JSON.
-    /// Each call issues a fresh <c>state</c>, so this is a navigation target rather than something to bookmark.
+    /// For a plain link or a browser address bar, where there is no script to follow a URL returned as JSON —
+    /// the Org Connection page's Connect button is one. Each call issues a fresh <c>state</c>, so this is a
+    /// navigation target rather than something to bookmark. When the Bootstrap cannot start, the browser goes
+    /// back to the page with the reason as a notice.
     /// </remarks>
     [HttpGet("bootstrap/start")]
     public async Task<IActionResult> RedirectToBootstrap(CancellationToken ct) {
         var result = await Execute(() => _connections.StartBootstrapAsync(ct)).ConfigureAwait(false);
 
-        return result.Value is { } start
-            ? Redirect(start.AuthorizeUrl)
-            : result.Result!;
+        if (result.Value is { } start) {
+            return Redirect(start.AuthorizeUrl);
+        }
+
+        // A browser followed a link here, so the refusal goes back to the page rather than out as a JSON body.
+        NoticeFor(result.Result).Put(TempData);
+        return RedirectToOrgConnectionPage();
     }
 
     /// <summary>
     /// Where Salesforce sends the user's browser after they approve.
     /// </summary>
     /// <remarks>
-    /// A GET because it is a browser redirect, not a call anything makes deliberately. It returns the
-    /// connection's new state as JSON; once a setup UI exists this should redirect into it instead.
+    /// A GET because it is a browser redirect, not a call anything makes deliberately. It always lands the
+    /// browser back on the Org Connection page. What the connection records itself — Connected, or approved and
+    /// still refused — the page reads from the connection; everything else happened only here, so it travels
+    /// to the page as a one-time notice. Extends <see cref="Controller"/> rather than ControllerBase for that
+    /// TempData.
     /// </remarks>
     [HttpGet("bootstrap/callback")]
-    public Task<ActionResult<OrgConnectionDTO>> BootstrapCallback(
+    public async Task<IActionResult> BootstrapCallback(
         [FromQuery] string? code, [FromQuery] string? state,
         [FromQuery] string? error, [FromQuery(Name = "error_description")] string? errorDescription,
         CancellationToken ct) {
+        var notice = await CompleteBootstrap(code, state, error, errorDescription, ct).ConfigureAwait(false);
+        notice?.Put(TempData);
+        return RedirectToOrgConnectionPage();
+    }
+
+    private RedirectResult RedirectToOrgConnectionPage() =>
+        Redirect(StagePages.Href(PipelineStage.OrgConnection));
+
+    private async Task<OrgConnectionNotice?> CompleteBootstrap(string? code, string? state, string? error,
+        string? errorDescription, CancellationToken ct) {
         if (!string.IsNullOrWhiteSpace(error)) {
             // Salesforce reports a refused approval on the redirect rather than in a response body, so this
             // is the only place the user's "deny" is visible.
             _logger.LogWarning("The Bootstrap was not approved: {Error} {Description}", error, errorDescription);
-            return Task.FromResult<ActionResult<OrgConnectionDTO>>(BadRequest(new {
-                error = $"Salesforce did not approve the connection: {error}",
-                errorDescription
-            }));
+            return OrgConnectionNotice.Failure(
+                $"Salesforce did not approve the connection: {error}" +
+                (string.IsNullOrWhiteSpace(errorDescription) ? "." : $" — {errorDescription}"));
         }
 
-        return Execute(() => _connections.CompleteBootstrapAsync(code ?? "", state ?? "", ct));
+        var result = await Execute(() => _connections.CompleteBootstrapAsync(code ?? "", state ?? "", ct)).ConfigureAwait(false);
+
+        return result switch {
+            { Value.ConnectionState: "Connected" } => OrgConnectionNotice.Success(
+                $"Approved and connected to {result.Value.OrgUrl}."),
+            // Approved, but the token is still refused: the connection records that, and the page shows it.
+            { Value: not null } => null,
+            _ => NoticeFor(result.Result)
+        };
+    }
+
+    /// <summary>Turns the error body <see cref="Execute{T}"/> produced into the notice the page shows.</summary>
+    private static OrgConnectionNotice NoticeFor(IActionResult? failure) {
+        var body = (failure as ObjectResult)?.Value;
+        return body switch {
+            OrgMismatchBody mismatch => OrgConnectionNotice.Mismatch(mismatch.Error, mismatch.StoredOrgId, mismatch.DiscoveredOrgId),
+            SalesforceFailureBody salesforce => OrgConnectionNotice.SalesforceFailure(
+                "Salesforce refused to complete the approval.",
+                new SalesforceErrorView(salesforce.Error, salesforce.ErrorDescription, salesforce.Guidance,
+                    salesforce.RawResponse, null)),
+            DatabaseErrorBody database => OrgConnectionNotice.Failure($"{database.Error} ({database.Detail})"),
+            ErrorBody plain => OrgConnectionNotice.Failure(plain.Error),
+            _ => OrgConnectionNotice.Failure("The approval could not be completed. See the application log.")
+        };
     }
 
     /// <summary>
@@ -148,46 +191,55 @@ public class OrgConnectionController : ControllerBase {
 
     private async Task<ActionResult<T>> Execute<T>(Func<Task<T>> action) {
         try {
-            return Ok(await action().ConfigureAwait(false));
+            // The value itself rather than Ok(value): both answer 200 with the same body, but only this sets
+            // ActionResult<T>.Value, which the redirecting and file-returning actions read.
+            return await action().ConfigureAwait(false);
         } catch (ValidationException ex) {
             _logger.LogError(ex, ex.Message);
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(new ErrorBody(ex.Message));
         } catch (KeyNotFoundException ex) {
-            return NotFound(new { error = ex.Message });
+            return NotFound(new ErrorBody(ex.Message));
         } catch (NoOrgConnectionException ex) {
-            return NotFound(new { error = ex.Message });
+            return NotFound(new ErrorBody(ex.Message));
         } catch (OrgMismatchException ex) {
             // A conflict rather than a bad request: the request was well formed and the refusal is about the
             // state of the world. Both org ids travel with it, because that is the first thing anyone asks.
             _logger.LogError(ex, ex.Message);
-            return Conflict(new { error = ex.Message, storedOrgId = ex.StoredOrgId, discoveredOrgId = ex.DiscoveredOrgId });
+            return Conflict(new OrgMismatchBody(ex.Message, ex.StoredOrgId, ex.DiscoveredOrgId));
         } catch (SalesforceOAuthException ex) {
             // Both halves, always. The translation table is incomplete by construction and an unrecognised
             // error must never be replaced by a friendly guess.
             _logger.LogError(ex, "Salesforce rejected the request");
-            return StatusCode(StatusCodes.Status502BadGateway, new {
-                error = ex.Error.Error,
-                errorDescription = ex.Error.ErrorDescription,
-                guidance = ex.Error.Guidance,
-                rawResponse = ex.Error.RawResponse
-            });
+            return StatusCode(StatusCodes.Status502BadGateway, new SalesforceFailureBody(
+                ex.Error.Error, ex.Error.ErrorDescription, ex.Error.Guidance, ex.Error.RawResponse));
         } catch (SecretsUnreadableException ex) {
             // Not the user's mistake and not fixable through this API, so it is reported as the service being
             // unable rather than the request being wrong.
             _logger.LogCritical(ex, "Stored credentials cannot be decrypted");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = ex.Message });
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ErrorBody(ex.Message));
         } catch (SecretProtectionUnavailableException ex) {
             _logger.LogCritical(ex, "No protecting key is available");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = ex.Message });
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ErrorBody(ex.Message));
         } catch (DbException ex) {
             // Setup is exactly when the App Database is most likely to be unmigrated, and a bare 500 during
             // setup sends the user looking at Salesforce for a fault that is on this side.
             _logger.LogError(ex, "The App Database rejected a request from the Org Connection API");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new {
-                error = "The App Database could not be read. It may be unreachable, or the Org Connection " +
-                        "tables may not exist yet — apply Database/Definitions/migrations/002-salesforce-org-connections.sql.",
-                detail = ex.Message
-            });
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new DatabaseErrorBody(
+                "The App Database could not be read. It may be unreachable, or the Org Connection tables may " +
+                "not be up to date — apply Database/Definitions/migrations/002-salesforce-org-connections.sql " +
+                "and 006-self-configuration-outcome.sql.",
+                ex.Message));
         }
     }
+
+    // The error bodies, typed so the callback can turn them into a notice. They serialize camelCase exactly as
+    // the anonymous objects they replaced did: {error}, {error, detail}, {error, storedOrgId, discoveredOrgId}
+    // and {error, errorDescription, guidance, rawResponse}.
+    private record ErrorBody(string Error);
+
+    private sealed record DatabaseErrorBody(string Error, string Detail) : ErrorBody(Error);
+
+    private sealed record OrgMismatchBody(string Error, string StoredOrgId, string DiscoveredOrgId);
+
+    private sealed record SalesforceFailureBody(string Error, string ErrorDescription, string? Guidance, string RawResponse);
 }
