@@ -7,7 +7,7 @@ namespace Salesforce.Auth;
 /// The one-time browser exchange that gives the application its first Salesforce session.
 /// </summary>
 /// <remarks>
-/// A plain OAuth 2.0 authorization code flow against the External Client App the user created by hand. It
+/// An OAuth 2.0 authorization code flow with PKCE against the External Client App the user created by hand. It
 /// exists because nothing else can get a session in a customer's org without one: the Metadata API needs a
 /// session, a session needs a registration, and a registration needs the Metadata API. See docs/adr/0003 for
 /// every route that is closed.
@@ -17,13 +17,20 @@ namespace Salesforce.Auth;
 /// </para>
 /// </remarks>
 public interface IBootstrapOAuthClient {
-    /// <summary>The URL to send the Administering User's browser to.</summary>
-    string BuildAuthorizeUrl(SalesforceLoginHost host, string consumerKey, string callbackUrl, string state);
+    /// <summary>
+    /// The URL to send the Administering User's browser to, carrying the PKCE challenge for
+    /// <paramref name="codeVerifier"/>.
+    /// </summary>
+    string BuildAuthorizeUrl(SalesforceLoginHost host, string consumerKey, string callbackUrl, string state,
+        string codeVerifier);
 
-    /// <summary>Exchanges an authorization code for an access token.</summary>
+    /// <summary>
+    /// Exchanges an authorization code for an access token, proving with <paramref name="codeVerifier"/> that
+    /// this is the application that started the authorization.
+    /// </summary>
     /// <exception cref="SalesforceOAuthException">Salesforce rejected the exchange.</exception>
     Task<AuthToken> ExchangeCodeAsync(SalesforceLoginHost host, string consumerKey, string consumerSecret,
-        string callbackUrl, string code, CancellationToken cancellationToken = default);
+        string callbackUrl, string code, string codeVerifier, CancellationToken cancellationToken = default);
 }
 
 /// <inheritdoc />
@@ -45,20 +52,23 @@ public sealed class BootstrapOAuthClient : IBootstrapOAuthClient {
         _logger = logger;
     }
 
-    public string BuildAuthorizeUrl(SalesforceLoginHost host, string consumerKey, string callbackUrl, string state) {
+    public string BuildAuthorizeUrl(SalesforceLoginHost host, string consumerKey, string callbackUrl, string state,
+        string codeVerifier) {
         var query = string.Join('&', [
             "response_type=code",
             $"client_id={WebUtility.UrlEncode(consumerKey)}",
             $"redirect_uri={WebUtility.UrlEncode(callbackUrl)}",
             $"scope={WebUtility.UrlEncode(Scopes)}",
-            $"state={WebUtility.UrlEncode(state)}"
+            $"state={WebUtility.UrlEncode(state)}",
+            $"code_challenge={WebUtility.UrlEncode(Pkce.ChallengeFor(codeVerifier))}",
+            $"code_challenge_method={Pkce.ChallengeMethod}"
         ]);
 
         return $"{host.AuthorizeEndpoint}?{query}";
     }
 
     public async Task<AuthToken> ExchangeCodeAsync(SalesforceLoginHost host, string consumerKey, string consumerSecret,
-        string callbackUrl, string code, CancellationToken cancellationToken = default) {
+        string callbackUrl, string code, string codeVerifier, CancellationToken cancellationToken = default) {
         using var client = _httpClientFactory.CreateClient(HttpClientName);
 
         AuthToken token;
@@ -70,7 +80,8 @@ public sealed class BootstrapOAuthClient : IBootstrapOAuthClient {
                 // Sent again on the exchange, and it must match the authorize request exactly. This is the
                 // usual source of redirect_uri_mismatch, which is why both come from one configured value.
                 new KeyValuePair<string, string>("redirect_uri", callbackUrl),
-                new KeyValuePair<string, string>("code", code)
+                new KeyValuePair<string, string>("code", code),
+                new KeyValuePair<string, string>("code_verifier", codeVerifier)
             ], certificateFingerprint: null, cancellationToken).ConfigureAwait(false);
         } catch (SalesforceOAuthException exc) {
             _logger.LogError("The Bootstrap code exchange failed: {Error}", exc.Error.Summary);

@@ -148,17 +148,17 @@ public sealed class OrgConnectionService : IOrgConnectionService {
                 "details first; it is discarded once the connection works.");
         }
 
-        var state = _stateStore.Issue();
+        var request = _stateStore.Issue();
 
         return new BootstrapStartDTO {
-            AuthorizeUrl = _bootstrap.BuildAuthorizeUrl(
-                SalesforceLoginHost.For(connection.IsSandbox), connection.ConsumerKey, callbackUrl, state)
+            AuthorizeUrl = _bootstrap.BuildAuthorizeUrl(SalesforceLoginHost.For(connection.IsSandbox),
+                connection.ConsumerKey, callbackUrl, request.State, request.CodeVerifier)
         };
     }
 
     public async Task<OrgConnectionDTO> CompleteBootstrapAsync(string code, string state,
         CancellationToken cancellationToken = default) {
-        if (!_stateStore.TryConsume(state)) {
+        if (!_stateStore.TryConsume(state, out var codeVerifier)) {
             // Not "try again": an unrecognised state is either a replay or a callback this application never
             // started, and neither should be exchanged for a token.
             throw new ValidationException(
@@ -183,7 +183,7 @@ public sealed class OrgConnectionService : IOrgConnectionService {
 
         var session = await _bootstrap.ExchangeCodeAsync(
             SalesforceLoginHost.For(connection.IsSandbox), connection.ConsumerKey, consumerSecret, callbackUrl,
-            code, cancellationToken).ConfigureAwait(false);
+            code, codeVerifier, cancellationToken).ConfigureAwait(false);
 
         // Kept until the first JWT succeeds, not until the deploy returns. A metadata deploy is eventually
         // consistent, so "configured, JWT not working yet" is expected — and this session is the only way to

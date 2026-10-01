@@ -17,5 +17,10 @@
             {/if}
         </div>
     </li>
-    <li>Select the scopes <code class="code">api</code>, <code class="code">refresh_token</code> and <code class="code">web</code>, save, then open <strong>Consumer Key and Secret</strong>. You'll paste both into the next step.</li>
+    <li>
+        Under <strong>Selected OAuth Scopes</strong>, add <strong>Manage user data via APIs (api)</strong> and
+        <strong>Perform requests at any time (refresh_token, offline_access)</strong>. Both are required: without
+        them Salesforce refuses the approval with <code class="code">invalid_scope</code>. Save, then open
+        <strong>Consumer Key and Secret</strong>. You'll paste both into the next step.
+    </li>
 </ol>
