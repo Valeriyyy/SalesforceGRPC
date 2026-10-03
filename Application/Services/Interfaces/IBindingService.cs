@@ -72,6 +72,12 @@ public interface IBindingService {
     Task<int?> GetPrimaryChannelIdAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Leaves the application with no Primary Channel, so nothing streams. Keeps the channel's Checkpoint, so
+    /// making it Primary again can Resume, and changes no Binding.
+    /// </summary>
+    Task ClearPrimaryChannelAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Makes one channel the Primary Channel. Rejects a channel that is not Change Data Capture.
     /// </summary>
     /// <remarks>

@@ -114,6 +114,11 @@ public class BindingsController : ControllerBase {
     public Task<ActionResult> SetPrimaryChannel([FromBody] SetPrimaryChannelDTO dto, CancellationToken ct) =>
         Execute(() => _bindings.SetPrimaryChannelAsync(dto, ct));
 
+    /// <summary>Stops streaming by leaving no Primary Channel. The Checkpoint is kept for Resume.</summary>
+    [HttpDelete("primary-channel")]
+    public Task<ActionResult> ClearPrimaryChannel(CancellationToken ct) =>
+        Execute(() => _bindings.ClearPrimaryChannelAsync(ct));
+
     /// <summary>Whether a channel has a Checkpoint, when it was saved, whether it can be resumed, and its Starting Point.</summary>
     [HttpGet("channels/{channelId:int}/start")]
     public Task<ActionResult<ChannelStartDTO>> GetChannelStart(int channelId, CancellationToken ct) =>

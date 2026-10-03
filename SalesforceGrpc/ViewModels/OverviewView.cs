@@ -170,7 +170,7 @@ public sealed record StageView(
     /// Hours up to three days, because that is the scale the Checkpoint's retention is measured in. Rounded, not
     /// truncated, so an age and the time left of the same Checkpoint add up to 72 h.
     /// </summary>
-    private static string Duration(TimeSpan span) => span switch {
+    internal static string Duration(TimeSpan span) => span switch {
         { TotalMinutes: < 1 } => "under a minute",
         { TotalMinutes: < 59.5 } => $"{Math.Round(span.TotalMinutes)} min",
         { TotalHours: < 71.5 } => $"{Math.Round(span.TotalHours)} h",
