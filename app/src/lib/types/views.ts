@@ -119,3 +119,94 @@ export interface OrgMismatchView {
     storedOrgId: string;
     discoveredOrgId: string;
 }
+
+// Channels pages (ChannelsViews.cs). Only Change Data Capture Channels ever appear.
+
+export type StartingPoint = "latest" | "earliest";
+export type BindingState = "incomplete" | "active" | "inactive";
+
+export interface ChannelsView {
+    orgConnectionReady: boolean;
+    channels: ChannelRowView[];
+    lastSyncedAt: string | null;
+    notice: ChannelsNotice | null;
+}
+
+export interface ChannelRowView {
+    id: number;
+    label: string;
+    fullName: string;
+    isPrimary: boolean;
+    memberCount: number;
+    unboundCount: number;
+    /** The Primary Channel's Checkpoint, or where it starts without one. Null for every other Channel. */
+    streaming: string | null;
+}
+
+export interface ChannelView {
+    orgConnectionReady: boolean;
+    /** Null when there is no such Change Data Capture Channel. */
+    channel: ChannelDetailView | null;
+    notice: ChannelsNotice | null;
+}
+
+export interface ChannelDetailView {
+    id: number;
+    label: string;
+    fullName: string;
+    isPrimary: boolean;
+    startingPoint: StartingPoint;
+    checkpoint: CheckpointView | null;
+    members: ChannelMemberView[];
+}
+
+export interface CheckpointView {
+    savedAt: string;
+    age: string;
+    expiresIn: string;
+    expired: boolean;
+    canResume: boolean;
+}
+
+export interface ChannelMemberView {
+    id: number;
+    entity: string;
+    filterExpression: string | null;
+    enrichedFields: string[];
+    binding: MemberBindingView | null;
+}
+
+export interface MemberBindingView {
+    id: number;
+    targetTable: string;
+    state: BindingState;
+}
+
+export interface NewChannelView {
+    orgConnectionReady: boolean;
+    primaryChannelFullName: string | null;
+    makePrimaryByDefault: boolean;
+}
+
+export interface ChannelsNotice {
+    kind: "success" | "error";
+    message: string;
+    resync: ResyncReport | null;
+}
+
+/** Also the body of POST api/PlatformEventManagement/resync. */
+export interface ResyncReport {
+    channelsAdded: string[];
+    channelsRemoved: string[];
+    channelsRelabelled: string[];
+    membersAdded: ResyncMemberChange[];
+    membersRemoved: ResyncMemberChange[];
+    primaryChannelRemoved: string | null;
+    hasChanges: boolean;
+}
+
+export interface ResyncMemberChange {
+    channel: string;
+    selectedEntity: string;
+    bindingSetInactive: string | null;
+}

@@ -3,6 +3,9 @@ import "../assets/css/app.css";
 
 import PageHost from "../lib/shell/PageHost.svelte";
 import type { PageView } from "../lib/types/views";
+import Channel from "./channels/Channel.svelte";
+import Channels from "./channels/Channels.svelte";
+import NewChannel from "./channels/NewChannel.svelte";
 import OrgConnection from "./org-connection/OrgConnection.svelte";
 import Overview from "./overview/Overview.svelte";
 import Placeholder from "./placeholder/Placeholder.svelte";
@@ -12,7 +15,10 @@ import Placeholder from "./placeholder/Placeholder.svelte";
 const componentRegistry: Record<string, Component<{ page: any }>> = {
     overview: Overview,
     placeholder: Placeholder,
-    "org-connection": OrgConnection
+    "org-connection": OrgConnection,
+    channels: Channels,
+    "channel-new": NewChannel,
+    channel: Channel
 };
 
 function decodeProps(encodedProps: string): PageView<unknown> | null {

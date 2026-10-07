@@ -101,6 +101,20 @@ public class BaseSalesforceClient {
     }
 
     /// <summary>
+    /// Posts to a Tooling API resource that answers with its own shape rather than a save result, such as
+    /// <c>composite</c>.
+    /// </summary>
+    protected async Task<T?> ToolingPostForAsync<T>(string relativePath, object body, CancellationToken cancellationToken = default) {
+        var url = await ToolingUrlAsync(relativePath, cancellationToken).ConfigureAwait(false);
+        using var content = Serialize(body);
+
+        using var response = await _client.PostAsync(url, content, cancellationToken).ConfigureAwait(false);
+        var responseBody = await ReadOrThrowAsync(response, HttpMethod.Post, url, cancellationToken).ConfigureAwait(false);
+
+        return JsonConvert.DeserializeObject<T>(responseBody);
+    }
+
+    /// <summary>
     /// Updates a record via the Tooling API. Returns no content on success.
     /// </summary>
     protected async Task ToolingPatchAsync(string relativePath, object body, CancellationToken cancellationToken = default) {

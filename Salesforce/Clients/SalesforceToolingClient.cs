@@ -157,6 +157,37 @@ public sealed class SalesforceToolingClient : BaseSalesforceClient {
     }
 
     /// <summary>
+    /// Adds several events/entities to channels in one all-or-nothing <c>composite</c> request, returning one
+    /// subresponse per member in the order given.
+    /// </summary>
+    /// <remarks>
+    /// With <c>allOrNone</c> Salesforce rolls the whole request back when any member fails: the failing member
+    /// carries its errors and the rest come back as <c>PROCESSING_HALTED</c>. Callers should still check each
+    /// subresponse for a created id rather than trust the rollback, which Salesforce does not document for
+    /// metadata-backed objects.
+    /// </remarks>
+    public async Task<List<ToolingCompositeSubresponse>> CreateChannelMembersAsync(
+        IReadOnlyList<(string FullName, PlatformEventChannelMemberMetadata Metadata)> members,
+        CancellationToken cancellationToken = default) {
+        var payload = new {
+            allOrNone = true,
+            compositeRequest = members.Select((m, i) => new {
+                method = "POST",
+                url = $"/services/data/v{_config.ApiVersion}/tooling/sobjects/{ChannelMemberSObject}",
+                referenceId = $"member{i}",
+                body = new { m.FullName, m.Metadata }
+            }).ToArray()
+        };
+
+        _logger.LogInformation("Creating {Count} channel members in one all-or-nothing request: {Entities}",
+            members.Count, string.Join(", ", members.Select(m => m.Metadata.SelectedEntity)));
+
+        var response = await ToolingPostForAsync<ToolingCompositeResponse>("composite", payload, cancellationToken)
+            .ConfigureAwait(false);
+        return response?.CompositeResponse ?? [];
+    }
+
+    /// <summary>
     /// Updates a channel member. Only filterExpression and enrichedFields are mutable, but Salesforce
     /// requires the complete Metadata object including the immutable eventChannel and selectedEntity.
     /// Supplied enriched fields replace the existing set.

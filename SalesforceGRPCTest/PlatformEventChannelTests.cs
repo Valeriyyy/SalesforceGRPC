@@ -264,7 +264,8 @@ public class PlatformEventChannelTests {
                 config,
                 NullLogger<SalesforceToolingClient>.Instance);
 
-            Service = new PlatformEventService(toolingClient, Repo, NullLogger<PlatformEventService>.Instance);
+            Service = new PlatformEventService(toolingClient, Repo, Substitute.For<IMetaRepository>(),
+                Substitute.For<Application.Bindings.IConfigurationChangeSignal>(), NullLogger<PlatformEventService>.Instance);
         }
 
         public void WithChannel(PlatformEventChannelEntity channel) =>

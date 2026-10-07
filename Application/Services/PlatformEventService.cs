@@ -1,3 +1,4 @@
+using Application.Bindings;
 using Application.Mappers;
 using Application.Services.Interfaces;
 using Database.Models;
@@ -36,12 +37,16 @@ public class PlatformEventService : IPlatformEventService {
 
     private readonly SalesforceToolingClient _toolingClient;
     private readonly IPlatformEventChannelRepository _repo;
+    private readonly IMetaRepository _meta;
+    private readonly IConfigurationChangeSignal _changeSignal;
     private readonly ILogger<PlatformEventService> _logger;
 
-    public PlatformEventService(SalesforceToolingClient toolingClient,
-        IPlatformEventChannelRepository repo, ILogger<PlatformEventService> logger) {
+    public PlatformEventService(SalesforceToolingClient toolingClient, IPlatformEventChannelRepository repo,
+        IMetaRepository meta, IConfigurationChangeSignal changeSignal, ILogger<PlatformEventService> logger) {
         _toolingClient = toolingClient;
         _repo = repo;
+        _meta = meta;
+        _changeSignal = changeSignal;
         _logger = logger;
     }
 
@@ -61,7 +66,64 @@ public class PlatformEventService : IPlatformEventService {
     /// </summary>
     public async Task<PlatformEventChannelEntity> CreateChannelAsync(CreateChannelDTO request, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(request);
+        var (channel, _) = await CreateOrAdoptAsync(request, cancellationToken).ConfigureAwait(false);
+        return channel;
+    }
 
+    /// <summary>
+    /// Creates (or adopts) a Change Data Capture Channel, sets where it starts, and optionally makes it the Primary
+    /// Channel. A Channel new to the Mirror has no Checkpoint — one never outlives its Mirror row — so there is no
+    /// Resume choice to make and it can become the Primary Channel directly.
+    /// </summary>
+    public async Task<NewChannelResultDTO> CreateDataChannelAsync(NewChannelDTO request, CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var startingPoint = StartingPoint.Latest;
+        if (!string.IsNullOrWhiteSpace(request.StartingPoint) &&
+            (!Enum.TryParse(request.StartingPoint, ignoreCase: true, out startingPoint) || !Enum.IsDefined(startingPoint))) {
+            throw new ValidationException(
+                $"'{request.StartingPoint}' is not a Starting Point. Choose {nameof(StartingPoint.Latest)} or {nameof(StartingPoint.Earliest)}.");
+        }
+
+        // A Channel already here may have a Checkpoint, and making it Primary must then offer Resume, Earliest or
+        // Latest — which only its own page does. Creating it again would adopt it and skip that choice.
+        var fullName = request.FullName?.Trim() ?? string.Empty;
+        var mirrored = await _repo.GetChannelsAsync(cancellationToken).ConfigureAwait(false);
+        if (mirrored.FirstOrDefault(c => string.Equals(c.FullName, fullName, StringComparison.OrdinalIgnoreCase)) is { } existing) {
+            throw new ValidationException($"{existing.FullName} already exists here. Open it from the Channels list instead.");
+        }
+
+        var (channel, adopted) = await CreateOrAdoptAsync(new CreateChannelDTO {
+            FullName = request.FullName, Label = request.Label, ChannelType = ChannelTypeData
+        }, cancellationToken).ConfigureAwait(false);
+
+        if (!channel.IsChangeDataCapture) {
+            throw new ValidationException(
+                $"Salesforce already has a channel named '{channel.FullName}', but it carries platform events, not Change Data Capture. Choose another name.");
+        }
+
+        await _repo.SetStartingPointAsync(channel.Id, startingPoint, cancellationToken).ConfigureAwait(false);
+        if (request.MakePrimary) {
+            await _repo.SetPrimaryChannelAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+            _changeSignal.Signal();
+            _logger.LogInformation("Primary Channel set to new Channel {FullName}, starting from {StartingPoint}",
+                channel.FullName, startingPoint);
+        }
+
+        var members = await _repo.GetMembersByChannelIdAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+        return new NewChannelResultDTO {
+            ChannelId = channel.Id, FullName = channel.FullName, Adopted = adopted, MemberCount = members.Count
+        };
+    }
+
+    /// <summary>
+    /// Creates a channel in Salesforce and mirrors it locally. If a channel with the same developer name
+    /// already exists in Salesforce — e.g. left behind after the local mirror was deleted and the user is
+    /// re-creating the org connection — it is adopted, along with any members it already has, instead of
+    /// failing on a duplicate-value error from Salesforce.
+    /// </summary>
+    private async Task<(PlatformEventChannelEntity Channel, bool Adopted)> CreateOrAdoptAsync(CreateChannelDTO request,
+        CancellationToken cancellationToken) {
         var fullName = request.FullName?.Trim() ?? string.Empty;
         ValidateChannelFullName(fullName);
 
@@ -81,7 +143,7 @@ public class PlatformEventService : IPlatformEventService {
                 fullName, existing.Id);
             var adopted = await MirrorChannelAsync(existing, cancellationToken).ConfigureAwait(false);
             await SyncMembersForChannelAsync(adopted.SfId, adopted.Id, cancellationToken).ConfigureAwait(false);
-            return adopted;
+            return (adopted, true);
         }
 
         var saveResult = await _toolingClient
@@ -92,7 +154,7 @@ public class PlatformEventService : IPlatformEventService {
                       ?? throw new InvalidOperationException(
                           $"Channel {saveResult.Id} was created but could not be read back from Salesforce.");
 
-        return await MirrorChannelAsync(created, cancellationToken).ConfigureAwait(false);
+        return (await MirrorChannelAsync(created, cancellationToken).ConfigureAwait(false), false);
     }
 
     /// <summary>
@@ -137,7 +199,8 @@ public class PlatformEventService : IPlatformEventService {
 
     /// <summary>
     /// Deletes a channel in Salesforce, then removes the local mirror. Members are deleted first so a
-    /// failure names the member that blocked it, though Salesforce would also cascade them.
+    /// failure names the member that blocked it, though Salesforce would also cascade them. The Channel's
+    /// Checkpoint goes with its Mirror row.
     /// </summary>
     public async Task DeleteChannelAsync(int id, CancellationToken cancellationToken = default) {
         var existing = await RequireChannelAsync(id, cancellationToken).ConfigureAwait(false);
@@ -148,6 +211,14 @@ public class PlatformEventService : IPlatformEventService {
 
         await _toolingClient.DeleteChannelAsync(existing.SfId, cancellationToken).ConfigureAwait(false);
         await _repo.DeleteChannelAsync(existing.Id, cancellationToken).ConfigureAwait(false);
+
+        // Deleting the Primary Channel is clearing it: nothing streams, and no Binding changes state — its
+        // members leave as a side effect of the Channel going, not as a decision about each Entity.
+        if (existing.IsPrimary) {
+            _logger.LogWarning("Deleted the Primary Channel {FullName}; nothing streams until another is chosen",
+                existing.FullName);
+            _changeSignal.Signal();
+        }
     }
 
     #endregion
@@ -189,7 +260,122 @@ public class PlatformEventService : IPlatformEventService {
                       ?? throw new InvalidOperationException(
                           $"Channel member {saveResult.Id} was created but could not be read back from Salesforce.");
 
-        return await _repo.UpsertMemberAsync(created.ToEntity(channel.Id, fullName), cancellationToken).ConfigureAwait(false);
+        var mirrored = await MirrorMemberAsync(created.ToEntity(channel.Id, fullName), cancellationToken).ConfigureAwait(false);
+        if (channel.IsPrimary) {
+            _changeSignal.Signal();
+        }
+        return mirrored;
+    }
+
+    public async Task<AddChannelMembersResultDTO> AddChannelMembersAsync(int channelId, AddChannelMembersDTO request,
+        CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var channel = await RequireChannelAsync(channelId, cancellationToken).ConfigureAwait(false);
+        var requested = request.Members ?? [];
+        if (requested.Count == 0) {
+            throw new ValidationException("Choose at least one Entity to add.");
+        }
+
+        // Everything is checked before Salesforce is called, so a submission it was always going to refuse
+        // costs no callout and leaves nothing to roll back.
+        var carried = channel.Members.Select(m => m.SelectedEntity).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var chosen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var members = new List<(string FullName, PlatformEventChannelMemberMetadata Metadata)>();
+        foreach (var item in requested) {
+            var entity = item.SelectedEntity?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(entity)) {
+                throw new ValidationException("Every Entity to add needs a name.");
+            }
+            ValidateEntityMatchesChannelType(entity, channel.ChannelType);
+            if (carried.Contains(entity)) {
+                throw new ValidationException($"'{channel.FullName}' already carries {entity}.");
+            }
+            if (!chosen.Add(entity)) {
+                throw new ValidationException($"{entity} was chosen more than once.");
+            }
+
+            members.Add((SalesforceToolingClient.BuildMemberFullName(channel.FullName, entity),
+                new PlatformEventChannelMemberMetadata {
+                    EventChannel = channel.FullName,
+                    SelectedEntity = entity,
+                    FilterExpression = string.IsNullOrWhiteSpace(item.FilterExpression) ? null : item.FilterExpression.Trim(),
+                    EnrichedFields = ChannelMapper.ToEnrichedFields(item.EnrichedFields)
+                }));
+        }
+
+        var responses = await _toolingClient.CreateChannelMembersAsync(members, cancellationToken).ConfigureAwait(false);
+        if (responses.Count != members.Count) {
+            throw new InvalidOperationException(
+                $"Salesforce answered {responses.Count} of {members.Count} channel member creates.");
+        }
+
+        if (responses.All(r => r.IsSuccess)) {
+            var outcomes = new List<ChannelMemberOutcomeDTO>();
+            for (var i = 0; i < members.Count; i++) {
+                var sfId = responses[i].CreatedId
+                           ?? throw new InvalidOperationException($"Salesforce created {members[i].Metadata.SelectedEntity} without returning its id.");
+                var created = await _toolingClient.GetChannelMemberAsync(sfId, cancellationToken).ConfigureAwait(false)
+                              ?? throw new InvalidOperationException(
+                                  $"Channel member {sfId} was created but could not be read back from Salesforce.");
+                var mirrored = await MirrorMemberAsync(created.ToEntity(channel.Id, members[i].FullName), cancellationToken)
+                    .ConfigureAwait(false);
+                outcomes.Add(new ChannelMemberOutcomeDTO {
+                    SelectedEntity = mirrored.SelectedEntity, Status = MemberOutcome.Added, MemberId = mirrored.Id
+                });
+            }
+
+            if (channel.IsPrimary) {
+                _changeSignal.Signal();
+            }
+            return new AddChannelMembersResultDTO { Added = true, Outcomes = outcomes };
+        }
+
+        return await RejectChannelMembersAsync(channel, members, responses, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reports a refused submission per Entity, first removing any member Salesforce created regardless, so the
+    /// submission stays all or nothing even if the composite rollback did not cover these metadata-backed rows.
+    /// </summary>
+    private async Task<AddChannelMembersResultDTO> RejectChannelMembersAsync(PlatformEventChannelEntity channel,
+        List<(string FullName, PlatformEventChannelMemberMetadata Metadata)> members,
+        List<ToolingCompositeSubresponse> responses, CancellationToken cancellationToken) {
+        var result = new AddChannelMembersResultDTO { Added = false };
+
+        for (var i = 0; i < members.Count; i++) {
+            var entity = members[i].Metadata.SelectedEntity!;
+            var response = responses[i];
+
+            if (response.CreatedId is { } sfId) {
+                try {
+                    await _toolingClient.DeleteChannelMemberAsync(sfId, cancellationToken).ConfigureAwait(false);
+                } catch (SalesforceToolingException ex) {
+                    _logger.LogError(ex, "Could not remove {Entity} ({SfId}) from {Channel} after its submission failed",
+                        entity, sfId, channel.FullName);
+                    result.LeftInSalesforce.Add(entity);
+                }
+                result.Outcomes.Add(new ChannelMemberOutcomeDTO { SelectedEntity = entity, Status = MemberOutcome.NotAdded });
+                continue;
+            }
+
+            // PROCESSING_HALTED marks a subrequest Salesforce skipped because another one failed.
+            var errors = response.Errors;
+            var halted = errors.Count > 0 && errors.All(e => e.ErrorCode == "PROCESSING_HALTED");
+            result.Outcomes.Add(halted
+                ? new ChannelMemberOutcomeDTO { SelectedEntity = entity, Status = MemberOutcome.NotAdded }
+                : new ChannelMemberOutcomeDTO {
+                    SelectedEntity = entity,
+                    Status = MemberOutcome.Failed,
+                    Message = errors.Count == 0
+                        ? $"Salesforce refused it (HTTP {response.HttpStatusCode})."
+                        : string.Join(" ", errors.Select(e => e.ErrorCode is null ? e.Message : $"{e.ErrorCode}: {e.Message}"))
+                });
+        }
+
+        _logger.LogWarning("Salesforce refused adding {Entities} to {Channel}; none were added",
+            string.Join(", ", members.Select(m => m.Metadata.SelectedEntity)), channel.FullName);
+        return result;
     }
 
     /// <summary>
@@ -234,9 +420,15 @@ public class PlatformEventService : IPlatformEventService {
     /// </summary>
     public async Task RemoveChannelMemberAsync(int memberId, CancellationToken cancellationToken = default) {
         var existing = await RequireMemberAsync(memberId, cancellationToken).ConfigureAwait(false);
+        var channel = await RequireChannelAsync(existing.ChannelId, cancellationToken).ConfigureAwait(false);
 
         await _toolingClient.DeleteChannelMemberAsync(existing.SfId, cancellationToken).ConfigureAwait(false);
         await _repo.DeleteMemberBySfIdAsync(existing.SfId, cancellationToken).ConfigureAwait(false);
+
+        if (channel.IsPrimary) {
+            await DeactivateUncarriedBindingAsync(existing.SelectedEntity).ConfigureAwait(false);
+            _changeSignal.Signal();
+        }
     }
 
     #endregion
@@ -250,14 +442,24 @@ public class PlatformEventService : IPlatformEventService {
 
     /// <summary>
     /// Rebuilds the local mirror from Salesforce so channels created, changed or removed in Setup are
-    /// reflected here.
+    /// reflected here, and reports the difference.
     /// </summary>
     /// <remarks>
     /// Each channel and member is retrieved individually because list queries return IDs rather than the
     /// readable channel and entity names. Orgs are capped at 100 channels, so the call volume is bounded
     /// and this is an explicit admin action rather than a hot path.
     /// </remarks>
-    public async Task<List<PlatformEventChannelEntity>> ResyncFromSalesforceAsync(CancellationToken cancellationToken = default) {
+    public async Task<ResyncReportDTO> ResyncFromSalesforceAsync(CancellationToken cancellationToken = default) {
+        // Snapshotted by value: the upserts below update these same entities in place in some stores.
+        var before = new Dictionary<string, (PlatformEventChannelEntity Channel, string? Label, HashSet<string> Entities)>();
+        foreach (var channel in await _repo.GetChannelsAsync(cancellationToken).ConfigureAwait(false)) {
+            var members = await _repo.GetMembersByChannelIdAsync(channel.Id, cancellationToken).ConfigureAwait(false);
+            before[channel.SfId] = (channel, channel.MasterLabel,
+                members.Select(m => m.SelectedEntity).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        }
+
+        var report = new ResyncReportDTO();
+        var primaryChanged = false;
         var summaries = await _toolingClient.ListChannelsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         var seenSfIds = new List<string>();
 
@@ -275,7 +477,35 @@ public class PlatformEventService : IPlatformEventService {
             var mirrored = await MirrorChannelAsync(channel, cancellationToken).ConfigureAwait(false);
             seenSfIds.Add(mirrored.SfId);
 
-            await SyncMembersForChannelAsync(mirrored.SfId, mirrored.Id, cancellationToken).ConfigureAwait(false);
+            var members = await SyncMembersForChannelAsync(mirrored.SfId, mirrored.Id, cancellationToken).ConfigureAwait(false);
+            if (!mirrored.IsChangeDataCapture) {
+                continue;
+            }
+
+            if (!before.TryGetValue(mirrored.SfId, out var previous)) {
+                report.ChannelsAdded.Add(mirrored.FullName);
+                continue;
+            }
+
+            if (!string.Equals(previous.Label, mirrored.MasterLabel, StringComparison.Ordinal)) {
+                report.ChannelsRelabelled.Add(mirrored.FullName);
+            }
+
+            var now = members.Select(m => m.SelectedEntity).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var entity in now.Where(e => !previous.Entities.Contains(e)).Order(StringComparer.Ordinal)) {
+                report.MembersAdded.Add(new ResyncMemberChangeDTO { Channel = mirrored.FullName, SelectedEntity = entity });
+                primaryChanged |= previous.Channel.IsPrimary;
+            }
+            foreach (var entity in previous.Entities.Where(e => !now.Contains(e)).Order(StringComparer.Ordinal)) {
+                // A removal found by Resync is the same act as one made here, so it has the same consequence.
+                var deactivated = previous.Channel.IsPrimary
+                    ? await DeactivateUncarriedBindingAsync(entity).ConfigureAwait(false)
+                    : null;
+                report.MembersRemoved.Add(new ResyncMemberChangeDTO {
+                    Channel = mirrored.FullName, SelectedEntity = entity, BindingSetInactive = deactivated?.DbSchemaFullName
+                });
+                primaryChanged |= previous.Channel.IsPrimary;
+            }
         }
 
         var removed = await _repo.DeleteChannelsNotInAsync(seenSfIds, cancellationToken).ConfigureAwait(false);
@@ -283,16 +513,76 @@ public class PlatformEventService : IPlatformEventService {
             _logger.LogInformation("Resync removed {Count} channel(s) no longer present in Salesforce", removed);
         }
 
-        return await _repo.GetChannelsAsync(cancellationToken).ConfigureAwait(false);
+        var seen = seenSfIds.ToHashSet();
+        foreach (var (channel, _, _) in before.Values.Where(b => !seen.Contains(b.Channel.SfId) && b.Channel.IsChangeDataCapture)
+                     .OrderBy(b => b.Channel.FullName, StringComparer.Ordinal)) {
+            report.ChannelsRemoved.Add(channel.FullName);
+            if (channel.IsPrimary) {
+                // Losing the Primary Channel is clearing it: nothing streams, and no Binding changes state.
+                report.PrimaryChannelRemoved = channel.FullName;
+                primaryChanged = true;
+                _logger.LogWarning("Resync found the Primary Channel {FullName} deleted in Salesforce; nothing streams until another is chosen",
+                    channel.FullName);
+            }
+        }
+
+        if (primaryChanged) {
+            _changeSignal.Signal();
+        }
+        return report;
     }
 
     #endregion
 
     #region Helpers
 
+    private static class MemberOutcome {
+        public const string Added = "Added";
+        public const string Failed = "Failed";
+        public const string NotAdded = "NotAdded";
+    }
+
     private async Task<PlatformEventChannelEntity> RequireChannelAsync(int id, CancellationToken cancellationToken) {
         return await _repo.GetChannelByIdAsync(id, cancellationToken).ConfigureAwait(false)
                ?? throw new KeyNotFoundException($"No platform event channel with ID {id}.");
+    }
+
+    /// <summary>
+    /// Writes a member into the Mirror and links it to its Entity's Binding when one exists. Bindings are one per
+    /// Entity, so a member for a bound Entity always belongs to that Binding — which is what lets removing and
+    /// re-adding an Entity restore its configuration.
+    /// </summary>
+    private async Task<PlatformEventChannelMemberEntity> MirrorMemberAsync(PlatformEventChannelMemberEntity member,
+        CancellationToken cancellationToken) {
+        var mirrored = await _repo.UpsertMemberAsync(member, cancellationToken).ConfigureAwait(false);
+        await LinkToBindingAsync(mirrored, cancellationToken).ConfigureAwait(false);
+        return mirrored;
+    }
+
+    private async Task LinkToBindingAsync(PlatformEventChannelMemberEntity member, CancellationToken cancellationToken) {
+        var binding = await _meta.GetSchemaByEntityName(member.SelectedEntity).ConfigureAwait(false);
+        if (binding is not null && member.CdcSchemaId != binding.Id) {
+            await _repo.SetMemberBindingAsync(member.Id, binding.Id, cancellationToken).ConfigureAwait(false);
+            member.CdcSchemaId = binding.Id;
+        }
+    }
+
+    /// <summary>
+    /// Sets an Entity's Binding Inactive once the Primary Channel no longer carries it, so re-adding the Entity
+    /// brings the Binding back switched off rather than silently streaming again. Only an Active Binding moves:
+    /// an Incomplete one was never switched on.
+    /// </summary>
+    /// <returns>The Binding that was set Inactive, or null when none was.</returns>
+    private async Task<CDCSchema?> DeactivateUncarriedBindingAsync(string entityName) {
+        var binding = await _meta.GetSchemaByEntityName(entityName).ConfigureAwait(false);
+        if (binding is not { BindingState: BindingState.Active }) {
+            return null;
+        }
+
+        await _meta.SetBindingState(binding.Id, BindingState.Inactive).ConfigureAwait(false);
+        _logger.LogInformation("{Entity} left the Primary Channel, so Binding {BindingId} to {Table} was set Inactive",
+            entityName, binding.Id, binding.DbSchemaFullName);
+        return binding;
     }
 
     private async Task<PlatformEventChannelMemberEntity> RequireMemberAsync(int id, CancellationToken cancellationToken) {
@@ -327,7 +617,14 @@ public class PlatformEventService : IPlatformEventService {
         }
 
         await _repo.ReplaceMembersForChannelAsync(channelId, members, cancellationToken).ConfigureAwait(false);
-        return members;
+
+        // Re-read so each member carries its local id and its current Binding link, then link any member whose
+        // Entity is bound but which is not yet pointing at that Binding.
+        var mirrored = await _repo.GetMembersByChannelIdAsync(channelId, cancellationToken).ConfigureAwait(false);
+        foreach (var member in mirrored) {
+            await LinkToBindingAsync(member, cancellationToken).ConfigureAwait(false);
+        }
+        return mirrored;
     }
 
     /// <summary>

@@ -69,5 +69,10 @@ public class PlatformEventChannelEntity {
     /// <summary>Populated by the repository when a channel is loaded with its members.</summary>
     public List<PlatformEventChannelMemberEntity> Members { get; set; } = [];
 
+    /// <summary>
+    /// True for a Change Data Capture channel — the only kind this application streams, binds or shows.
+    /// </summary>
+    public bool IsChangeDataCapture => string.Equals(ChannelType, "data", StringComparison.OrdinalIgnoreCase);
+
     public override string ToString() => $"{Id} {SfId} {FullName}";
 }

@@ -412,6 +412,12 @@ public class BindingService : IBindingService {
         return channel?.Id;
     }
 
+    public async Task ClearPrimaryChannelAsync(CancellationToken cancellationToken = default) {
+        await _channels.ClearPrimaryChannelAsync(cancellationToken).ConfigureAwait(false);
+        _changeSignal.Signal();
+        _logger.LogInformation("Primary Channel cleared; nothing streams until another is chosen");
+    }
+
     public async Task SetPrimaryChannelAsync(SetPrimaryChannelDTO dto, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(dto);
 

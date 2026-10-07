@@ -16,6 +16,8 @@ export type ApiResult<T> = { ok: true; value: T } | { ok: false; failure: ApiFai
 export const getJson = <T>(url: string) => send<T>("GET", url);
 export const postJson = <T>(url: string, body?: unknown) => send<T>("POST", url, body);
 export const putJson = <T>(url: string, body?: unknown) => send<T>("PUT", url, body);
+export const patchJson = <T>(url: string, body?: unknown) => send<T>("PATCH", url, body);
+export const deleteJson = <T>(url: string) => send<T>("DELETE", url);
 
 async function send<T>(method: string, url: string, body?: unknown): Promise<ApiResult<T>> {
     let response: Response;

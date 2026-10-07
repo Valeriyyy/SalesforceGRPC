@@ -949,6 +949,16 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task ClearPrimaryChannel_StopsStreaming_KeepsTheCheckpoint_AndTellsTheWorker() {
+        await NewService().ClearPrimaryChannelAsync(Ct);
+
+        await _channels.Received(1).ClearPrimaryChannelAsync(Arg.Any<CancellationToken>());
+        await _checkpoints.DidNotReceiveWithAnyArgs().DiscardAsync(default, default, default);
+        await _meta.DidNotReceiveWithAnyArgs().SetBindingState(default, default);
+        _signal.Received().Signal();
+    }
+
+    [Fact]
     public async Task SetPrimaryChannel_TellsTheWorkerToRePlan() {
         _channels.GetChannelByIdAsync(ChannelId, Arg.Any<CancellationToken>()).Returns(Channel());
 
