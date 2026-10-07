@@ -132,9 +132,20 @@ public sealed class TargetConnectionService : ITargetConnectionService {
 
         var existing = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
         var (profile, details, keptPassword) = Validate(request, existing);
+        var identityChanged = existing is not null
+            && existing.Identity != new TargetConnectionIdentity(details.Engine, details.Host, details.DatabaseName, details.FilePath);
+
+        // An early answer, so a refused identity change is the conflict it is rather than whichever field the
+        // profile finds missing first (a blank password, typically). The check inside the upsert stays the one
+        // that counts.
+        if (identityChanged && (await _repository.CountBindingsAsync(cancellationToken).ConfigureAwait(false)).Bindings > 0) {
+            throw new TargetConnectionIdentityChangedException(existing!.Identity, details.ToModel(null).Identity);
+        }
+
+        ThrowIfInvalid(profile, details);
         var model = details.ToModel(keptPassword ?? Protect(details.Password));
 
-        if (existing is not null && existing.Identity != model.Identity) {
+        if (identityChanged) {
             // Without Bindings there is nothing a different database could silently break, so this is an
             // edit. With any, it is a repoint, which previews what it destroys. See docs/adr/0004.
             _ = await _repository.UpsertUnlessBoundAsync(model, cancellationToken).ConfigureAwait(false)
@@ -187,6 +198,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
                        ?? throw new NoTargetDatabaseException();
 
         var (profile, details, _) = Validate(request, existing: null);
+        ThrowIfInvalid(profile, details);
         var model = details.ToModel(Protect(details.Password));
 
         if (existing.Identity == model.Identity) {
@@ -327,12 +339,15 @@ public sealed class TargetConnectionService : ITargetConnectionService {
             details = details with { Password = _protector.Unprotect(cipher) };
         }
 
+        return (profile, details, keptPassword);
+    }
+
+    /// <summary>The profile's own checks against its field definitions: required fields, kinds, choices, options.</summary>
+    private static void ThrowIfInvalid(ITargetEngineProfile profile, TargetConnectionDetails details) {
         var errors = profile.Validate(details);
         if (errors.Count > 0) {
             throw new ValidationException(string.Join(" ", errors));
         }
-
-        return (profile, details, keptPassword);
     }
 
     private string? Protect(string? password) => password is null ? null : _protector.Protect(password);

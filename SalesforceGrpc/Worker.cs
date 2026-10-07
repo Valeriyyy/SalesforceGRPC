@@ -190,7 +190,7 @@ public class Worker : BackgroundService {
             var targets = scope.ServiceProvider.GetRequiredService<ITargetConnectionService>();
             await targets.VerifyAsync(stoppingToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
-            _logger.LogError(ex, "Could not re-test the Target Connection; will retry");
+            _logger.LogError(ex, "Could not verify the Target Connection; will retry");
         }
     }
 

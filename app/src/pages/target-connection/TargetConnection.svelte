@@ -19,6 +19,8 @@
     let mode = $state<Mode>("viewing");
     let pending = $state<Action | null>(null);
     let failed = $state<{ action: Action; failure: ApiFailure } | null>(null);
+    /** A save stored details that did not prove, so this page's view model no longer matches what is stored. */
+    let storedUnproved = $state(false);
     let repoint: RepointDialog;
 
     const blocked = $derived(page.secretProtection.status !== "ready");
@@ -38,6 +40,7 @@
         }
 
         pending = null;
+        storedUnproved ||= result.ok;
         failed = {
             action: "save",
             failure: !result.ok ? result.failure
@@ -61,6 +64,11 @@
     }
 
     function setMode(next: Mode) {
+        if (next === "viewing" && storedUnproved) {
+            // The summary would show the details from before the save; the stored Incomplete ones are what is true.
+            location.reload();
+            return;
+        }
         mode = next;
         failed = null;
     }

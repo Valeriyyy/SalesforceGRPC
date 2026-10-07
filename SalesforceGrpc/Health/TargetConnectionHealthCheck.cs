@@ -11,7 +11,7 @@ namespace SalesforceGrpc.Health;
 /// Strictly read-only: it reports stored state and never opens a database connection. A health endpoint that
 /// proves connections gets polled every few seconds by an orchestrator and becomes its own load problem, which
 /// is why <see cref="OrgConnectionHealthCheck"/> does not do it either. The worker's write failures and the
-/// re-test endpoint are what turn the state; this only shows it.
+/// verify endpoint are what turn the state; this only shows it.
 /// <para>
 /// A connection that has never been set up is Degraded rather than Unhealthy. A fresh install is not broken,
 /// and an orchestrator restarting it would not help.
@@ -55,7 +55,7 @@ public sealed class TargetConnectionHealthCheck : IHealthCheck {
                 $"The Target Database is failing: {connection.LastError}", data: data),
 
             _ => HealthCheckResult.Degraded(
-                "The Target Connection has been set up but has never been proved. Correct it and re-test.", data: data)
+                "The Target Connection has been set up but has never been proved. Correct it and verify.", data: data)
         };
     }
 }

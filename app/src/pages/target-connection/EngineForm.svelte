@@ -91,8 +91,8 @@
                 <Lock class="mt-0.5 size-3.5 shrink-0" />
                 <span>
                     Engine, host and database are locked because {page.bindings} Binding{page.bindings === 1 ? "" : "s"}
-                    write{page.bindings === 1 ? "s" : ""} to this database. To use a different one, choose
-                    <strong>Point at a different database</strong> below.
+                    write{page.bindings === 1 ? "s" : ""} to this database. To use a different one, cancel and choose
+                    <strong>Point at a different database</strong>.
                 </span>
             </p>
         {:else if mode === "edit" && changed}

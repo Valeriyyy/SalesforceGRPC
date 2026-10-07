@@ -250,7 +250,8 @@ public class TargetConnectionServiceTests {
         await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 
-    private void WithBindingsBlockingAnIdentityChange(bool blocked) =>
+    private void WithBindingsBlockingAnIdentityChange(bool blocked) {
+        WithBindings(blocked ? 3 : 0, blocked ? 12 : 0);
         _repository.UpsertUnlessBoundAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>())
             .Returns(call => {
                 if (blocked) {
@@ -261,6 +262,22 @@ public class TargetConnectionServiceTests {
                 given.ConnectionState = ConnectionState.Incomplete;
                 return given;
             });
+    }
+
+    /// <summary>
+    /// A conflict, not "password required": with Bindings, no password would make this save acceptable.
+    /// </summary>
+    [Fact]
+    public async Task ChangingTheIdentityThroughSave_WithBindingsAndABlankPassword_IsTheConflict() {
+        WithStored(Stored());
+        WithBindingsBlockingAnIdentityChange(blocked: true);
+        _postgres.Validate(Arg.Is<TargetConnectionDetails>(d => string.IsNullOrEmpty(d.Password))).Returns(["Password is required."]);
+
+        await Assert.ThrowsAsync<TargetConnectionIdentityChangedException>(() =>
+            NewService().SaveAsync(PostgresRequest(host: "other-db.internal", password: ""), Ct));
+
+        await _repository.DidNotReceive().UpsertUnlessBoundAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+    }
 
     [Theory]
     [InlineData("host", "other-db.internal")]
@@ -494,6 +511,8 @@ public class TargetConnectionServiceTests {
         Assert.Contains("Nothing has been destroyed.", ex.Message);
         Assert.DoesNotContain("no route to host", ex.Message);
         Assert.Equal("no route to host", ex.RawResponse);
+        await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RecordIncompleteAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RecordFailureAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
