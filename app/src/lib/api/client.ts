@@ -2,14 +2,16 @@
 // through these and then reload on success (ADR 0006): the server rebuilds the page and the shell from one read.
 import type { SalesforceErrorView } from "../types/views";
 
-/** Why a call failed, in the three shapes the controllers answer with. */
+/** Why a call failed, in the shapes the controllers answer with. */
 export type ApiFailure =
     /** {error} — a refused request (400), something missing (404), or the service unable (503). */
     | { kind: "message"; message: string }
     /** 502: Salesforce refused, with the translation and its own words. */
     | { kind: "salesforce"; error: SalesforceErrorView }
     /** 409: the credentials belong to a different org than this installation is bound to. */
-    | { kind: "orgMismatch"; message: string; storedOrgId: string; discoveredOrgId: string };
+    | { kind: "orgMismatch"; message: string; storedOrgId: string; discoveredOrgId: string }
+    /** {error, rawResponse}: a database refused, with the summary and the driver's own words. */
+    | { kind: "database"; message: string; rawResponse: string };
 
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; failure: ApiFailure };
 
@@ -55,6 +57,10 @@ function failureFrom(status: number, body: any): ApiFailure {
                 occurredAt: null
             }
         };
+    }
+
+    if (typeof body?.error === "string" && typeof body?.rawResponse === "string") {
+        return { kind: "database", message: body.error, rawResponse: body.rawResponse };
     }
 
     if (typeof body?.error === "string") {

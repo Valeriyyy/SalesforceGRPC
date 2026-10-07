@@ -9,6 +9,7 @@ import NewChannel from "./channels/NewChannel.svelte";
 import OrgConnection from "./org-connection/OrgConnection.svelte";
 import Overview from "./overview/Overview.svelte";
 import Placeholder from "./placeholder/Placeholder.svelte";
+import TargetConnection from "./target-connection/TargetConnection.svelte";
 
 // Every page is wrapped in the shared Shell, and receives the page half of the PageView its view controller
 // built (ADR 0006). The key is the component name the controller passes to SveltePage.For.
@@ -18,7 +19,8 @@ const componentRegistry: Record<string, Component<{ page: any }>> = {
     "org-connection": OrgConnection,
     channels: Channels,
     "channel-new": NewChannel,
-    channel: Channel
+    channel: Channel,
+    "target-connection": TargetConnection
 };
 
 function decodeProps(encodedProps: string): PageView<unknown> | null {
