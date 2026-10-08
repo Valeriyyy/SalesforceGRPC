@@ -104,6 +104,36 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
             UpsertParameters(targetConnection), cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task<TargetConnection?> UpsertUnlessBoundAsync(TargetConnection targetConnection,
+        CancellationToken cancellationToken = default) {
+        // SHARE mode blocks inserts into cdc_schemas until this commits, so the count cannot go stale between
+        // reading it and writing the new identity.
+        const string lockBindings = "LOCK TABLE salesforce.cdc_schemas IN SHARE MODE";
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        await connection.ExecuteAsync(new CommandDefinition(lockBindings, transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        var counts = await connection.QuerySingleAsync<BindingCounts>(new CommandDefinition(CountBindingsSql,
+            transaction: transaction, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        if (counts.Bindings > 0) {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
+        LogQuery("UPSERT", UpsertSql);
+        var saved = await connection.QuerySingleAsync<TargetConnection>(new CommandDefinition(UpsertSql,
+            UpsertParameters(targetConnection), transaction: transaction, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return saved;
+    }
+
     private const string RecordSuccessSql = @"
             UPDATE salesforce.target_connection SET
                 connection_state = 'Connected',

@@ -130,10 +130,10 @@ public class TargetConnectionServiceTests {
     }
 
     [Fact]
-    public async Task Retest_MovesAnIncompleteConnectionToConnected_WhenTheProofSucceeds() {
+    public async Task Verify_MovesAnIncompleteConnectionToConnected_WhenTheProofSucceeds() {
         WithStored(Stored(ConnectionState.Incomplete));
 
-        await NewService().RetestAsync(Ct);
+        await NewService().VerifyAsync(Ct);
 
         await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
         _postgres.Received().BuildConnectionString(Arg.Is<TargetConnectionDetails>(d => d.Password == "s3cret"));
@@ -141,24 +141,24 @@ public class TargetConnectionServiceTests {
     }
 
     [Fact]
-    public async Task Retest_MovesAConnectedConnectionToFailed_WhenTheProofFails() {
+    public async Task Verify_MovesAConnectedConnectionToFailed_WhenTheProofFails() {
         WithStored(Stored(ConnectionState.Connected));
         _provedRepository.GetSchemaMetadata(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new Npgsql.NpgsqlException("timeout"));
 
-        await NewService().RetestAsync(Ct);
+        await NewService().VerifyAsync(Ct);
 
         await _repository.Received(1).RecordFailureAsync(Arg.Any<string>(), "timeout", _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RecordIncompleteAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task Retest_LeavesAnIncompleteConnectionIncomplete_WhenTheProofFails() {
+    public async Task Verify_LeavesAnIncompleteConnectionIncomplete_WhenTheProofFails() {
         WithStored(Stored(ConnectionState.Incomplete));
         _provedRepository.GetSchemaMetadata(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new Npgsql.NpgsqlException("timeout"));
 
-        await NewService().RetestAsync(Ct);
+        await NewService().VerifyAsync(Ct);
 
         await _repository.Received(1).RecordIncompleteAsync(Arg.Any<string>(), "timeout", _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RecordFailureAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
@@ -176,19 +176,19 @@ public class TargetConnectionServiceTests {
     }
 
     [Fact]
-    public async Task Retest_RecoversAFailedConnection_WhenTheDatabaseIsBack() {
+    public async Task Verify_RecoversAFailedConnection_WhenTheDatabaseIsBack() {
         WithStored(Stored(ConnectionState.Failed));
 
-        var dto = await NewService().RetestAsync(Ct);
+        var dto = await NewService().VerifyAsync(Ct);
 
         await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task Retest_WithNothingConfigured_ThrowsANamedException() {
+    public async Task Verify_WithNothingConfigured_ThrowsANamedException() {
         WithStored(null);
 
-        await Assert.ThrowsAsync<NoTargetDatabaseException>(() => NewService().RetestAsync(Ct));
+        await Assert.ThrowsAsync<NoTargetDatabaseException>(() => NewService().VerifyAsync(Ct));
     }
 
     [Fact]
@@ -250,11 +250,41 @@ public class TargetConnectionServiceTests {
         await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
 
+    private void WithBindingsBlockingAnIdentityChange(bool blocked) {
+        WithBindings(blocked ? 3 : 0, blocked ? 12 : 0);
+        _repository.UpsertUnlessBoundAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>())
+            .Returns(call => {
+                if (blocked) {
+                    return null;
+                }
+                var given = call.Arg<TargetConnection>();
+                given.Id = 1;
+                given.ConnectionState = ConnectionState.Incomplete;
+                return given;
+            });
+    }
+
+    /// <summary>
+    /// A conflict, not "password required": with Bindings, no password would make this save acceptable.
+    /// </summary>
+    [Fact]
+    public async Task ChangingTheIdentityThroughSave_WithBindingsAndABlankPassword_IsTheConflict() {
+        WithStored(Stored());
+        WithBindingsBlockingAnIdentityChange(blocked: true);
+        _postgres.Validate(Arg.Is<TargetConnectionDetails>(d => string.IsNullOrEmpty(d.Password))).Returns(["Password is required."]);
+
+        await Assert.ThrowsAsync<TargetConnectionIdentityChangedException>(() =>
+            NewService().SaveAsync(PostgresRequest(host: "other-db.internal", password: ""), Ct));
+
+        await _repository.DidNotReceive().UpsertUnlessBoundAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("host", "other-db.internal")]
     [InlineData("database", "other-warehouse")]
-    public async Task ChangingTheIdentityThroughSave_IsRefused_AndNothingIsStored(string which, string value) {
+    public async Task ChangingTheIdentityThroughSave_WithBindings_IsRefused_AndNothingIsStored(string which, string value) {
         WithStored(Stored());
+        WithBindingsBlockingAnIdentityChange(blocked: true);
         var request = which == "host"
             ? PostgresRequest(host: value)
             : PostgresRequest() with { DatabaseName = value };
@@ -262,20 +292,96 @@ public class TargetConnectionServiceTests {
         await Assert.ThrowsAsync<TargetConnectionIdentityChangedException>(() => NewService().SaveAsync(request, Ct));
 
         await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RecordSuccessAsync(Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }
+
+    /// <summary>
+    /// With no Bindings there is nothing a wrong database could silently break, so fixing a mistyped host is
+    /// an edit, not a repoint. See the amendment to docs/adr/0004.
+    /// </summary>
+    [Theory]
+    [InlineData("host", "other-db.internal")]
+    [InlineData("database", "other-warehouse")]
+    public async Task ChangingTheIdentityThroughSave_WithNoBindings_StoresAndProvesTheNewDetails(string which, string value) {
+        WithStored(Stored());
+        WithBindingsBlockingAnIdentityChange(blocked: false);
+        var request = which == "host"
+            ? PostgresRequest(host: value)
+            : PostgresRequest() with { DatabaseName = value };
+
+        await NewService().SaveAsync(request, Ct);
+
+        await _repository.Received(1).UpsertUnlessBoundAsync(Arg.Is<TargetConnection>(c =>
+            (c.Host == value || c.DatabaseName == value) && c.PasswordEncrypted == "enc:s3cret"), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+        await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+        _signal.Received().Signal();
+    }
+
+    /// <summary>An unchanged identity never asks about Bindings: editing credentials is safe however many exist.</summary>
+    [Fact]
+    public async Task EditingWithAnUnchangedIdentity_DoesNotGoThroughTheBindingCheck() {
+        WithStored(Stored());
+
+        await NewService().SaveAsync(PostgresRequest(password: "rotated"), Ct);
+
+        await _repository.DidNotReceive().UpsertUnlessBoundAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+    }
+
+    #region Keeping the stored password
+
+    /// <summary>
+    /// An edit of the username or options should not make the user retype a password the application
+    /// already holds. The stored ciphertext is kept as it is, not decrypted and re-encrypted.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task EditingWithABlankPassword_KeepsTheStoredCiphertext_AndProvesWithIt(string? password) {
+        WithStored(Stored());
+
+        await NewService().SaveAsync(PostgresRequest() with { Username = "loader2", Password = password }, Ct);
+
+        await _repository.Received(1).UpsertAsync(Arg.Is<TargetConnection>(c =>
+            c.Username == "loader2" && c.PasswordEncrypted == "enc:s3cret"), Arg.Any<CancellationToken>());
+        _postgres.Received().BuildConnectionString(Arg.Is<TargetConnectionDetails>(d => d.Password == "s3cret"));
+        _protector.DidNotReceive().Protect(Arg.Any<string>());
+        await _repository.Received(1).RecordSuccessAsync(_time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>The profile is what says a password is required; a blank one must reach it as missing.</summary>
+    private void WithAPasswordRequired() =>
+        _postgres.Validate(Arg.Is<TargetConnectionDetails>(d => string.IsNullOrEmpty(d.Password)))
+            .Returns(["Password is required."]);
 
     [Fact]
-    public async Task ChangingTheEngineThroughSave_IsRefused() {
-        WithStored(Stored());
-        var sqlite = Substitute.For<ITargetEngineProfile>();
-        sqlite.Engine.Returns(TargetDatabaseEngine.Sqlite);
-        sqlite.IsAvailable.Returns(true);
-        sqlite.Validate(Arg.Any<TargetConnectionDetails>()).Returns([]);
-        _engines.For(TargetDatabaseEngine.Sqlite).Returns(sqlite);
+    public async Task ABlankPassword_WithNothingStored_IsRefused() {
+        WithStored(null);
+        WithAPasswordRequired();
 
-        await Assert.ThrowsAsync<TargetConnectionIdentityChangedException>(() =>
-            NewService().SaveAsync(new SaveTargetConnectionDTO { Engine = "Sqlite", FilePath = "/x.db" }, Ct));
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().SaveAsync(PostgresRequest(password: ""), Ct));
+
+        Assert.Contains("Password is required.", ex.Message);
+        await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
     }
+
+    /// <summary>A stored password belongs to the database it was typed for, not to whichever one is named next.</summary>
+    [Fact]
+    public async Task ABlankPassword_OnAnIdentityChange_IsRefused() {
+        WithStored(Stored());
+        WithBindingsBlockingAnIdentityChange(blocked: false);
+        WithAPasswordRequired();
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            NewService().SaveAsync(PostgresRequest(host: "other-db.internal", password: ""), Ct));
+
+        Assert.Contains("Password is required.", ex.Message);
+        await _repository.DidNotReceive().UpsertUnlessBoundAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+    }
+
+    #endregion
 
     [Fact]
     public async Task EditingOnlyTheOptions_Applies_AndDestroysNothing() {
@@ -290,7 +396,8 @@ public class TargetConnectionServiceTests {
     }
 
     [Fact]
-    public async Task ChangingTheFilePathThroughSave_IsRefused() {
+    public async Task ChangingTheFilePathThroughSave_WithBindings_IsRefused() {
+        WithBindingsBlockingAnIdentityChange(blocked: true);
         var sqlite = Substitute.For<ITargetEngineProfile>();
         sqlite.Engine.Returns(TargetDatabaseEngine.Sqlite);
         sqlite.IsAvailable.Returns(true);
@@ -399,9 +506,13 @@ public class TargetConnectionServiceTests {
         _provedRepository.GetSchemaMetadata(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new Npgsql.NpgsqlException("no route to host"));
 
-        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().RepointAsync(RepointRequest(3, 12), Ct));
+        var ex = await Assert.ThrowsAsync<TargetConnectionProofFailedException>(() => NewService().RepointAsync(RepointRequest(3, 12), Ct));
 
-        Assert.Contains("no route to host", ex.Message);
+        Assert.Contains("Nothing has been destroyed.", ex.Message);
+        Assert.DoesNotContain("no route to host", ex.Message);
+        Assert.Equal("no route to host", ex.RawResponse);
+        await _repository.DidNotReceive().UpsertAsync(Arg.Any<TargetConnection>(), Arg.Any<CancellationToken>());
+        await _repository.DidNotReceive().RecordIncompleteAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
         await _repository.DidNotReceive().RecordFailureAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
     }

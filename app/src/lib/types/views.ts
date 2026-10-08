@@ -210,3 +210,60 @@ export interface ResyncMemberChange {
     selectedEntity: string;
     bindingSetInactive: string | null;
 }
+
+// Target Connection page (TargetConnectionView.cs).
+
+export type TargetConnectionPhase = "notStarted" | "connected" | "incomplete" | "failed";
+
+export interface TargetConnectionView {
+    phase: TargetConnectionPhase;
+    /** Null when nothing is stored (notStarted). */
+    connection: TargetConnectionDetailsView | null;
+    engines: EngineView[];
+    /** What a repoint would destroy, echoed back as its confirmation. */
+    bindings: number;
+    fieldMappings: number;
+    /** Bindings exist: engine, host, database name and file path change only through a repoint. */
+    identityLocked: boolean;
+    orgConnectionOk: boolean;
+    secretProtection: SecretProtectionView;
+}
+
+/** Every stored detail but the password. */
+export interface TargetConnectionDetailsView {
+    /** The API's engine name ("Postgres", "SqlServer", ...), sent back unchanged on save. */
+    engine: string;
+    host: string | null;
+    port: number | null;
+    databaseName: string | null;
+    username: string | null;
+    filePath: string | null;
+    options: Record<string, string>;
+    hasPassword: boolean;
+    lastConnectedAt: string | null;
+    lastError: TargetDatabaseErrorView | null;
+}
+
+export interface TargetDatabaseErrorView {
+    message: string;
+    rawResponse: string;
+    occurredAt: string | null;
+}
+
+export interface EngineView {
+    engine: string;
+    isAvailable: boolean;
+    unavailableReason: string | null;
+    fields: FieldView[];
+}
+
+export type FieldKindView = "string" | "int" | "bool" | "secret" | "choice";
+
+export interface FieldView {
+    name: string;
+    label: string;
+    kind: FieldKindView;
+    required: boolean;
+    default: string | null;
+    choices: string[] | null;
+}

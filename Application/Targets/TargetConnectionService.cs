@@ -29,6 +29,23 @@ public sealed class TargetConnectionIdentityChangedException : InvalidOperationE
 }
 
 /// <summary>
+/// Thrown when a repoint's new database fails its proof. Nothing has been destroyed.
+/// </summary>
+/// <remarks>
+/// Carries the summary and the driver's message separately, as the stored last error does, so the API can
+/// return both and the page can show the summary with the searchable text behind it.
+/// </remarks>
+public sealed class TargetConnectionProofFailedException : InvalidOperationException {
+    public TargetConnectionProofFailedException(string message, string rawResponse, Exception? innerException = null)
+        : base(message, innerException) {
+        RawResponse = rawResponse;
+    }
+
+    /// <summary>The driver's message, untouched.</summary>
+    public string RawResponse { get; }
+}
+
+/// <summary>
 /// Setting up, proving, editing and repointing the Target Connection.
 /// </summary>
 /// <remarks>
@@ -48,11 +65,15 @@ public interface ITargetConnectionService {
     /// <remarks>
     /// Always persists. A proof that fails leaves the connection Incomplete with the error — a user whose
     /// database is briefly unreachable must still be able to record what they typed.
+    /// <para>
+    /// A change of identity is accepted only while no Binding exists; with any, it is a repoint. A blank
+    /// password on an edit with an unchanged identity keeps the stored one.
+    /// </para>
     /// </remarks>
     Task<TargetConnectionDTO> SaveAsync(SaveTargetConnectionDTO request, CancellationToken cancellationToken = default);
 
     /// <summary>Proves the stored Target Connection again and records the outcome. The user's repair button.</summary>
-    Task<TargetConnectionDTO> RetestAsync(CancellationToken cancellationToken = default);
+    Task<TargetConnectionDTO> VerifyAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Records that a write to the Target Database failed, moving the connection to Failed.
@@ -109,15 +130,29 @@ public sealed class TargetConnectionService : ITargetConnectionService {
     public async Task<TargetConnectionDTO> SaveAsync(SaveTargetConnectionDTO request, CancellationToken cancellationToken = default) {
         ArgumentNullException.ThrowIfNull(request);
 
-        var (profile, details) = Validate(request);
-        var model = details.ToModel(Protect(details.Password));
-
         var existing = await _provider.GetAsync(cancellationToken).ConfigureAwait(false);
-        if (existing is not null && existing.Identity != model.Identity) {
-            throw new TargetConnectionIdentityChangedException(existing.Identity, model.Identity);
+        var (profile, details, keptPassword) = Validate(request, existing);
+        var identityChanged = existing is not null
+            && existing.Identity != new TargetConnectionIdentity(details.Engine, details.Host, details.DatabaseName, details.FilePath);
+
+        // An early answer, so a refused identity change is the conflict it is rather than whichever field the
+        // profile finds missing first (a blank password, typically). The check inside the upsert stays the one
+        // that counts.
+        if (identityChanged && (await _repository.CountBindingsAsync(cancellationToken).ConfigureAwait(false)).Bindings > 0) {
+            throw new TargetConnectionIdentityChangedException(existing!.Identity, details.ToModel(null).Identity);
         }
 
-        await _repository.UpsertAsync(model, cancellationToken).ConfigureAwait(false);
+        ThrowIfInvalid(profile, details);
+        var model = details.ToModel(keptPassword ?? Protect(details.Password));
+
+        if (identityChanged) {
+            // Without Bindings there is nothing a different database could silently break, so this is an
+            // edit. With any, it is a repoint, which previews what it destroys. See docs/adr/0004.
+            _ = await _repository.UpsertUnlessBoundAsync(model, cancellationToken).ConfigureAwait(false)
+                ?? throw new TargetConnectionIdentityChangedException(existing.Identity, model.Identity);
+        } else {
+            await _repository.UpsertAsync(model, cancellationToken).ConfigureAwait(false);
+        }
         _provider.Invalidate();
 
         // The upsert reset the row to Incomplete, so a failed proof here stays Incomplete: what was just
@@ -130,7 +165,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         return await GetAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<TargetConnectionDTO> RetestAsync(CancellationToken cancellationToken = default) {
+    public async Task<TargetConnectionDTO> VerifyAsync(CancellationToken cancellationToken = default) {
         var stored = await _provider.GetAsync(cancellationToken).ConfigureAwait(false)
                      ?? throw new NoTargetDatabaseException();
 
@@ -162,7 +197,8 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         var existing = await _provider.GetAsync(cancellationToken).ConfigureAwait(false)
                        ?? throw new NoTargetDatabaseException();
 
-        var (profile, details) = Validate(request);
+        var (profile, details, _) = Validate(request, existing: null);
+        ThrowIfInvalid(profile, details);
         var model = details.ToModel(Protect(details.Password));
 
         if (existing.Identity == model.Identity) {
@@ -184,8 +220,7 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         try {
             await ReadSchemaAsync(profile, details, cancellationToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
-            throw new ValidationException(
-                $"{Summarise(ex)} Nothing has been destroyed. The database said: {ex.Message}");
+            throw new TargetConnectionProofFailedException($"{Summarise(ex)} Nothing has been destroyed.", ex.Message, ex);
         }
 
         var (_, destroyed) = await _repository.RepointAsync(model, _time.GetUtcNow().UtcDateTime, cancellationToken)
@@ -257,7 +292,13 @@ public sealed class TargetConnectionService : ITargetConnectionService {
         _ => "The Target Database could not be reached, or its schema could not be read, with these details."
     };
 
-    private (ITargetEngineProfile Profile, TargetConnectionDetails Details) Validate(SaveTargetConnectionDTO request) {
+    /// <param name="existing">
+    /// The stored connection, whose password a blank one keeps when the identity is unchanged. Null when a
+    /// blank password must stay blank (nothing stored, or a repoint, which always names a new database).
+    /// </param>
+    /// <returns>The details, and the stored ciphertext when it was kept rather than replaced.</returns>
+    private (ITargetEngineProfile Profile, TargetConnectionDetails Details, string? KeptPassword) Validate(
+        SaveTargetConnectionDTO request, TargetConnection? existing) {
         if (!Enum.TryParse<TargetDatabaseEngine>(request.Engine, ignoreCase: true, out var engine)) {
             throw new ValidationException(
                 $"'{request.Engine}' is not a supported engine. Choose one of: {string.Join(", ", Enum.GetNames<TargetDatabaseEngine>())}.");
@@ -284,17 +325,29 @@ public sealed class TargetConnectionService : ITargetConnectionService {
             Port = request.Port,
             DatabaseName = request.DatabaseName?.Trim(),
             Username = request.Username?.Trim(),
-            Password = request.Password,
+            Password = string.IsNullOrEmpty(request.Password) ? null : request.Password,
             FilePath = request.FilePath?.Trim(),
             Options = request.Options
         };
 
+        // Kept only for the database it was typed for: a blank password naming a different database reaches
+        // the profile as missing, and is refused there like any other required field left empty.
+        string? keptPassword = null;
+        if (string.IsNullOrEmpty(details.Password) && existing?.PasswordEncrypted is { } cipher
+            && existing.Identity == new TargetConnectionIdentity(details.Engine, details.Host, details.DatabaseName, details.FilePath)) {
+            keptPassword = cipher;
+            details = details with { Password = _protector.Unprotect(cipher) };
+        }
+
+        return (profile, details, keptPassword);
+    }
+
+    /// <summary>The profile's own checks against its field definitions: required fields, kinds, choices, options.</summary>
+    private static void ThrowIfInvalid(ITargetEngineProfile profile, TargetConnectionDetails details) {
         var errors = profile.Validate(details);
         if (errors.Count > 0) {
             throw new ValidationException(string.Join(" ", errors));
         }
-
-        return (profile, details);
     }
 
     private string? Protect(string? password) => password is null ? null : _protector.Protect(password);

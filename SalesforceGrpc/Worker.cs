@@ -98,7 +98,7 @@ public class Worker : BackgroundService {
                                 "The Target Connection is Failed, so events are not being consumed. Retrying in {Delay}s.",
                                 RetryDelay.TotalSeconds);
                             await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
-                            await RetestTargetAsync(stoppingToken).ConfigureAwait(false);
+                            await VerifyTargetAsync(stoppingToken).ConfigureAwait(false);
                             continue;
                         case ConnectionState.Incomplete:
                             _logger.LogWarning(
@@ -184,13 +184,13 @@ public class Worker : BackgroundService {
     }
 
     /// <summary>Proves the Failed Target Connection again. Success is recorded, and logged loudly, by the service.</summary>
-    private async Task RetestTargetAsync(CancellationToken stoppingToken) {
+    private async Task VerifyTargetAsync(CancellationToken stoppingToken) {
         try {
             using var scope = _scopeFactory.CreateScope();
             var targets = scope.ServiceProvider.GetRequiredService<ITargetConnectionService>();
-            await targets.RetestAsync(stoppingToken).ConfigureAwait(false);
+            await targets.VerifyAsync(stoppingToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
-            _logger.LogError(ex, "Could not re-test the Target Connection; will retry");
+            _logger.LogError(ex, "Could not verify the Target Connection; will retry");
         }
     }
 

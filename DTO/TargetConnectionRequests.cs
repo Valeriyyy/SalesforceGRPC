@@ -6,8 +6,9 @@ namespace DTO;
 /// <remarks>
 /// Decomposed rather than a connection string, so the fields can be validated against the engine's
 /// definitions and rendered as a form. Which of these apply depends on the engine — the definitions endpoint
-/// says which. The password is required on every save, including edits: the details are proved before they
-/// are stored, and the proof needs the credential.
+/// says which. On an edit that keeps the same engine, host, database name and file path, a blank or missing
+/// password keeps the stored one, which the proof decrypts and uses. Anywhere else — nothing stored yet, a
+/// different database, a repoint — the password is required like any other field the engine asks for.
 /// </remarks>
 public record SaveTargetConnectionDTO {
     /// <summary>"Postgres", "SqlServer", "MySql" or "Sqlite".</summary>

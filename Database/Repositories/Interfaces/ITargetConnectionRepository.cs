@@ -23,6 +23,16 @@ public interface ITargetConnectionRepository {
     /// </remarks>
     Task<TargetConnection> UpsertAsync(TargetConnection connection, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Upserts details that point at a different database, but only while no Binding exists.
+    /// </summary>
+    /// <remarks>
+    /// Returns null, storing nothing, when any Binding exists. The count and the upsert share one transaction,
+    /// with Binding creation held off until it commits, so a Binding created concurrently cannot end up
+    /// describing tables in a database the connection no longer points at. See the amendment to docs/adr/0004.
+    /// </remarks>
+    Task<TargetConnection?> UpsertUnlessBoundAsync(TargetConnection connection, CancellationToken cancellationToken = default);
+
     /// <summary>Records a successful proof, moving the connection to Connected.</summary>
     Task RecordSuccessAsync(DateTime at, CancellationToken cancellationToken = default);
 

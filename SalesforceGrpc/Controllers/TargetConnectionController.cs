@@ -53,17 +53,19 @@ public class TargetConnectionController : ControllerBase {
     /// </summary>
     /// <remarks>
     /// Always persists: a failed proof leaves the connection Incomplete with the error, rather than refusing
-    /// to record what was typed. Returns a conflict for any change to the engine, host, database name or file
-    /// path — that is a repoint, which has its own endpoint with a preview and a confirmation.
+    /// to record what was typed, so a 200 is not a success — read the returned state. A blank password keeps
+    /// the stored one when the identity is unchanged. Changing the engine, host, database name or file path
+    /// is accepted while no Binding exists; with any, it returns a conflict — that is a repoint, which has
+    /// its own endpoint with a preview and a confirmation.
     /// </remarks>
     [HttpPut]
     public Task<ActionResult<TargetConnectionDTO>> Save([FromBody] SaveTargetConnectionDTO request, CancellationToken ct) =>
         Execute(() => _connections.SaveAsync(request, ct));
 
     /// <summary>Proves the stored connection again and records the outcome. The repair button.</summary>
-    [HttpPost("retest")]
-    public Task<ActionResult<TargetConnectionDTO>> Retest(CancellationToken ct) =>
-        Execute(() => _connections.RetestAsync(ct));
+    [HttpPost("verify")]
+    public Task<ActionResult<TargetConnectionDTO>> Verify(CancellationToken ct) =>
+        Execute(() => _connections.VerifyAsync(ct));
 
     /// <summary>What a repoint would destroy. Call this before confirming one.</summary>
     [HttpGet("repoint/preview")]
@@ -76,7 +78,8 @@ public class TargetConnectionController : ControllerBase {
     /// <remarks>
     /// Requires a confirmation naming the counts from the preview, so a caller that has not looked at what
     /// it is destroying cannot satisfy it by accident. The new database is proved before anything is
-    /// destroyed.
+    /// destroyed; when it fails, the response carries the summary as <c>error</c> and the driver's message
+    /// as <c>rawResponse</c>.
     /// </remarks>
     [HttpPost("repoint")]
     public Task<ActionResult<TargetConnectionDTO>> Repoint([FromBody] RepointTargetConnectionDTO request, CancellationToken ct) =>
@@ -85,6 +88,10 @@ public class TargetConnectionController : ControllerBase {
     private async Task<ActionResult<T>> Execute<T>(Func<Task<T>> action) {
         try {
             return Ok(await action().ConfigureAwait(false));
+        } catch (TargetConnectionProofFailedException ex) {
+            // Both halves, so the page can show the summary and keep the driver's own words searchable.
+            _logger.LogWarning(ex, ex.Message);
+            return BadRequest(new { error = ex.Message, rawResponse = ex.RawResponse });
         } catch (ValidationException ex) {
             _logger.LogError(ex, ex.Message);
             return BadRequest(new { error = ex.Message });
