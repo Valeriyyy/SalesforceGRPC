@@ -2,7 +2,7 @@
      in a visible group. Identity fields can be locked (Bindings exist); a stored password can be kept by leaving it
      blank. The browser's required checks are a convenience; the server is the validator. -->
 <script lang="ts">
-    import { Lock } from "@lucide/svelte";
+    import { ChevronDown, Lock } from "@lucide/svelte";
     import type { EngineView } from "../../lib/types/views";
     import { isIdentity, isOption, type FormValues } from "./engines";
 
@@ -57,10 +57,14 @@
                 {:else if f.kind === "choice"}
                     <label class="label">
                         <span class="label-text">{f.label}</span>
-                        <select class="select" bind:value={values[f.name]} required={f.required}>
-                            {#if !f.required && !f.default}<option value="">Driver default</option>{/if}
-                            {#each f.choices ?? [] as choice}<option value={choice}>{choice}</option>{/each}
-                        </select>
+                        <!-- The native arrow ignores padding, so it is hidden and drawn here instead. -->
+                        <div class="relative">
+                            <select class="select appearance-none pl-3 pr-10" bind:value={values[f.name]} required={f.required}>
+                                {#if !f.required && !f.default}<option value="">Driver default</option>{/if}
+                                {#each f.choices ?? [] as choice}<option value={choice}>{choice}</option>{/each}
+                            </select>
+                            <ChevronDown class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-surface-600-400" />
+                        </div>
                     </label>
                 {:else}
                     <label class="label">
