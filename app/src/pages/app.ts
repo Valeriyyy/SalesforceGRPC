@@ -3,6 +3,9 @@ import "../assets/css/app.css";
 
 import PageHost from "../lib/shell/PageHost.svelte";
 import type { PageView } from "../lib/types/views";
+import Binding from "./bindings/Binding.svelte";
+import Bindings from "./bindings/Bindings.svelte";
+import NewBinding from "./bindings/NewBinding.svelte";
 import Channel from "./channels/Channel.svelte";
 import Channels from "./channels/Channels.svelte";
 import NewChannel from "./channels/NewChannel.svelte";
@@ -20,7 +23,10 @@ const componentRegistry: Record<string, Component<{ page: any }>> = {
     channels: Channels,
     "channel-new": NewChannel,
     channel: Channel,
-    "target-connection": TargetConnection
+    "target-connection": TargetConnection,
+    bindings: Bindings,
+    "binding-new": NewBinding,
+    binding: Binding
 };
 
 function decodeProps(encodedProps: string): PageView<unknown> | null {

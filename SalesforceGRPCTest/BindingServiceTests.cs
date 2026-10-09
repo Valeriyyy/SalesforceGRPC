@@ -193,6 +193,28 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task GetBinding_CountsTheFieldsItsEntityCouldMap() {
+        // The "12 of 40 fields" on the Bindings list: the 40 is every bindable field, flattened.
+        ArrangeValidBinding();
+        var bindable = await NewService().GetBindableFieldsForBindingAsync(BindingId, Ct);
+
+        var binding = await NewService().GetBindingAsync(BindingId, Ct);
+
+        Assert.Equal(bindable.Count, binding.FieldCount);
+        Assert.Equal(2, binding.FieldMappingCount);
+    }
+
+    [Fact]
+    public async Task GetBindingColumns_ReadsTheBindingsTargetTable_MarkingWhatIsMappedWhere() {
+        ArrangeValidBinding();
+
+        var columns = await NewService().GetBindingColumnsAsync(BindingId, Ct);
+
+        Assert.Equal("Phone", Assert.Single(columns, c => c.ColumnName == "phone").MappedSalesforceFieldName);
+        Assert.True(Assert.Single(columns, c => c.ColumnName == "sf_id").IsUnique);
+    }
+
+    [Fact]
     public async Task GetBindableFields_ForAMemberThatDoesNotExist_IsNotFound() {
         _channels.GetMemberByIdAsync(99, Arg.Any<CancellationToken>()).Returns((PlatformEventChannelMemberEntity?)null);
 

@@ -135,8 +135,9 @@ public sealed record StageView(
             "No Binding is Active, so no events are written.",
             "Bind an Entity on the Primary Channel to a Target Table and activate it."),
         StageReason.BindingForcedIncomplete when stage is BindingsStage { Counts.ForcedIncomplete: var n } => (
-            $"The worker set {Plural(n, "Binding")} back to Incomplete: {(n == 1 ? "its" : "their")} Key Mapping column has no unique constraint.",
-            "Add a unique constraint or primary key to the Key Mapping column, then activate the Binding again."),
+            $"{Plural(n, "Binding")} {(n == 1 ? "was" : "were")} forced back to Incomplete and {(n == 1 ? "is" : "are")} not syncing: " +
+            "an edit or a change to the Target Table left " + (n == 1 ? "it" : "them") + " invalid, or a Key Mapping column lost its unique constraint.",
+            "Open each Binding marked Needs attention to see what blocks it, fix that, then activate it again."),
         _ => ("", "")
     };
 

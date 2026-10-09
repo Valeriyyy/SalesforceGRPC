@@ -154,6 +154,13 @@ public class BindingService : IBindingService {
         return table.Columns.Select(c => c.ToDto(mappedByColumn.GetValueOrDefault(c.ColumnName))).ToList();
     }
 
+    public async Task<IReadOnlyList<TargetColumnDTO>> GetBindingColumnsAsync(int bindingId,
+        CancellationToken cancellationToken = default) {
+        var binding = await RequireBinding(bindingId).ConfigureAwait(false);
+        var (schemaName, tableName) = SplitFullName(binding.DbSchemaFullName);
+        return await GetTargetColumnsAsync(schemaName, tableName, bindingId, cancellationToken).ConfigureAwait(false);
+    }
+
     #endregion
 
     #region Bindings
@@ -945,7 +952,22 @@ public class BindingService : IBindingService {
     private async Task<BindingDTO> LoadBindingDto(CDCSchema binding, List<MappedField> mappings,
         CancellationToken cancellationToken) {
         var members = await _channels.GetMembersByBindingIdAsync(binding.Id, cancellationToken).ConfigureAwait(false) ?? [];
-        return binding.ToDto(mappings, members.Select(m => m.Id));
+        return binding.ToDto(mappings, members.Select(m => m.Id), CountFields(binding));
+    }
+
+    /// <summary>
+    /// The flattened fields in the Avro Schema the Binding was last linked to. Read from the App Database, so
+    /// listing Bindings never reaches Salesforce; null when the Binding has no usable schema linked.
+    /// </summary>
+    private static int? CountFields(CDCSchema binding) {
+        if (binding.AvroSchema is not { SchemaJson: { Length: > 0 } } avro) {
+            return null;
+        }
+        try {
+            return ReadFields(avro).Count;
+        } catch (Exception ex) when (ex is AvroException or ValidationException) {
+            return null;
+        }
     }
 
     #endregion

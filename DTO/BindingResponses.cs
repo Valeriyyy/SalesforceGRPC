@@ -81,6 +81,12 @@ public record BindingDTO {
     /// <summary>Field Mappings excluding the Key Mapping.</summary>
     public int FieldMappingCount { get; set; }
 
+    /// <summary>
+    /// How many flattened fields the Entity carries in the Avro Schema this Binding was last linked to, or null
+    /// when it has none. The "of 40" in "12 of 40 fields".
+    /// </summary>
+    public int? FieldCount { get; set; }
+
     public bool SoftDeleteEnabled { get; set; }
     public string? SoftDeleteColumnName { get; set; }
 

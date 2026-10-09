@@ -13,7 +13,7 @@ namespace Application.Mappers;
 /// </remarks>
 public static class BindingMapper {
     public static BindingDTO ToDto(this CDCSchema binding, IReadOnlyCollection<MappedField> mappings,
-        IEnumerable<int> channelMemberIds) => new() {
+        IEnumerable<int> channelMemberIds, int? fieldCount) => new() {
         Id = binding.Id,
         EntityName = binding.EntityName,
         TargetTable = binding.DbSchemaFullName,
@@ -21,6 +21,7 @@ public static class BindingMapper {
         NeedsAttention = binding.BindingState is BindingState.Incomplete && binding.ForcedIncompleteAt is not null,
         KeyMappingColumn = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName)?.TargetFieldName,
         FieldMappingCount = mappings.Count(m => m.SalesforceFieldName != KeyMapping.FieldName),
+        FieldCount = fieldCount,
         SoftDeleteEnabled = binding.SoftDeleteEnabled,
         SoftDeleteColumnName = binding.SoftDeleteColumnName,
         AvroSchemaId = binding.SchemaId,

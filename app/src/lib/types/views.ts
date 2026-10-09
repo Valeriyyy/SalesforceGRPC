@@ -267,3 +267,140 @@ export interface FieldView {
     default: string | null;
     choices: string[] | null;
 }
+
+// Bindings pages (BindingsViews.cs). Every page waits, showing only `waiting`, until a Primary Channel and a usable
+// Target Connection exist.
+
+/** Where a Binding stands. needsAttention: was Active, forced back to Incomplete by the worker or an edit. */
+export type BindingRowState = "unbound" | "incomplete" | "needsAttention" | "active" | "inactive";
+
+export interface SetupStepView {
+    title: string;
+    problem: string;
+    actionLabel: string;
+    href: string;
+}
+
+export interface BindingsView {
+    waiting: SetupStepView[];
+    primaryChannelLabel: string | null;
+    rows: BindingRowView[];
+}
+
+export interface BindingRowView {
+    memberId: number;
+    entity: string;
+    /** Null, with the details below, when the Entity is not bound. */
+    bindingId: number | null;
+    targetTable: string | null;
+    keyMappingColumn: string | null;
+    fieldMappingCount: number;
+    fieldCount: number | null;
+    state: BindingRowState;
+    href: string;
+}
+
+export interface NewBindingView {
+    waiting: SetupStepView[];
+    /** Null when there is no such member on the Primary Channel. */
+    member: NewBindingMemberView | null;
+    tables: TargetTableOptionView[];
+    targetError: TargetDatabaseErrorView | null;
+}
+
+export interface NewBindingMemberView {
+    id: number;
+    entity: string;
+}
+
+export interface TargetTableOptionView {
+    schemaName: string | null;
+    tableName: string;
+    fullName: string;
+    /** The Entity already bound to this table, which makes it unavailable. */
+    boundEntity: string | null;
+    nameMatches: boolean;
+}
+
+export interface BindingView {
+    waiting: SetupStepView[];
+    /** Null when there is no such Binding. */
+    binding: BindingEditorView | null;
+}
+
+export interface BindingEditorView {
+    id: number;
+    entity: string;
+    targetTable: string;
+    state: Exclude<BindingRowState, "unbound">;
+    /** The Primary Channel's member for this Entity, where binding again starts. */
+    memberId: number | null;
+    fieldMappingCount: number;
+    keyMappingColumn: string | null;
+    softDeleteEnabled: boolean;
+    softDeleteColumnName: string | null;
+    /** Null, with targetError set, when the Target Database could not be read. */
+    target: BindingTargetView | null;
+    targetError: TargetDatabaseErrorView | null;
+}
+
+export interface BindingTargetView {
+    fields: BindableField[];
+    columns: TargetColumn[];
+    /** Exactly the columns the soft delete setting accepts. */
+    softDeleteColumns: string[];
+    /** Offered, never applied, while there is no Key Mapping. */
+    suggestedKeyColumn: string | null;
+    /** Name matches a Binding with no Field Mappings starts its draft from. */
+    prefill: FieldMapping[];
+    /** The stored Binding's validation. */
+    validation: BindingValidation;
+}
+
+// The api/Bindings DTOs the Bindings pages carry and send (DTO/BindingResponses.cs, DTO/BindingRequests.cs).
+
+export interface BindableField {
+    /** Flattened: a compound's parts appear as e.g. BillingAddressCity, never the compound itself. */
+    name: string;
+    fieldType: string;
+    avroType: string;
+    isNullable: boolean;
+    parentName: string | null;
+    mappedColumnName: string | null;
+    suggestedColumnName: string | null;
+}
+
+export interface TargetColumn {
+    columnName: string;
+    dataType: string;
+    isNullable: boolean;
+    maxLength: number | null;
+    isUnique: boolean;
+    mappedSalesforceFieldName: string | null;
+}
+
+export interface FieldMapping {
+    salesforceFieldName: string;
+    targetColumnName: string;
+}
+
+export type CompatibilityLevel = "Compatible" | "Warning" | "Error";
+
+export interface CompatibilityResult {
+    /** "MappedSFKey" for the Key Mapping, "SoftDelete" for the flag column, "" for an unmapped NOT NULL column. */
+    salesforceFieldName: string;
+    targetColumnName: string;
+    fieldType: string;
+    targetDataType: string;
+    level: CompatibilityLevel;
+    message: string;
+}
+
+/** Also the answer of POST api/Bindings/{id}/validate. */
+export interface BindingValidation {
+    bindingId: number;
+    canActivate: boolean;
+    blockers: string[];
+    results: CompatibilityResult[];
+    validatedAgainstSchemaId: string | null;
+}

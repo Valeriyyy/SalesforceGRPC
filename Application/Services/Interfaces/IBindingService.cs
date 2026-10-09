@@ -35,6 +35,9 @@ public interface IBindingService {
     Task<IReadOnlyList<TargetColumnDTO>> GetTargetColumnsAsync(string? schemaName, string tableName,
         int? bindingId = null, CancellationToken cancellationToken = default);
 
+    /// <summary>The columns of a Binding's Target Table, each marked with the Salesforce field mapped to it.</summary>
+    Task<IReadOnlyList<TargetColumnDTO>> GetBindingColumnsAsync(int bindingId, CancellationToken cancellationToken = default);
+
     #endregion
 
     #region Bindings
