@@ -627,6 +627,77 @@ public class BindingServiceTests {
         await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
     }
 
+    [Fact]
+    public async Task ValidateProposed_ChecksTheProposedSetInPlaceOfTheStoredOne() {
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Some_Date_Time__c", TargetColumnName = "employee_count" }]
+        }, Ct);
+
+        Assert.False(result.CanActivate);
+        Assert.Equal("Error", Assert.Single(result.Results, r => r.SalesforceFieldName == "Some_Date_Time__c").Level);
+        // The stored Phone mapping is not part of the proposal, so it is not checked.
+        Assert.DoesNotContain(result.Results, r => r.SalesforceFieldName == "Phone");
+    }
+
+    [Fact]
+    public async Task ValidateProposed_KeepsTheStoredKeyMapping() {
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" }]
+        }, Ct);
+
+        Assert.True(result.CanActivate);
+        Assert.Contains(result.Results, r => r.TargetColumnName == "sf_id");
+    }
+
+    [Fact]
+    public async Task ValidateProposed_ThatWouldBreakAnActiveBinding_WritesNothing() {
+        ArrangeValidBinding(BindingState.Active);
+
+        await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Some_Date_Time__c", TargetColumnName = "employee_count" }]
+        }, Ct);
+
+        await _meta.DidNotReceive().ReplaceFieldMappings(Arg.Any<int>(), Arg.Any<IEnumerable<MappedField>>());
+        await _meta.DidNotReceive().ForceBindingIncomplete(Arg.Any<int>(), Arg.Any<DateTime>());
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+        _signal.DidNotReceive().Signal();
+    }
+
+    [Fact]
+    public async Task ValidateProposed_WithTwoFieldsOnOneColumn_CannotActivateAndNamesTheColumn() {
+        // Saving this set would be refused, so validating it must not say it is ready.
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" },
+                new FieldMappingDTO { SalesforceFieldName = "Fax", TargetColumnName = "phone" }
+            ]
+        }, Ct);
+
+        Assert.False(result.CanActivate);
+        Assert.Contains(result.Blockers, b => b.Contains("'phone'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ValidateProposed_MappingAFieldToTheKeyMappingColumn_CannotActivate() {
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" },
+                new FieldMappingDTO { SalesforceFieldName = "Name", TargetColumnName = "sf_id" }
+            ]
+        }, Ct);
+
+        Assert.False(result.CanActivate);
+        Assert.Contains(result.Blockers, b => b.Contains("'sf_id'", StringComparison.Ordinal));
+    }
+
     #endregion
 
     #region Binding State

@@ -354,6 +354,44 @@ public class BindingService : IBindingService {
         return await Validate(binding, mappings, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<BindingValidationDTO> ValidateProposedFieldMappingsAsync(int bindingId, SetFieldMappingsDTO proposed,
+        CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(proposed);
+
+        var binding = await RequireBinding(bindingId).ConfigureAwait(false);
+        var keyMapping = (await ReadMappings(bindingId).ConfigureAwait(false))
+            .FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
+
+        var mappings = proposed.Mappings
+            .Select(m => new MappedField {
+                SchemaId = bindingId,
+                SalesforceFieldName = m.SalesforceFieldName,
+                TargetFieldName = m.TargetColumnName
+            })
+            .ToList();
+        if (keyMapping is not null) {
+            mappings.Add(keyMapping);
+        }
+
+        var result = await Validate(binding, mappings, cancellationToken).ConfigureAwait(false);
+
+        // Validation of a stored set never meets these, because saving refuses them; a draft can hold them.
+        var seenColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mapping in proposed.Mappings) {
+            if (!seenColumns.Add(mapping.TargetColumnName)) {
+                result.Blockers.Add(
+                    $"Column '{mapping.TargetColumnName}' is mapped more than once. One Salesforce field per column, or one silently overwrites the other.");
+            } else if (keyMapping is not null &&
+                       string.Equals(mapping.TargetColumnName, keyMapping.TargetFieldName, StringComparison.OrdinalIgnoreCase)) {
+                result.Blockers.Add(
+                    $"Column '{mapping.TargetColumnName}' holds the Salesforce record ID and cannot also carry a field.");
+            }
+        }
+        result.CanActivate &= result.Blockers.Count == 0;
+
+        return result;
+    }
+
     public async Task<BindingDTO> ActivateAsync(int bindingId, CancellationToken cancellationToken = default) {
         var binding = await RequireBinding(bindingId).ConfigureAwait(false);
         var mappings = await ReadMappings(bindingId).ConfigureAwait(false);

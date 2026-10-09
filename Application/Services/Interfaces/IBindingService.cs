@@ -54,6 +54,14 @@ public interface IBindingService {
     Task<BindingValidationDTO> ValidateBindingAsync(int bindingId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Validates the Binding as it would be with <paramref name="proposed"/> in place of its Field Mappings,
+    /// writing nothing — so an editor can check a draft before saving it.
+    /// </summary>
+    /// <remarks>The stored Key Mapping and soft delete settings are kept.</remarks>
+    Task<BindingValidationDTO> ValidateProposedFieldMappingsAsync(int bindingId, SetFieldMappingsDTO proposed,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Switches a Binding on. Re-runs validation first and never trusts a previously stored result.
     /// </summary>
     Task<BindingDTO> ActivateAsync(int bindingId, CancellationToken cancellationToken = default);
