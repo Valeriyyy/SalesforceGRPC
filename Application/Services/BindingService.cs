@@ -66,18 +66,32 @@ public class BindingService : IBindingService {
     public async Task<IReadOnlyList<BindableFieldDTO>> GetBindableFieldsAsync(int memberId,
         CancellationToken cancellationToken = default) {
         var member = await RequireMember(memberId, cancellationToken).ConfigureAwait(false);
-        var fields = await ReadEntityFields(member.SelectedEntity, cancellationToken).ConfigureAwait(false);
+
+        var binding = member.CdcSchemaId is { } bindingId
+            ? await _meta.GetSchemaById(bindingId).ConfigureAwait(false)
+            : null;
 
         // Without a Binding there is no Target Table to map against, so the fields stand alone.
-        if (member.CdcSchemaId is not { } bindingId) {
+        if (binding is null) {
+            var fields = await ReadEntityFields(member.SelectedEntity, cancellationToken).ConfigureAwait(false);
             return fields.Select(f => f.ToDto(null, SuggestKeyColumn(f, null))).ToList();
         }
 
-        var binding = await _meta.GetSchemaById(bindingId).ConfigureAwait(false);
-        var mappings = await ReadMappings(bindingId).ConfigureAwait(false);
-        var columns = binding is null
-            ? []
-            : (await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false))?.Columns ?? [];
+        return await ReadBindableFields(binding, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<BindableFieldDTO>> GetBindableFieldsForBindingAsync(int bindingId,
+        CancellationToken cancellationToken = default) {
+        var binding = await RequireBinding(bindingId).ConfigureAwait(false);
+        return await ReadBindableFields(binding, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>A Binding's Entity fields, each with its mapped Target Column or a suggested one.</summary>
+    private async Task<IReadOnlyList<BindableFieldDTO>> ReadBindableFields(CDCSchema binding,
+        CancellationToken cancellationToken) {
+        var fields = await ReadEntityFields(binding.EntityName, cancellationToken).ConfigureAwait(false);
+        var mappings = await ReadMappings(binding.Id).ConfigureAwait(false);
+        var columns = (await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false))?.Columns ?? [];
 
         var mappedByField = mappings
             .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
@@ -176,10 +190,14 @@ public class BindingService : IBindingService {
             throw new ValidationException($"Channel member '{member.FullName}' already has a Binding.");
         }
 
+        // An Entity has one destination. When it was bound through another Channel's member, this member
+        // shares that Binding rather than being left unable to bind or edit it.
         var existingForEntity = await _meta.GetSchemaByEntityName(member.SelectedEntity).ConfigureAwait(false);
         if (existingForEntity is not null) {
-            throw new ValidationException(
-                $"Entity '{member.SelectedEntity}' is already bound to '{existingForEntity.DbSchemaFullName}'. An entity has one destination.");
+            await _channels.SetMemberBindingAsync(memberId, existingForEntity.Id, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Linked channel member {Member} to the existing Binding {BindingId} for {Entity}",
+                member.FullName, existingForEntity.Id, member.SelectedEntity);
+            return await LoadBindingDto(existingForEntity, cancellationToken).ConfigureAwait(false);
         }
 
         var targetTable = BuildFullName(dto.TargetSchema, dto.TargetTable);
@@ -330,9 +348,8 @@ public class BindingService : IBindingService {
                     $"Column '{dto.ColumnName}' does not exist on '{binding.DbSchemaFullName}'.");
             }
 
-            var check = TypeCompatibilityChecker.CheckSoftDeleteColumn(column, engine);
-            if (check.Level is CompatibilityLevel.Error) {
-                throw new ValidationException(check.Message);
+            if (!CanCarrySoftDeleteFlag(column, engine)) {
+                throw new ValidationException(TypeCompatibilityChecker.CheckSoftDeleteColumn(column, engine).Message);
             }
 
             columnName = column.ColumnName;
@@ -345,6 +362,18 @@ public class BindingService : IBindingService {
 
         var mappings = await ReadMappings(bindingId).ConfigureAwait(false);
         return await ReconcileStateAfterEdit(binding, mappings, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<string>> GetSoftDeleteColumnsAsync(int bindingId,
+        CancellationToken cancellationToken = default) {
+        var binding = await RequireBinding(bindingId).ConfigureAwait(false);
+        var table = await RequireTable(binding, cancellationToken).ConfigureAwait(false);
+        var engine = await Engine(cancellationToken).ConfigureAwait(false);
+
+        return table.Columns
+            .Where(c => CanCarrySoftDeleteFlag(c, engine))
+            .Select(c => c.ColumnName)
+            .ToList();
     }
 
     public async Task<BindingValidationDTO> ValidateBindingAsync(int bindingId,
@@ -441,6 +470,13 @@ public class BindingService : IBindingService {
 
         _logger.LogInformation("Deleted Binding {BindingId}", bindingId);
     }
+
+    /// <summary>
+    /// Whether a column can carry the soft delete flag. The one rule behind both what the editor offers and
+    /// what <see cref="SetSoftDeleteAsync"/> accepts.
+    /// </summary>
+    private static bool CanCarrySoftDeleteFlag(ColumnMetadata column, TargetDatabaseEngine engine) =>
+        TypeCompatibilityChecker.CheckSoftDeleteColumn(column, engine).Level is not CompatibilityLevel.Error;
 
     #endregion
 

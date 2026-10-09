@@ -22,6 +22,12 @@ public interface IBindingService {
     /// </summary>
     Task<IReadOnlyList<BindableFieldDTO>> GetBindableFieldsAsync(int memberId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The same as <see cref="GetBindableFieldsAsync"/>, for a Binding's Entity against its Target Table —
+    /// whether or not any Channel Member is linked to it yet.
+    /// </summary>
+    Task<IReadOnlyList<BindableFieldDTO>> GetBindableFieldsForBindingAsync(int bindingId, CancellationToken cancellationToken = default);
+
     /// <summary>Tables in the Target Database, each marked with the Entity already bound to it.</summary>
     Task<IReadOnlyList<TargetTableDTO>> GetTargetTablesAsync(string? schemaName, CancellationToken cancellationToken = default);
 
@@ -38,7 +44,9 @@ public interface IBindingService {
     Task<BindingDTO> GetBindingAsync(int bindingId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Creates an Incomplete Binding for a Channel Member's Entity and links the member to it.
+    /// Creates an Incomplete Binding for a Channel Member's Entity and links the member to it. When the Entity
+    /// is already bound (through another Channel's member), links the member to that Binding and returns it
+    /// instead, since an Entity has one destination.
     /// </summary>
     Task<BindingDTO> CreateBindingAsync(int memberId, CreateBindingDTO dto, CancellationToken cancellationToken = default);
 
@@ -49,6 +57,12 @@ public interface IBindingService {
     Task<BindingDTO> SetKeyMappingAsync(int bindingId, SetKeyMappingDTO dto, CancellationToken cancellationToken = default);
 
     Task<BindingDTO> SetSoftDeleteAsync(int bindingId, SetSoftDeleteDTO dto, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The columns of the Binding's Target Table that <see cref="SetSoftDeleteAsync"/> would accept as the
+    /// soft delete flag — one rule for both, so what is offered is what will be accepted.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetSoftDeleteColumnsAsync(int bindingId, CancellationToken cancellationToken = default);
 
     /// <summary>Runs validation without changing the Binding's state.</summary>
     Task<BindingValidationDTO> ValidateBindingAsync(int bindingId, CancellationToken cancellationToken = default);

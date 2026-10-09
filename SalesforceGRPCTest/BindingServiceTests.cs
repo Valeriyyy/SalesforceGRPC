@@ -182,6 +182,17 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task GetBindableFieldsForBinding_CarriesEachFieldsMappedColumn() {
+        // Keyed by Binding rather than member, so it works for a Primary Channel member not linked to it yet.
+        ArrangeValidBinding();
+
+        var fields = await NewService().GetBindableFieldsForBindingAsync(BindingId, Ct);
+
+        Assert.Equal("phone", Assert.Single(fields, f => f.Name == "Phone").MappedColumnName);
+        Assert.Null(Assert.Single(fields, f => f.Name == "Name").MappedColumnName);
+    }
+
+    [Fact]
     public async Task GetBindableFields_ForAMemberThatDoesNotExist_IsNotFound() {
         _channels.GetMemberByIdAsync(99, Arg.Any<CancellationToken>()).Returns((PlatformEventChannelMemberEntity?)null);
 
@@ -215,14 +226,28 @@ public class BindingServiceTests {
     }
 
     [Fact]
-    public async Task CreateBinding_ForAnEntityThatAlreadyHasOne_IsRejected() {
+    public async Task CreateBinding_ForAnEntityThatAlreadyHasOne_LinksTheMemberToItInsteadOfCreatingASecond() {
+        // The Entity was bound through another Channel's member; this member can only ever share that Binding.
         ArrangeMemberWithoutBinding();
         _meta.GetSchemaByEntityName(Entity).Returns(Binding(BindingState.Active));
 
-        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
+        var binding = await NewService().CreateBindingAsync(MemberId,
+            new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct);
+
+        Assert.Equal(BindingId, binding.Id);
+        Assert.Equal(nameof(BindingState.Active), binding.State);
+        await _channels.Received(1).SetMemberBindingAsync(MemberId, BindingId, Arg.Any<CancellationToken>());
+        await _meta.DidNotReceive().CreateNewSchemaWithAvroLink(Arg.Any<CDCSchema>(), Arg.Any<int>());
+    }
+
+    [Fact]
+    public async Task CreateBinding_ForAMemberThatAlreadyHasOne_IsRejected() {
+        ArrangeMemberWithoutBinding();
+        _channels.GetMemberByIdAsync(MemberId, Arg.Any<CancellationToken>()).Returns(Member(BindingId));
+
+        await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct));
 
-        Assert.Contains(Entity, ex.Message, StringComparison.Ordinal);
         await _meta.DidNotReceive().CreateNewSchemaWithAvroLink(Arg.Any<CDCSchema>(), Arg.Any<int>());
     }
 
@@ -892,6 +917,41 @@ public class BindingServiceTests {
 
         await Assert.ThrowsAsync<ValidationException>(() => NewService().SetSoftDeleteAsync(BindingId,
             new SetSoftDeleteDTO { Enabled = true, ColumnName = null }, Ct));
+    }
+
+    [Fact]
+    public async Task SoftDeleteColumns_AreExactlyTheColumnsSetSoftDeleteAccepts() {
+        ArrangeValidBinding();
+        var service = NewService();
+
+        var offered = (await service.GetSoftDeleteColumnsAsync(BindingId, Ct)).ToHashSet();
+
+        var accepted = new HashSet<string>();
+        foreach (var column in AccountTable().Columns) {
+            try {
+                await service.SetSoftDeleteAsync(BindingId,
+                    new SetSoftDeleteDTO { Enabled = true, ColumnName = column.ColumnName }, Ct);
+                accepted.Add(column.ColumnName);
+            } catch (ValidationException) {
+                // Not a column that can carry the flag.
+            }
+        }
+
+        Assert.Contains("is_deleted", offered);
+        Assert.DoesNotContain("name", offered);
+        Assert.Equal(accepted.Order(), offered.Order());
+    }
+
+    [Fact]
+    public async Task SoftDeleteColumns_WhenNoColumnCanCarryTheFlag_IsEmpty() {
+        ArrangeValidBinding();
+        var table = AccountTable();
+        table.Columns = table.Columns.Where(c => c.DataType != "boolean" && c.DataType != "integer").ToList();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var offered = await NewService().GetSoftDeleteColumnsAsync(BindingId, Ct);
+
+        Assert.Empty(offered);
     }
 
     [Fact]
