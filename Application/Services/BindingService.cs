@@ -343,7 +343,8 @@ public class BindingService : IBindingService {
         binding.SoftDeleteColumnName = columnName;
         _changeSignal.Signal();
 
-        return await LoadBindingDto(binding, cancellationToken).ConfigureAwait(false);
+        var mappings = await ReadMappings(bindingId).ConfigureAwait(false);
+        return await ReconcileStateAfterEdit(binding, mappings, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BindingValidationDTO> ValidateBindingAsync(int bindingId,
@@ -583,8 +584,7 @@ public class BindingService : IBindingService {
             return false;
         }
 
-        await _meta.ForceBindingIncomplete(binding.Id, _time.GetUtcNow().UtcDateTime).ConfigureAwait(false);
-        binding.BindingState = BindingState.Incomplete;
+        await ForceIncomplete(binding).ConfigureAwait(false);
         _logger.LogWarning(
             "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because its Key Mapping column {Column} " +
             "has no unique constraint. Change events can arrive more than once, and a repeated CREATE needs a unique " +
@@ -702,22 +702,34 @@ public class BindingService : IBindingService {
     }
 
     /// <summary>
-    /// After an edit, an Active Binding that no longer validates is switched off rather than left claiming
-    /// more than is true.
+    /// After an edit, an Active Binding that no longer validates is forced back to Incomplete rather than left
+    /// claiming more than is true.
     /// </summary>
+    /// <remarks>
+    /// Forced Incomplete, never Inactive: Inactive records only the user's own choice to switch a Binding off,
+    /// while a Binding broken by an edit — or by its Target Table changing under it — must show as needing
+    /// attention. An Inactive or Incomplete Binding is left alone; it is not syncing either way.
+    /// </remarks>
     private async Task<BindingDTO> ReconcileStateAfterEdit(CDCSchema binding, List<MappedField> mappings,
         CancellationToken cancellationToken) {
         if (binding.BindingState is BindingState.Active) {
             var validation = await Validate(binding, mappings, cancellationToken).ConfigureAwait(false);
             if (!validation.CanActivate) {
-                await _meta.SetBindingState(binding.Id, BindingState.Inactive).ConfigureAwait(false);
-                binding.BindingState = BindingState.Inactive;
-                _logger.LogWarning("Binding {BindingId} was deactivated because it no longer validates: {Reason}",
+                await ForceIncomplete(binding).ConfigureAwait(false);
+                _logger.LogWarning("Binding {BindingId} was set to Incomplete because it no longer validates: {Reason}",
                     binding.Id, DescribeFailure(binding, validation));
             }
         }
 
         return await LoadBindingDto(binding, mappings, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Takes an Active Binding out of the worker's plan and marks it as needing attention.</summary>
+    private async Task ForceIncomplete(CDCSchema binding) {
+        var at = _time.GetUtcNow().UtcDateTime;
+        await _meta.ForceBindingIncomplete(binding.Id, at).ConfigureAwait(false);
+        binding.BindingState = BindingState.Incomplete;
+        binding.ForcedIncompleteAt = at;
     }
 
     private static string DescribeFailure(CDCSchema binding, BindingValidationDTO validation) {

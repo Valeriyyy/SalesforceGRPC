@@ -18,6 +18,7 @@ public static class BindingMapper {
         EntityName = binding.EntityName,
         TargetTable = binding.DbSchemaFullName,
         State = binding.BindingState.ToString(),
+        NeedsAttention = binding.BindingState is BindingState.Incomplete && binding.ForcedIncompleteAt is not null,
         KeyMappingColumn = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName)?.TargetFieldName,
         FieldMappingCount = mappings.Count(m => m.SalesforceFieldName != KeyMapping.FieldName),
         SoftDeleteEnabled = binding.SoftDeleteEnabled,

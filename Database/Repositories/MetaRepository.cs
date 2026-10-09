@@ -28,6 +28,7 @@ public class MetaRepository : IMetaRepository {
                 cs.binding_state as BindingState,
                 cs.soft_delete_enabled as SoftDeleteEnabled,
                 cs.soft_delete_column_name as SoftDeleteColumnName,
+                cs.forced_incomplete_at as ForcedIncompleteAt,
                 avro.id as Id,
                 avro.schema_id as SchemaId,
                 avro.record_name as RecordName,

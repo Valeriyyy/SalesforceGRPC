@@ -69,6 +69,12 @@ public record BindingDTO {
     /// <summary>"Incomplete", "Active" or "Inactive".</summary>
     public string State { get; set; } = "";
 
+    /// <summary>
+    /// True when the Binding was Active and was forced back to Incomplete — by the worker or by an edit that
+    /// broke it — rather than never finished. Its Entity's changes are not being synced.
+    /// </summary>
+    public bool NeedsAttention { get; set; }
+
     /// <summary>The Target Column holding the Salesforce record ID, or null when not chosen yet.</summary>
     public string? KeyMappingColumn { get; set; }
 

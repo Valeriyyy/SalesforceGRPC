@@ -689,9 +689,10 @@ public class BindingServiceTests {
     }
 
     [Fact]
-    public async Task SetFieldMappings_OnAnActiveBindingThatNowFailsValidation_MovesItToInactive() {
+    public async Task SetFieldMappings_OnAnActiveBindingThatNowFailsValidation_ForcesItIncomplete() {
         // Saving an incompatible mapping is allowed — the user may be mid-edit — but an Active Binding must
-        // not go on claiming to work, so it is switched off rather than left lying.
+        // not go on claiming to work. It is forced back to Incomplete, not Inactive: Inactive records only the
+        // user's own choice, and a forced Binding has to show as needing attention.
         ArrangeValidBinding(BindingState.Active);
 
         var binding = await NewService().SetFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
@@ -701,8 +702,70 @@ public class BindingServiceTests {
             ]
         }, Ct);
 
-        Assert.Equal(nameof(BindingState.Inactive), binding.State);
-        await _meta.Received(1).SetBindingState(BindingId, BindingState.Inactive);
+        Assert.Equal(nameof(BindingState.Incomplete), binding.State);
+        Assert.True(binding.NeedsAttention);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, _time.GetUtcNow().UtcDateTime);
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task SetKeyMapping_OnAnActiveBindingWhoseTableChangedUnderIt_ForcesItIncomplete() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangeColumnDropped("phone");
+
+        var binding = await NewService().SetKeyMappingAsync(BindingId,
+            new SetKeyMappingDTO { TargetColumnName = "sf_id" }, Ct);
+
+        Assert.Equal(nameof(BindingState.Incomplete), binding.State);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, Arg.Any<DateTime>());
+    }
+
+    [Fact]
+    public async Task SetSoftDelete_OnAnActiveBindingWhoseTableChangedUnderIt_ForcesItIncomplete() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangeColumnDropped("phone");
+
+        var binding = await NewService().SetSoftDeleteAsync(BindingId,
+            new SetSoftDeleteDTO { Enabled = true, ColumnName = "is_deleted" }, Ct);
+
+        Assert.Equal(nameof(BindingState.Incomplete), binding.State);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, Arg.Any<DateTime>());
+    }
+
+    [Theory]
+    [InlineData(BindingState.Inactive)]
+    [InlineData(BindingState.Incomplete)]
+    public async Task SetFieldMappings_ThatBreakABindingThatIsNotActive_LeavesItsStateAlone(BindingState state) {
+        ArrangeValidBinding(state);
+
+        var binding = await NewService().SetFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Some_Date_Time__c", TargetColumnName = "employee_count" }
+            ]
+        }, Ct);
+
+        Assert.Equal(state.ToString(), binding.State);
+        await _meta.DidNotReceive().ForceBindingIncomplete(Arg.Any<int>(), Arg.Any<DateTime>());
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task GetBinding_ForcedBackToIncomplete_NeedsAttention() {
+        ArrangeValidBinding();
+        var forced = Binding();
+        forced.ForcedIncompleteAt = _time.GetUtcNow().UtcDateTime;
+        _meta.GetSchemaById(BindingId).Returns(forced);
+
+        var binding = await NewService().GetBindingAsync(BindingId, Ct);
+
+        Assert.True(binding.NeedsAttention);
+    }
+
+    /// <summary>The Target Table as it is after a DBA dropped one of its mapped columns.</summary>
+    private void ArrangeColumnDropped(string columnName) {
+        var table = AccountTable();
+        table.Columns = table.Columns.Where(c => c.ColumnName != columnName).ToList();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
     }
 
     [Fact]
