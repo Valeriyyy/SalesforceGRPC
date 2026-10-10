@@ -82,7 +82,7 @@
                     </td>
                     <td><span class="badge preset-tonal text-xs">{field.fieldType}</span></td>
                     <td>
-                        <select class="select py-1 text-sm" value={draft[field.name] ?? ""} aria-label="Target Column for {field.name}"
+                        <select class="select px-3 py-1 text-sm" value={draft[field.name] ?? ""} aria-label="Target Column for {field.name}"
                             onchange={e => setColumn(field.name, e.currentTarget.value)}>
                             <option value="">— not mapped —</option>
                             {#each columns as column (column.columnName)}
