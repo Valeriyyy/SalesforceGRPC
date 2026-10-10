@@ -219,7 +219,9 @@
                 <select class="select max-w-md" value={binding.keyMappingColumn ?? ""} disabled={locked} aria-label="Key Mapping column"
                     onchange={e => act(() => putJson(`/api/Bindings/${binding.id}/key-mapping`, { targetColumnName: e.currentTarget.value }))}>
                     <option value="" disabled>Choose a column…</option>
-                    {#each target.columns as column (column.columnName)}
+                    <!-- The table's primary key is its own identity, so it is not offered — unless it already holds the
+                         Key Mapping, which the select must still be able to show. -->
+                    {#each target.columns.filter(c => !c.isPrimaryKey || c.columnName === binding.keyMappingColumn) as column (column.columnName)}
                         <option value={column.columnName} disabled={!column.isUnique}>
                             {column.columnName} · {column.dataType}{column.isUnique ? "" : " — no unique constraint"}
                         </option>

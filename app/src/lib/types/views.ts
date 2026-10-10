@@ -376,6 +376,7 @@ export interface TargetColumn {
     isNullable: boolean;
     maxLength: number | null;
     isUnique: boolean;
+    isPrimaryKey: boolean;
     mappedSalesforceFieldName: string | null;
 }
 

@@ -67,6 +67,10 @@ public class ColumnMetadata {
     /// <summary>The number of digits after the decimal point for numeric types, or null.</summary>
     public int? NumericScale { get; set; }
 
+    /// <summary>True when a PRIMARY KEY constraint covers this column.</summary>
+    public bool IsPrimaryKey => ColumnConstraints.Any(c =>
+        c.ConstraintType.Contains("PRIMARY", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>True when a PRIMARY KEY or UNIQUE constraint covers this column.</summary>
     public bool IsUnique => ColumnConstraints.Any(c =>
         c.ConstraintType.Contains("PRIMARY", StringComparison.OrdinalIgnoreCase) ||

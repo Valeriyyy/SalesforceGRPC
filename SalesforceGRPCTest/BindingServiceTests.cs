@@ -215,6 +215,21 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task GetBindingColumns_MarksThePrimaryKeyColumn_ApartFromAColumnThatIsOnlyUnique() {
+        ArrangeValidBinding();
+        var table = AccountTable();
+        var id = Col("id", "bigint", nullable: false);
+        id.ColumnConstraints.Add(new ColumnConstraint { ConstraintType = "PRIMARY KEY", ConstraintName = "account_pkey" });
+        table.Columns.Insert(0, id);
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var columns = await NewService().GetBindingColumnsAsync(BindingId, Ct);
+
+        Assert.True(Assert.Single(columns, c => c.ColumnName == "id").IsPrimaryKey);
+        Assert.False(Assert.Single(columns, c => c.ColumnName == "sf_id").IsPrimaryKey);
+    }
+
+    [Fact]
     public async Task GetBindableFields_ForAMemberThatDoesNotExist_IsNotFound() {
         _channels.GetMemberByIdAsync(99, Arg.Any<CancellationToken>()).Returns((PlatformEventChannelMemberEntity?)null);
 
