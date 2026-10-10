@@ -20,7 +20,10 @@
     const target = editor?.target ?? null;
     const saved: Record<string, string> = Object.fromEntries(
         (target?.fields ?? []).filter(f => f.mappedColumnName).map(f => [f.name, f.mappedColumnName!]));
-    const prefilled = (target?.prefill.length ?? 0) > 0;
+    // Field Mappings are set up once the Key Mapping is chosen: the record ID's column is the one a field cannot take,
+    // and the Key Mapping cannot change while a draft is unsaved. Only the editor asks for this order; the API does not.
+    const keyChosen = !!editor?.keyMappingColumn;
+    const prefilled = keyChosen && (target?.prefill.length ?? 0) > 0;
 
     // A Binding with no Field Mappings starts from the name matches, unsaved, so the first visit is a review.
     let draft = $state<Record<string, string>>(prefilled
@@ -245,19 +248,29 @@
                     </div>
                 {/if}
 
-                <FieldMappings fields={target.fields} columns={target.columns} keyColumn={binding.keyMappingColumn}
-                    bind:draft {validation} {checking} />
+                {#if !keyChosen}
+                    <div class="card flex items-start gap-3 border border-dashed border-surface-300-700 p-4 text-sm">
+                        <KeyRound class="size-4 shrink-0 text-surface-600-400" />
+                        <p class="text-surface-600-400">
+                            Choose the Key Mapping first. The record ID's column can't also take a field, so mapping starts once it is set{#if target.prefill.length > 0}
+                            — {plural(target.prefill.length, "field")} already match a column by name{/if}.
+                        </p>
+                    </div>
+                {:else}
+                    <FieldMappings fields={target.fields} columns={target.columns} keyColumn={binding.keyMappingColumn}
+                        bind:draft {validation} {checking} />
 
-                <div class="sticky bottom-0 flex flex-wrap items-center justify-end gap-3 border-t border-surface-200-800 bg-surface-50-950 py-3">
-                    {#if dirty}
-                        <span class="mr-auto text-sm text-warning-700-300">Unsaved changes</span>
-                    {/if}
-                    <span class="text-xs text-surface-600-400">
-                        {binding.state === "active" ? "Saving applies to the running worker at once." : "Saved mappings take effect once the Binding is activated."}
-                    </span>
-                    <button type="button" class="btn preset-tonal" disabled={!dirty || pending} onclick={discard}>Discard</button>
-                    <button type="button" class="btn preset-filled-primary-500" disabled={!dirty || pending} onclick={() => save(binding)}>Save Field Mappings</button>
-                </div>
+                    <div class="sticky bottom-0 flex flex-wrap items-center justify-end gap-3 border-t border-surface-200-800 bg-surface-50-950 py-3">
+                        {#if dirty}
+                            <span class="mr-auto text-sm text-warning-700-300">Unsaved changes</span>
+                        {/if}
+                        <span class="text-xs text-surface-600-400">
+                            {binding.state === "active" ? "Saving applies to the running worker at once." : "Saved mappings take effect once the Binding is activated."}
+                        </span>
+                        <button type="button" class="btn preset-tonal" disabled={!dirty || pending} onclick={discard}>Discard</button>
+                        <button type="button" class="btn preset-filled-primary-500" disabled={!dirty || pending} onclick={() => save(binding)}>Save Field Mappings</button>
+                    </div>
+                {/if}
             </section>
 
             <!-- 4. Deletes -->
