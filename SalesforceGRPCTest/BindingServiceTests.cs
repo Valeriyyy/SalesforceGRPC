@@ -368,6 +368,34 @@ public class BindingServiceTests {
 
     #region Target table discovery
 
+    [Fact]
+    public async Task GetTargetTables_WithNoSchemaNamed_ListsTheTablesOfEverySchema() {
+        // Tables are wherever the user put them; looking only in the engine's default schema hides the rest.
+        _target.GetSchemaNames(Arg.Any<CancellationToken>()).Returns(["public", "salesforce"]);
+        _target.GetSchemaMetadata("public", Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = "public", TableName = "audit_log", Columns = [], Constraints = [] }]);
+        _target.GetSchemaMetadata("salesforce", Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = "salesforce", TableName = "account", Columns = [], Constraints = [] }]);
+        _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([Binding()]);
+
+        var tables = await NewService().GetTargetTablesAsync(null, Ct);
+
+        Assert.Equal(["public.audit_log", "salesforce.account"], tables.Select(t => t.FullName));
+        Assert.Equal(Entity, Assert.Single(tables, t => t.FullName == TargetTable).BoundEntityName);
+    }
+
+    [Fact]
+    public async Task GetTargetTables_NamingASchema_ListsOnlyThatSchema() {
+        _target.GetSchemaMetadata("salesforce", Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = "salesforce", TableName = "account", Columns = [], Constraints = [] }]);
+        _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([]);
+
+        var tables = await NewService().GetTargetTablesAsync("salesforce", Ct);
+
+        Assert.Equal(["salesforce.account"], tables.Select(t => t.FullName));
+        await _target.DidNotReceive().GetSchemaNames(Arg.Any<CancellationToken>());
+    }
+
     /// <summary>
     /// A SQLite Binding is correctly stored with a dot-free full name (e.g. "account"). Listing tables must
     /// build each candidate's full name the exact same way a Binding stores it, or a bound table looks free.
@@ -376,6 +404,7 @@ public class BindingServiceTests {
     public async Task GetTargetTables_AgainstASqliteTarget_ReportsADotFreeBoundTableAsBound() {
         WithStoredEngine(TargetDatabaseEngine.Sqlite, available: true);
         _target.Engine.Returns(TargetDatabaseEngine.Sqlite);
+        _target.GetSchemaNames(Arg.Any<CancellationToken>()).Returns([null]);
         _target.GetSchemaMetadata(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns([new TableMetadata { SchemaName = null, TableName = "account", Columns = [], Constraints = [] }]);
 

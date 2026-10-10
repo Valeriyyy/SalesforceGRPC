@@ -51,7 +51,7 @@
         <section class="card flex max-w-3xl items-start gap-4 border border-surface-200-800 bg-surface-50-950 p-6">
             <Table2 class="size-8 shrink-0 text-surface-600-400" />
             <div class="space-y-1">
-                <h2 class="h5">The Target Database has no tables</h2>
+                <h2 class="h5">The Target Database has no tables in any schema</h2>
                 <p class="text-sm text-surface-600-400">Create the table {member.entity} should land in, then come back and reload.</p>
             </div>
         </section>

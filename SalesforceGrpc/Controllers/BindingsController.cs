@@ -32,7 +32,10 @@ public class BindingsController : ControllerBase {
     public Task<ActionResult<IReadOnlyList<BindableFieldDTO>>> GetBindableFields(int memberId, CancellationToken ct) =>
         Execute(() => _bindings.GetBindableFieldsAsync(memberId, ct));
 
-    /// <summary>Tables in the Target Database, each marked with the Entity already bound to it.</summary>
+    /// <summary>
+    /// Tables in the Target Database, each marked with the Entity already bound to it. Without <c>schema</c>,
+    /// the tables of every user schema.
+    /// </summary>
     [HttpGet("target-tables")]
     public Task<ActionResult<IReadOnlyList<TargetTableDTO>>> GetTargetTables(
         [FromQuery] string? schema, CancellationToken ct) =>

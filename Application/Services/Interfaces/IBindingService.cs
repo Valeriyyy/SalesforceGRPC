@@ -28,7 +28,10 @@ public interface IBindingService {
     /// </summary>
     Task<IReadOnlyList<BindableFieldDTO>> GetBindableFieldsForBindingAsync(int bindingId, CancellationToken cancellationToken = default);
 
-    /// <summary>Tables in the Target Database, each marked with the Entity already bound to it.</summary>
+    /// <summary>
+    /// Tables in the Target Database, each marked with the Entity already bound to it. With no
+    /// <paramref name="schemaName"/>, the tables of every user schema; otherwise only that schema's.
+    /// </summary>
     Task<IReadOnlyList<TargetTableDTO>> GetTargetTablesAsync(string? schemaName, CancellationToken cancellationToken = default);
 
     /// <summary>Columns of one Target Table, each marked with the Salesforce field mapped to it.</summary>

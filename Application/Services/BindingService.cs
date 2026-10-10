@@ -122,7 +122,17 @@ public class BindingService : IBindingService {
         CancellationToken cancellationToken = default) {
         var target = await EnsureEngineSupported(cancellationToken).ConfigureAwait(false);
 
-        var tables = await target.GetSchemaMetadata(schemaName, cancellationToken).ConfigureAwait(false);
+        // With no schema named, every schema is read: a table can be bound wherever it lives, not only in the
+        // engine's default schema.
+        var schemas = schemaName is null
+            ? await target.GetSchemaNames(cancellationToken).ConfigureAwait(false)
+            : [schemaName];
+
+        var tables = new List<TableMetadata>();
+        foreach (var schema in schemas) {
+            tables.AddRange(await target.GetSchemaMetadata(schema, cancellationToken).ConfigureAwait(false));
+        }
+
         var bindings = await _meta.GetCachedSchemas(cancellationToken).ConfigureAwait(false);
         var boundTables = bindings
             .Where(b => !string.IsNullOrWhiteSpace(b.DbSchemaFullName))
