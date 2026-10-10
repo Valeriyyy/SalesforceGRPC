@@ -57,7 +57,9 @@
         </Navigation.Footer>
     </Navigation>
 
-    <main class="flex-1 overflow-y-auto">
+    <!-- Relative, so anything a page positions absolutely (an sr-only legend, say) is placed inside this scroll area
+         rather than against the document, where it would make the whole window scroll past the shell. -->
+    <main class="relative flex-1 overflow-y-auto">
         <div class="max-w-[112.5rem] px-10 py-8">
             {@render children()}
         </div>
