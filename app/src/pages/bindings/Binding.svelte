@@ -216,7 +216,7 @@
                     The column that holds the Salesforce record ID. Updates and deletes find their row by it, and change events can arrive
                     more than once, so only a column with a unique constraint or primary key can hold it.
                 </p>
-                <select class="select max-w-md" value={binding.keyMappingColumn ?? ""} disabled={locked} aria-label="Key Mapping column"
+                <select class="select px-3 max-w-md" value={binding.keyMappingColumn ?? ""} disabled={locked} aria-label="Key Mapping column"
                     onchange={e => act(() => putJson(`/api/Bindings/${binding.id}/key-mapping`, { targetColumnName: e.currentTarget.value }))}>
                     <option value="" disabled>Choose a column…</option>
                     <!-- The table's primary key is its own identity, so it is not offered — unless it already holds the
@@ -293,7 +293,7 @@
                     {#if target.softDeleteColumns.length === 0}
                         <p class="ml-6 text-xs text-surface-600-400">No column of {binding.targetTable} can hold the flag: it needs a boolean or integer column.</p>
                     {:else if binding.softDeleteEnabled}
-                        <select class="select ml-6 max-w-xs" value={binding.softDeleteColumnName ?? ""} aria-label="Flag column"
+                        <select class="select ml-6 px-3 max-w-xs" value={binding.softDeleteColumnName ?? ""} aria-label="Flag column"
                             onchange={e => setSoftDelete(true, e.currentTarget.value)}>
                             {#each target.softDeleteColumns as column}<option value={column}>{column}</option>{/each}
                         </select>

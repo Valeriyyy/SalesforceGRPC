@@ -2,7 +2,7 @@
      dropdown. Edits only the draft; saving and discarding it is the editor's. Compatibility comes from the server's
      validation of the draft, never from rules repeated here. -->
 <script lang="ts">
-    import { Check, LoaderCircle, Search } from "@lucide/svelte";
+    import { Check, LoaderCircle, Search, X } from "@lucide/svelte";
     import type { BindableField, BindingValidation, CompatibilityResult, TargetColumn } from "../../lib/types/views";
     import { levelTones } from "./state";
 
@@ -55,10 +55,16 @@
 </script>
 
 <div class="mb-3 flex flex-wrap items-center gap-3">
-    <label class="input-group grid-cols-[auto_1fr] max-w-xs">
-        <div class="ig-cell preset-tonal"><Search class="size-4" /></div>
-        <input class="ig-input" type="search" placeholder="Filter fields" bind:value={query} aria-label="Filter fields by name" />
-    </label>
+    <div class="relative w-full max-w-sm">
+        <Search class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-primary-600-400" />
+        <input class="input h-10 rounded-base border-2 border-surface-300-700 bg-surface-50-950 pr-9 pl-9 shadow-sm
+                      placeholder:text-surface-500 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 [&::-webkit-search-cancel-button]:appearance-none"
+            type="search" placeholder="Filter by field or column…" bind:value={query} aria-label="Filter fields by name" />
+        {#if query}
+            <button type="button" class="absolute top-1/2 right-2 -translate-y-1/2 rounded-full p-1 text-surface-600-400 hover:preset-tonal"
+                aria-label="Clear filter" onclick={() => query = ""}><X class="size-4" /></button>
+        {/if}
+    </div>
     <div class="flex gap-1" role="group" aria-label="Show">
         {#each [["all", `All ${fields.length}`], ["mapped", `Mapped ${mappedCount}`], ["unmapped", `Unmapped ${fields.length - mappedCount}`]] as [value, label]}
             <button type="button" class={["btn btn-sm", show === value ? "preset-filled-primary-500" : "preset-tonal"]}
