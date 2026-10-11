@@ -144,6 +144,26 @@ public class PostgresRepository : RepositoryBase {
     }
 
     /// <summary>
+    /// Every schema holding a base table, leaving out Postgres's own: pg_catalog, information_schema, and the
+    /// pg_toast and pg_temp families.
+    /// </summary>
+    public override async Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        const string sql = @"
+            SELECT DISTINCT table_schema
+            FROM information_schema.tables
+            WHERE table_type = 'BASE TABLE'
+            AND table_schema <> 'information_schema'
+            AND table_schema NOT LIKE 'pg\_%'
+            ORDER BY table_schema";
+
+        var schemas = await connection.QueryAsync<string>(
+            new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        return schemas.Select(s => (string?)s).ToList();
+    }
+
+    /// <summary>
     /// Retrieves columns for a specific table with type and nullability information.
     /// </summary>
     private async Task<List<ColumnMetadata>> GetTableColumns(NpgsqlConnection connection, string schemaName, string tableName, CancellationToken cancellationToken = default) {

@@ -129,6 +129,13 @@ public class MySqlRepository : RepositoryBase {
         return tableMetadataList;
     }
 
+    /// <summary>
+    /// Only the database the Target Connection names. A MySQL schema is a database, and the connection was
+    /// proved against that one; other databases on the server are not this Target Database.
+    /// </summary>
+    public override Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default) =>
+        Task.FromResult<List<string?>>([_defaultSchema]);
+
     private async Task<List<ColumnMetadata>> GetTableColumns(MySqlConnection connection, string schemaName, string tableName, CancellationToken cancellationToken = default) {
         const string sql = @"
             SELECT

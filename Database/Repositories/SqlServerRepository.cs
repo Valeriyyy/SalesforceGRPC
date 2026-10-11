@@ -126,6 +126,22 @@ public class SqlServerRepository : RepositoryBase {
         return tableMetadataList;
     }
 
+    /// <summary>Every schema holding a base table, leaving out SQL Server's own sys and INFORMATION_SCHEMA.</summary>
+    public override async Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default) {
+        await using var connection = new SqlConnection(_connectionString);
+
+        const string sql = @"
+            SELECT DISTINCT table_schema
+            FROM information_schema.tables
+            WHERE table_type = 'BASE TABLE'
+            AND table_schema NOT IN ('sys', 'INFORMATION_SCHEMA')
+            ORDER BY table_schema";
+
+        var schemas = await connection.QueryAsync<string>(
+            new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        return schemas.Select(s => (string?)s).ToList();
+    }
+
     private async Task<List<ColumnMetadata>> GetTableColumns(SqlConnection connection, string schemaName, string tableName, CancellationToken cancellationToken = default) {
         const string sql = @"
             SELECT

@@ -3,8 +3,8 @@
 <script lang="ts">
     import type { Snippet } from "svelte";
     import { TriangleAlert } from "@lucide/svelte";
-    import type { ApiFailure, ApiResult } from "../../lib/api/client";
-    import SalesforceError from "../../lib/components/SalesforceError.svelte";
+    import type { ApiFailure, ApiResult } from "../api/client";
+    import SalesforceError from "./SalesforceError.svelte";
 
     let { title, confirmLabel, pendingLabel, danger = false, typeToConfirm = null, action, onsuccess, children }: {
         title: string;

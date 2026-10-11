@@ -46,6 +46,20 @@ public class PostgresMetadataRepositoryTests {
         Assert.Null(metadata);
     }
 
+    [Fact(DisplayName = "Lists every schema holding a user table, and none of Postgres's own")]
+    public async Task GetSchemaNames_ListsUserSchemasOnly() {
+        var repository = Repository();
+
+        var schemas = await repository.GetSchemaNames(TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain("pg_catalog", schemas);
+        Assert.DoesNotContain("information_schema", schemas);
+        Assert.DoesNotContain(schemas, s => s is null || s.StartsWith("pg_", StringComparison.Ordinal));
+        foreach (var schema in schemas) {
+            Assert.NotEmpty(await repository.GetSchemaMetadata(schema, TestContext.Current.CancellationToken));
+        }
+    }
+
     [Fact(DisplayName = "Can retrieve schema metadata")]
     public async Task GetSchemaMetadata_ReturnsAllTables() {
         var metadata = await Repository().GetSchemaMetadata("public");

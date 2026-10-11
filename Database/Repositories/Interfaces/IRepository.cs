@@ -50,6 +50,13 @@ public interface IRepository {
         CancellationToken cancellationToken = default);
     Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The schemas whose tables a Binding may write to: every schema holding a user table, system schemas left
+    /// out. A single null for an engine with no schema concept (SQLite). For MySQL, where a schema is a
+    /// database, only the database the Target Connection names.
+    /// </summary>
+    Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default);
     Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null);
     #endregion
 }

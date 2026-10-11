@@ -1,6 +1,7 @@
 using Application.Services.Interfaces;
 using DTO;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Salesforce.Clients;
 using System.ComponentModel.DataAnnotations;
 
@@ -31,7 +32,10 @@ public class BindingsController : ControllerBase {
     public Task<ActionResult<IReadOnlyList<BindableFieldDTO>>> GetBindableFields(int memberId, CancellationToken ct) =>
         Execute(() => _bindings.GetBindableFieldsAsync(memberId, ct));
 
-    /// <summary>Tables in the Target Database, each marked with the Entity already bound to it.</summary>
+    /// <summary>
+    /// Tables in the Target Database, each marked with the Entity already bound to it. Without <c>schema</c>,
+    /// the tables of every user schema.
+    /// </summary>
     [HttpGet("target-tables")]
     public Task<ActionResult<IReadOnlyList<TargetTableDTO>>> GetTargetTables(
         [FromQuery] string? schema, CancellationToken ct) =>
@@ -80,10 +84,16 @@ public class BindingsController : ControllerBase {
     public Task<ActionResult<BindingDTO>> SetSoftDelete(int bindingId, [FromBody] SetSoftDeleteDTO dto, CancellationToken ct) =>
         Execute(() => _bindings.SetSoftDeleteAsync(bindingId, dto, ct));
 
-    /// <summary>Runs validation without changing the Binding's state.</summary>
+    /// <summary>
+    /// Runs validation without changing the Binding's state. With a body, validates the Binding as it would be
+    /// with that Field Mapping set in place of its own, writing nothing — the editor's check of a draft.
+    /// </summary>
     [HttpPost("{bindingId:int}/validate")]
-    public Task<ActionResult<BindingValidationDTO>> Validate(int bindingId, CancellationToken ct) =>
-        Execute(() => _bindings.ValidateBindingAsync(bindingId, ct));
+    public Task<ActionResult<BindingValidationDTO>> Validate(int bindingId,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] SetFieldMappingsDTO? proposed, CancellationToken ct) =>
+        Execute(() => proposed is null
+            ? _bindings.ValidateBindingAsync(bindingId, ct)
+            : _bindings.ValidateProposedFieldMappingsAsync(bindingId, proposed, ct));
 
     [HttpPost("{bindingId:int}/activate")]
     public Task<ActionResult<BindingDTO>> Activate(int bindingId, CancellationToken ct) =>

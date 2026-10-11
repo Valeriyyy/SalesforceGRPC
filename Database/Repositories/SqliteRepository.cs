@@ -138,6 +138,10 @@ public class SqliteRepository : RepositoryBase {
         return tableMetadataList;
     }
 
+    /// <summary>SQLite has no schemas, so its tables are all under the one null schema.</summary>
+    public override Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default) =>
+        Task.FromResult<List<string?>>([null]);
+
     /// <summary>
     /// Retrieves columns for a specific table with type and nullability information.
     /// </summary>

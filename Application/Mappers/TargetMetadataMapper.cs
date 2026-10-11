@@ -18,6 +18,7 @@ public static class TargetMetadataMapper {
         IsNullable = column.IsNullable,
         MaxLength = column.MaxLength,
         IsUnique = column.IsUnique,
+        IsPrimaryKey = column.IsPrimaryKey,
         MappedSalesforceFieldName = mappedSalesforceFieldName
     };
 }

@@ -33,6 +33,14 @@ public class CDCSchema {
     [Column("soft_delete_column_name")]
     public string? SoftDeleteColumnName { get; set; }
 
+    /// <summary>
+    /// When an Active Binding was forced back to Incomplete, or null when it never was or has changed state
+    /// since. Set by the worker (a Key Mapping column that lost its unique constraint) and by an edit that
+    /// leaves an Active Binding invalid; cleared by any state change.
+    /// </summary>
+    [Column("forced_incomplete_at")]
+    public DateTime? ForcedIncompleteAt { get; set; }
+
     public DbAvroSchema? AvroSchema { get; set; }
 
     /// <summary>

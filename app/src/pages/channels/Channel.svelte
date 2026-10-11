@@ -7,7 +7,7 @@
     import type { ChannelMemberView, ChannelView, StartingPoint } from "../../lib/types/views";
     import { when } from "../../lib/utils/format";
     import AddEntitiesDialog from "./AddEntitiesDialog.svelte";
-    import ConfirmDialog from "./ConfirmDialog.svelte";
+    import ConfirmDialog from "../../lib/components/ConfirmDialog.svelte";
     import EditMemberDialog from "./EditMemberDialog.svelte";
     import MakePrimaryDialog from "./MakePrimaryDialog.svelte";
     import Notice from "./Notice.svelte";
@@ -171,7 +171,7 @@
                                 <td class="font-mono text-sm">{member.entity}</td>
                                 <td>
                                     {#if member.binding}
-                                        <a href="/bindings" class="font-mono text-sm hover:underline">{member.binding.targetTable}</a>
+                                        <a href="/bindings/{member.binding.id}" class="font-mono text-sm hover:underline">{member.binding.targetTable}</a>
                                         <span class={["badge ml-1", stateTones[member.binding.state]]}>{stateLabels[member.binding.state]}</span>
                                     {:else}
                                         <span class="text-sm text-warning-700-300">Unbound</span>

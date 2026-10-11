@@ -42,6 +42,7 @@ public abstract class RepositoryBase : IRepository {
         CancellationToken cancellationToken = default);
     public abstract Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null,
         CancellationToken cancellationToken = default);
+    public abstract Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default);
     public abstract Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null);
     #endregion
 }

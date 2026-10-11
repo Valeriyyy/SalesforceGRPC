@@ -182,6 +182,54 @@ public class BindingServiceTests {
     }
 
     [Fact]
+    public async Task GetBindableFieldsForBinding_CarriesEachFieldsMappedColumn() {
+        // Keyed by Binding rather than member, so it works for a Primary Channel member not linked to it yet.
+        ArrangeValidBinding();
+
+        var fields = await NewService().GetBindableFieldsForBindingAsync(BindingId, Ct);
+
+        Assert.Equal("phone", Assert.Single(fields, f => f.Name == "Phone").MappedColumnName);
+        Assert.Null(Assert.Single(fields, f => f.Name == "Name").MappedColumnName);
+    }
+
+    [Fact]
+    public async Task GetBinding_CountsTheFieldsItsEntityCouldMap() {
+        // The "12 of 40 fields" on the Bindings list: the 40 is every bindable field, flattened.
+        ArrangeValidBinding();
+        var bindable = await NewService().GetBindableFieldsForBindingAsync(BindingId, Ct);
+
+        var binding = await NewService().GetBindingAsync(BindingId, Ct);
+
+        Assert.Equal(bindable.Count, binding.FieldCount);
+        Assert.Equal(2, binding.FieldMappingCount);
+    }
+
+    [Fact]
+    public async Task GetBindingColumns_ReadsTheBindingsTargetTable_MarkingWhatIsMappedWhere() {
+        ArrangeValidBinding();
+
+        var columns = await NewService().GetBindingColumnsAsync(BindingId, Ct);
+
+        Assert.Equal("Phone", Assert.Single(columns, c => c.ColumnName == "phone").MappedSalesforceFieldName);
+        Assert.True(Assert.Single(columns, c => c.ColumnName == "sf_id").IsUnique);
+    }
+
+    [Fact]
+    public async Task GetBindingColumns_MarksThePrimaryKeyColumn_ApartFromAColumnThatIsOnlyUnique() {
+        ArrangeValidBinding();
+        var table = AccountTable();
+        var id = Col("id", "bigint", nullable: false);
+        id.ColumnConstraints.Add(new ColumnConstraint { ConstraintType = "PRIMARY KEY", ConstraintName = "account_pkey" });
+        table.Columns.Insert(0, id);
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var columns = await NewService().GetBindingColumnsAsync(BindingId, Ct);
+
+        Assert.True(Assert.Single(columns, c => c.ColumnName == "id").IsPrimaryKey);
+        Assert.False(Assert.Single(columns, c => c.ColumnName == "sf_id").IsPrimaryKey);
+    }
+
+    [Fact]
     public async Task GetBindableFields_ForAMemberThatDoesNotExist_IsNotFound() {
         _channels.GetMemberByIdAsync(99, Arg.Any<CancellationToken>()).Returns((PlatformEventChannelMemberEntity?)null);
 
@@ -215,14 +263,28 @@ public class BindingServiceTests {
     }
 
     [Fact]
-    public async Task CreateBinding_ForAnEntityThatAlreadyHasOne_IsRejected() {
+    public async Task CreateBinding_ForAnEntityThatAlreadyHasOne_LinksTheMemberToItInsteadOfCreatingASecond() {
+        // The Entity was bound through another Channel's member; this member can only ever share that Binding.
         ArrangeMemberWithoutBinding();
         _meta.GetSchemaByEntityName(Entity).Returns(Binding(BindingState.Active));
 
-        var ex = await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
+        var binding = await NewService().CreateBindingAsync(MemberId,
+            new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct);
+
+        Assert.Equal(BindingId, binding.Id);
+        Assert.Equal(nameof(BindingState.Active), binding.State);
+        await _channels.Received(1).SetMemberBindingAsync(MemberId, BindingId, Arg.Any<CancellationToken>());
+        await _meta.DidNotReceive().CreateNewSchemaWithAvroLink(Arg.Any<CDCSchema>(), Arg.Any<int>());
+    }
+
+    [Fact]
+    public async Task CreateBinding_ForAMemberThatAlreadyHasOne_IsRejected() {
+        ArrangeMemberWithoutBinding();
+        _channels.GetMemberByIdAsync(MemberId, Arg.Any<CancellationToken>()).Returns(Member(BindingId));
+
+        await Assert.ThrowsAsync<ValidationException>(() => NewService().CreateBindingAsync(MemberId,
             new CreateBindingDTO { TargetSchema = "salesforce", TargetTable = "account" }, Ct));
 
-        Assert.Contains(Entity, ex.Message, StringComparison.Ordinal);
         await _meta.DidNotReceive().CreateNewSchemaWithAvroLink(Arg.Any<CDCSchema>(), Arg.Any<int>());
     }
 
@@ -321,6 +383,34 @@ public class BindingServiceTests {
 
     #region Target table discovery
 
+    [Fact]
+    public async Task GetTargetTables_WithNoSchemaNamed_ListsTheTablesOfEverySchema() {
+        // Tables are wherever the user put them; looking only in the engine's default schema hides the rest.
+        _target.GetSchemaNames(Arg.Any<CancellationToken>()).Returns(["public", "salesforce"]);
+        _target.GetSchemaMetadata("public", Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = "public", TableName = "audit_log", Columns = [], Constraints = [] }]);
+        _target.GetSchemaMetadata("salesforce", Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = "salesforce", TableName = "account", Columns = [], Constraints = [] }]);
+        _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([Binding()]);
+
+        var tables = await NewService().GetTargetTablesAsync(null, Ct);
+
+        Assert.Equal(["public.audit_log", "salesforce.account"], tables.Select(t => t.FullName));
+        Assert.Equal(Entity, Assert.Single(tables, t => t.FullName == TargetTable).BoundEntityName);
+    }
+
+    [Fact]
+    public async Task GetTargetTables_NamingASchema_ListsOnlyThatSchema() {
+        _target.GetSchemaMetadata("salesforce", Arg.Any<CancellationToken>())
+            .Returns([new TableMetadata { SchemaName = "salesforce", TableName = "account", Columns = [], Constraints = [] }]);
+        _meta.GetCachedSchemas(Arg.Any<CancellationToken>()).Returns([]);
+
+        var tables = await NewService().GetTargetTablesAsync("salesforce", Ct);
+
+        Assert.Equal(["salesforce.account"], tables.Select(t => t.FullName));
+        await _target.DidNotReceive().GetSchemaNames(Arg.Any<CancellationToken>());
+    }
+
     /// <summary>
     /// A SQLite Binding is correctly stored with a dot-free full name (e.g. "account"). Listing tables must
     /// build each candidate's full name the exact same way a Binding stores it, or a bound table looks free.
@@ -329,6 +419,7 @@ public class BindingServiceTests {
     public async Task GetTargetTables_AgainstASqliteTarget_ReportsADotFreeBoundTableAsBound() {
         WithStoredEngine(TargetDatabaseEngine.Sqlite, available: true);
         _target.Engine.Returns(TargetDatabaseEngine.Sqlite);
+        _target.GetSchemaNames(Arg.Any<CancellationToken>()).Returns([null]);
         _target.GetSchemaMetadata(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns([new TableMetadata { SchemaName = null, TableName = "account", Columns = [], Constraints = [] }]);
 
@@ -627,6 +718,77 @@ public class BindingServiceTests {
         await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
     }
 
+    [Fact]
+    public async Task ValidateProposed_ChecksTheProposedSetInPlaceOfTheStoredOne() {
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Some_Date_Time__c", TargetColumnName = "employee_count" }]
+        }, Ct);
+
+        Assert.False(result.CanActivate);
+        Assert.Equal("Error", Assert.Single(result.Results, r => r.SalesforceFieldName == "Some_Date_Time__c").Level);
+        // The stored Phone mapping is not part of the proposal, so it is not checked.
+        Assert.DoesNotContain(result.Results, r => r.SalesforceFieldName == "Phone");
+    }
+
+    [Fact]
+    public async Task ValidateProposed_KeepsTheStoredKeyMapping() {
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" }]
+        }, Ct);
+
+        Assert.True(result.CanActivate);
+        Assert.Contains(result.Results, r => r.TargetColumnName == "sf_id");
+    }
+
+    [Fact]
+    public async Task ValidateProposed_ThatWouldBreakAnActiveBinding_WritesNothing() {
+        ArrangeValidBinding(BindingState.Active);
+
+        await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Some_Date_Time__c", TargetColumnName = "employee_count" }]
+        }, Ct);
+
+        await _meta.DidNotReceive().ReplaceFieldMappings(Arg.Any<int>(), Arg.Any<IEnumerable<MappedField>>());
+        await _meta.DidNotReceive().ForceBindingIncomplete(Arg.Any<int>(), Arg.Any<DateTime>());
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+        _signal.DidNotReceive().Signal();
+    }
+
+    [Fact]
+    public async Task ValidateProposed_WithTwoFieldsOnOneColumn_CannotActivateAndNamesTheColumn() {
+        // Saving this set would be refused, so validating it must not say it is ready.
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" },
+                new FieldMappingDTO { SalesforceFieldName = "Fax", TargetColumnName = "phone" }
+            ]
+        }, Ct);
+
+        Assert.False(result.CanActivate);
+        Assert.Contains(result.Blockers, b => b.Contains("'phone'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ValidateProposed_MappingAFieldToTheKeyMappingColumn_CannotActivate() {
+        ArrangeValidBinding();
+
+        var result = await NewService().ValidateProposedFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" },
+                new FieldMappingDTO { SalesforceFieldName = "Name", TargetColumnName = "sf_id" }
+            ]
+        }, Ct);
+
+        Assert.False(result.CanActivate);
+        Assert.Contains(result.Blockers, b => b.Contains("'sf_id'", StringComparison.Ordinal));
+    }
+
     #endregion
 
     #region Binding State
@@ -689,9 +851,10 @@ public class BindingServiceTests {
     }
 
     [Fact]
-    public async Task SetFieldMappings_OnAnActiveBindingThatNowFailsValidation_MovesItToInactive() {
+    public async Task SetFieldMappings_OnAnActiveBindingThatNowFailsValidation_ForcesItIncomplete() {
         // Saving an incompatible mapping is allowed — the user may be mid-edit — but an Active Binding must
-        // not go on claiming to work, so it is switched off rather than left lying.
+        // not go on claiming to work. It is forced back to Incomplete, not Inactive: Inactive records only the
+        // user's own choice, and a forced Binding has to show as needing attention.
         ArrangeValidBinding(BindingState.Active);
 
         var binding = await NewService().SetFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
@@ -701,8 +864,70 @@ public class BindingServiceTests {
             ]
         }, Ct);
 
-        Assert.Equal(nameof(BindingState.Inactive), binding.State);
-        await _meta.Received(1).SetBindingState(BindingId, BindingState.Inactive);
+        Assert.Equal(nameof(BindingState.Incomplete), binding.State);
+        Assert.True(binding.NeedsAttention);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, _time.GetUtcNow().UtcDateTime);
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task SetKeyMapping_OnAnActiveBindingWhoseTableChangedUnderIt_ForcesItIncomplete() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangeColumnDropped("phone");
+
+        var binding = await NewService().SetKeyMappingAsync(BindingId,
+            new SetKeyMappingDTO { TargetColumnName = "sf_id" }, Ct);
+
+        Assert.Equal(nameof(BindingState.Incomplete), binding.State);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, Arg.Any<DateTime>());
+    }
+
+    [Fact]
+    public async Task SetSoftDelete_OnAnActiveBindingWhoseTableChangedUnderIt_ForcesItIncomplete() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangeColumnDropped("phone");
+
+        var binding = await NewService().SetSoftDeleteAsync(BindingId,
+            new SetSoftDeleteDTO { Enabled = true, ColumnName = "is_deleted" }, Ct);
+
+        Assert.Equal(nameof(BindingState.Incomplete), binding.State);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, Arg.Any<DateTime>());
+    }
+
+    [Theory]
+    [InlineData(BindingState.Inactive)]
+    [InlineData(BindingState.Incomplete)]
+    public async Task SetFieldMappings_ThatBreakABindingThatIsNotActive_LeavesItsStateAlone(BindingState state) {
+        ArrangeValidBinding(state);
+
+        var binding = await NewService().SetFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Some_Date_Time__c", TargetColumnName = "employee_count" }
+            ]
+        }, Ct);
+
+        Assert.Equal(state.ToString(), binding.State);
+        await _meta.DidNotReceive().ForceBindingIncomplete(Arg.Any<int>(), Arg.Any<DateTime>());
+        await _meta.DidNotReceive().SetBindingState(Arg.Any<int>(), Arg.Any<BindingState>());
+    }
+
+    [Fact]
+    public async Task GetBinding_ForcedBackToIncomplete_NeedsAttention() {
+        ArrangeValidBinding();
+        var forced = Binding();
+        forced.ForcedIncompleteAt = _time.GetUtcNow().UtcDateTime;
+        _meta.GetSchemaById(BindingId).Returns(forced);
+
+        var binding = await NewService().GetBindingAsync(BindingId, Ct);
+
+        Assert.True(binding.NeedsAttention);
+    }
+
+    /// <summary>The Target Table as it is after a DBA dropped one of its mapped columns.</summary>
+    private void ArrangeColumnDropped(string columnName) {
+        var table = AccountTable();
+        table.Columns = table.Columns.Where(c => c.ColumnName != columnName).ToList();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
     }
 
     [Fact]
@@ -758,6 +983,41 @@ public class BindingServiceTests {
 
         await Assert.ThrowsAsync<ValidationException>(() => NewService().SetSoftDeleteAsync(BindingId,
             new SetSoftDeleteDTO { Enabled = true, ColumnName = null }, Ct));
+    }
+
+    [Fact]
+    public async Task SoftDeleteColumns_AreExactlyTheColumnsSetSoftDeleteAccepts() {
+        ArrangeValidBinding();
+        var service = NewService();
+
+        var offered = (await service.GetSoftDeleteColumnsAsync(BindingId, Ct)).ToHashSet();
+
+        var accepted = new HashSet<string>();
+        foreach (var column in AccountTable().Columns) {
+            try {
+                await service.SetSoftDeleteAsync(BindingId,
+                    new SetSoftDeleteDTO { Enabled = true, ColumnName = column.ColumnName }, Ct);
+                accepted.Add(column.ColumnName);
+            } catch (ValidationException) {
+                // Not a column that can carry the flag.
+            }
+        }
+
+        Assert.Contains("is_deleted", offered);
+        Assert.DoesNotContain("name", offered);
+        Assert.Equal(accepted.Order(), offered.Order());
+    }
+
+    [Fact]
+    public async Task SoftDeleteColumns_WhenNoColumnCanCarryTheFlag_IsEmpty() {
+        ArrangeValidBinding();
+        var table = AccountTable();
+        table.Columns = table.Columns.Where(c => c.DataType != "boolean" && c.DataType != "integer").ToList();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var offered = await NewService().GetSoftDeleteColumnsAsync(BindingId, Ct);
+
+        Assert.Empty(offered);
     }
 
     [Fact]

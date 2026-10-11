@@ -54,6 +54,9 @@ public record TargetColumnDTO {
     /// <summary>True when a PRIMARY KEY or UNIQUE constraint covers this column.</summary>
     public bool IsUnique { get; set; }
 
+    /// <summary>True when a PRIMARY KEY constraint covers this column: the table's own key, not a home for the record ID.</summary>
+    public bool IsPrimaryKey { get; set; }
+
     /// <summary>The Salesforce field currently mapped here, or null when nothing writes to it.</summary>
     public string? MappedSalesforceFieldName { get; set; }
 }
@@ -69,11 +72,23 @@ public record BindingDTO {
     /// <summary>"Incomplete", "Active" or "Inactive".</summary>
     public string State { get; set; } = "";
 
+    /// <summary>
+    /// True when the Binding was Active and was forced back to Incomplete — by the worker or by an edit that
+    /// broke it — rather than never finished. Its Entity's changes are not being synced.
+    /// </summary>
+    public bool NeedsAttention { get; set; }
+
     /// <summary>The Target Column holding the Salesforce record ID, or null when not chosen yet.</summary>
     public string? KeyMappingColumn { get; set; }
 
     /// <summary>Field Mappings excluding the Key Mapping.</summary>
     public int FieldMappingCount { get; set; }
+
+    /// <summary>
+    /// How many flattened fields the Entity carries in the Avro Schema this Binding was last linked to, or null
+    /// when it has none. The "of 40" in "12 of 40 fields".
+    /// </summary>
+    public int? FieldCount { get; set; }
 
     public bool SoftDeleteEnabled { get; set; }
     public string? SoftDeleteColumnName { get; set; }
