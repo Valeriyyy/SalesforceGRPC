@@ -20,7 +20,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../SalesforceGrpc/wwwroot/dist',
+    outDir: '../StarPush/wwwroot/dist',
     emptyOutDir: true,
     manifest: true,
     rollupOptions: {

@@ -13,10 +13,19 @@ namespace Database.DataProtection;
 /// </remarks>
 public sealed class ProtectingCertificateOptions {
     /// <summary>Environment variable holding a base64-encoded PFX. Tried first.</summary>
-    public string? EnvironmentVariable { get; set; } = "SALESFORCEGRPC_PROTECTING_CERT";
+    public string? EnvironmentVariable { get; set; } = "STARPUSH_PROTECTING_CERT";
 
     /// <summary>Environment variable holding the PFX password, if it has one.</summary>
-    public string? PasswordEnvironmentVariable { get; set; } = "SALESFORCEGRPC_PROTECTING_CERT_PASSWORD";
+    public string? PasswordEnvironmentVariable { get; set; } = "STARPUSH_PROTECTING_CERT_PASSWORD";
+
+    /// <summary>
+    /// The pre-rename name of <see cref="EnvironmentVariable"/>, read only when that one is unset so an
+    /// existing deployment keeps starting. Deprecated: using it logs a Warning.
+    /// </summary>
+    public string? LegacyEnvironmentVariable { get; set; } = "SALESFORCEGRPC_PROTECTING_CERT";
+
+    /// <summary>The pre-rename name of <see cref="PasswordEnvironmentVariable"/>. Deprecated.</summary>
+    public string? LegacyPasswordEnvironmentVariable { get; set; } = "SALESFORCEGRPC_PROTECTING_CERT_PASSWORD";
 
     /// <summary>Path to a PFX file. Tried second.</summary>
     public string? FilePath { get; set; }
@@ -34,8 +43,8 @@ public sealed class ProtectingCertificateOptions {
 /// </summary>
 /// <remarks>
 /// <see cref="Attempts"/> carries the failure message, not just the fact of failure. "No protecting
-/// certificate" tells an operator nothing; "looked at $SALESFORCEGRPC_PROTECTING_CERT (unset) and
-/// /etc/certs/dp.pfx (no such file)" tells them what to do next.
+/// certificate" tells an operator nothing; "looked at $STARPUSH_PROTECTING_CERT (unset),
+/// $SALESFORCEGRPC_PROTECTING_CERT (unset) and /etc/certs/dp.pfx (no such file)" tells them what to do next.
 /// </remarks>
 public sealed record ProtectingCertificateResolution {
     public X509Certificate2? Certificate { get; init; }
@@ -57,7 +66,8 @@ public interface IProtectingCertificateResolver {
 
 /// <inheritdoc />
 /// <remarks>
-/// Ordered: environment variable, then file, then cloud KMS. The first hit wins, and every miss is recorded.
+/// Ordered: environment variable (the legacy name only when the current one is unset), then file, then cloud
+/// KMS. The first hit wins, and every miss is recorded.
 /// <para>
 /// This deliberately cannot mint a certificate for itself. An application that generates its own protecting
 /// key and stores it beside the data it protects has achieved nothing, and the operator will not discover
@@ -101,16 +111,34 @@ public sealed class ProtectingCertificateResolver : IProtectingCertificateResolv
             return null;
         }
 
-        var encoded = Environment.GetEnvironmentVariable(variable);
-        if (string.IsNullOrWhiteSpace(encoded)) {
-            attempts.Add($"${variable}: unset");
+        if (IsSet(variable)) {
+            return LoadFromEnvironment(variable, _options.PasswordEnvironmentVariable, attempts);
+        }
+        attempts.Add($"${variable}: unset");
+
+        // Only an unset current variable falls back. One that is set but malformed is a mistake to report, not
+        // a reason to quietly load whatever the old name still holds.
+        var legacy = _options.LegacyEnvironmentVariable;
+        if (string.IsNullOrWhiteSpace(legacy)) {
             return null;
         }
 
+        if (!IsSet(legacy)) {
+            attempts.Add($"${legacy}: unset");
+            return null;
+        }
+
+        _logger.LogWarning("${Legacy} is deprecated; rename it to ${Current} (and its password variable to match)",
+            legacy, variable);
+        return LoadFromEnvironment(legacy, _options.LegacyPasswordEnvironmentVariable, attempts);
+    }
+
+    private ProtectingCertificateResolution? LoadFromEnvironment(string variable, string? passwordVariable,
+        List<string> attempts) {
+        var encoded = Environment.GetEnvironmentVariable(variable)!;
+
         try {
-            var password = string.IsNullOrWhiteSpace(_options.PasswordEnvironmentVariable)
-                ? null
-                : Environment.GetEnvironmentVariable(_options.PasswordEnvironmentVariable);
+            var password = ReadVariable(passwordVariable);
 
             var certificate = X509CertificateLoader.LoadPkcs12(Convert.FromBase64String(encoded), password);
             var source = $"${variable}";
@@ -141,9 +169,7 @@ public sealed class ProtectingCertificateResolver : IProtectingCertificateResolv
         }
 
         try {
-            var password = string.IsNullOrWhiteSpace(_options.PasswordEnvironmentVariable)
-                ? null
-                : Environment.GetEnvironmentVariable(_options.PasswordEnvironmentVariable);
+            var password = FilePassword();
 
             var certificate = X509CertificateLoader.LoadPkcs12FromFile(path, password);
 
@@ -157,6 +183,26 @@ public sealed class ProtectingCertificateResolver : IProtectingCertificateResolv
             return null;
         }
     }
+
+    private string? FilePassword() {
+        if (ReadVariable(_options.PasswordEnvironmentVariable) is { } password) {
+            return password;
+        }
+
+        if (ReadVariable(_options.LegacyPasswordEnvironmentVariable) is { } legacy) {
+            _logger.LogWarning("${Legacy} is deprecated; rename it to ${Current}",
+                _options.LegacyPasswordEnvironmentVariable, _options.PasswordEnvironmentVariable);
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private static bool IsSet(string variable) =>
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variable));
+
+    private static string? ReadVariable(string? variable) =>
+        string.IsNullOrWhiteSpace(variable) ? null : Environment.GetEnvironmentVariable(variable);
 
     private void NoteKeyManagementService(List<string> attempts) {
         if (string.IsNullOrWhiteSpace(_options.KeyManagementServiceKeyId)) {

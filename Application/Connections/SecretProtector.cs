@@ -56,6 +56,7 @@ public sealed class SecretProtector : ISecretProtector {
     /// The Data Protection purpose. Stable forever: changing it makes every stored secret undecryptable
     /// while looking, from the key ring's point of view, like nothing is wrong.
     /// </summary>
+    // Legacy product name; must not change — stored secrets are bound to it.
     public const string Purpose = "SalesforceGrpc.OrgConnection.v1";
 
     private readonly IDataProtector? _protector;
