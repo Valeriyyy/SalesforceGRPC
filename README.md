@@ -1,3 +1,5 @@
+<img src="StarPush/wwwroot/favicon.svg" alt="" width="96" height="96">
+
 # StarPush
 Project to create synchronization between salesforce records and a postgres database.
 

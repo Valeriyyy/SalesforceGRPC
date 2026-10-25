@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-SalesforceGrpc-411E8C66-DC32-4FA2-BE87-E07BCD81566B</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <ApplicationIcon>wwwroot\favicon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
