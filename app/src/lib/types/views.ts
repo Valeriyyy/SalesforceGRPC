@@ -1,4 +1,4 @@
-// Hand-written mirror of the C# view classes in SalesforceGrpc/ViewModels (ADR 0006). Keep the two in step.
+// Hand-written mirror of the C# view classes in StarPush/ViewModels (ADR 0006). Keep the two in step.
 export type PipelineStage = "orgConnection" | "primaryChannel" | "targetConnection" | "bindings";
 export type StageStatus = "waiting" | "toDo" | "needsAttention" | "ok";
 export type NavKey = "overview" | "orgConnection" | "channels" | "targetConnection" | "bindings";

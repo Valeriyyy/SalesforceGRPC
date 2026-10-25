@@ -1,0 +1,91 @@
+﻿<!--<Project Sdk="Microsoft.NET.Sdk.Worker">-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-SalesforceGrpc-411E8C66-DC32-4FA2-BE87-E07BCD81566B</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <ApplicationIcon>wwwroot\favicon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="..\.dockerignore">
+      <Link>.dockerignore</Link>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Apache.Avro" Version="1.12.1" />
+    <PackageReference Include="Google.Protobuf" Version="3.34.0-rc2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
+    <PackageReference Include="Grpc.Net.ClientFactory" Version="2.76.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.78.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="11.0.0-preview.1.26104.118" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.2" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
+    <PackageReference Include="Serilog" Version="4.3.2-dev-02419" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1-dev-02339" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="8.0.0-nblumhardt-02322" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Application\Application.csproj" />
+    <ProjectReference Include="..\Database\Database.csproj" />
+    <ProjectReference Include="..\Salesforce\Salesforce.csproj" />
+    <ProjectReference Include="..\Common\Common.csproj" />
+  </ItemGroup>
+    
+  <ItemGroup>
+    <Protobuf Include="protos\pubsub_api.proto" GrpcServices="Client" />
+  </ItemGroup>
+  <PropertyGroup>
+    <FrontendDir>$(MSBuildProjectDirectory)/../app</FrontendDir>
+    <FrontendManifest>$(MSBuildProjectDirectory)/wwwroot/dist/.vite/manifest.json</FrontendManifest>
+  </PropertyGroup>
+
+  <Target Name="NpmInstall" BeforeTargets="NpmBuildFrontend" Condition="'$(Configuration)' == 'Release' AND !Exists('$(FrontendDir)/node_modules')">
+    <Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
+  </Target>
+
+  <Target Name="NpmBuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'"
+          Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.ts;$(FrontendDir)/src/**/*.*"
+          Outputs="$(FrontendManifest)">
+    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
+  </Target>
+
+  <ItemGroup>
+    <Content Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Update="json\EventContentPayload.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Update="avro">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <!-- The SDK's default wwwroot content glob excludes dot-prefixed directories, so Vite's
+         wwwroot/dist/.vite/manifest.json (read at runtime by ViteManifest) needs an explicit include
+         or it silently never reaches the publish output. -->
+    <Content Include="wwwroot\dist\.vite\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

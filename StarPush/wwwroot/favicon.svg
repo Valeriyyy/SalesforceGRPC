@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>StarPush</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#312E81"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- trail: data packets streaming behind the star -->
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="22">
+    <path d="M150 140 L64 54" stroke-dasharray="36 26" opacity="0.95"/>
+    <path d="M118 172 L70 124" stroke-dasharray="20 26" opacity="0.55"/>
+    <path d="M182 108 L134 60" stroke-dasharray="20 26" opacity="0.55"/>
+  </g>
+
+  <!-- database cylinder -->
+  <g transform="translate(364 334)">
+    <clipPath id="db"><path d="M-84 0 V86 A84 28 0 0 0 84 86 V0 Z"/></clipPath>
+    <path d="M-84 0 V86 A84 28 0 0 0 84 86 V0 Z" fill="#FFFFFF"/>
+    <path d="M-84 43 A84 28 0 0 0 84 43" fill="none" stroke="#6D28D9" stroke-width="12" clip-path="url(#db)"/>
+    <ellipse cx="0" cy="0" rx="84" ry="28" fill="#DDD6FE"/>
+  </g>
+
+  <!-- star, one point leading toward the database -->
+  <path transform="translate(222 212) rotate(-9) scale(1.12)"
+        d="M0 -84 L21 -29 L80 -26 L34 11 L49 68 L0 36 L-49 68 L-34 11 L-80 -26 L-21 -29 Z"
+        fill="#FBBF24" stroke="#FBBF24" stroke-width="16" stroke-linejoin="round"/>
+</svg>

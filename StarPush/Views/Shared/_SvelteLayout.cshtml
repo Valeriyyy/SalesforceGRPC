@@ -1,0 +1,39 @@
+@model StarPush.ViewModels.SveltePage
+<!DOCTYPE html>
+<html lang="en" data-theme="cerberus">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>@Model.Title · @StarPush.ViewModels.ShellView.ApplicationName</title>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <script>
+        /* Apply the saved light/dark choice (or the OS preference) before first paint. */
+        (function () {
+            var mode;
+            try { mode = localStorage.getItem("mode"); } catch (e) { }
+            if (mode !== "light" && mode !== "dark") {
+                mode = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+            document.documentElement.setAttribute("data-mode", mode);
+        })();
+    </script>
+    <style>
+        /* Painted before any stylesheet or script arrives, so a navigation never flashes the wrong colour. The
+           values are cerberus' root background (surface-50 / surface-950); the theme takes over once it loads. */
+        html { color-scheme: light; background-color: oklch(0.99 0 0); }
+        html[data-mode="dark"] { color-scheme: dark; background-color: oklch(0.18 0 0); }
+    </style>
+    @* In <head>, so the stylesheet blocks the first paint and the entry script can block rendering until the page
+       has mounted (see ViteEntryTagHelper). Module scripts run after the document is parsed, so #app exists. *@
+    <vite-entry src="src/pages/app.ts" css="src/assets/css/app.css" />
+</head>
+<body>
+<div id="app"
+     data-component="@Model.Component"
+     data-props="@Model.Props">
+    @RenderBody()
+</div>
+</body>
+</html>

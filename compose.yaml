@@ -1,11 +1,11 @@
 ﻿services:
 #  postgres:
 #    image: postgres:16-alpine
-#    container_name: salesforcegrpc-db
+#    container_name: starpush-db
 #    environment:
 #      POSTGRES_USER: postgres
 #      POSTGRES_PASSWORD: postgres
-#      POSTGRES_DB: salesforcegrpc
+#      POSTGRES_DB: starpush
 #    ports:
 #      - "5433:5432"
 #    volumes:
@@ -16,20 +16,20 @@
 #      timeout: 5s
 #      retries: 5
 
-  salesforcegrpc:
-    image: salesforcegrpc
+  starpush:
+    image: starpush
     build:
       context: .
-      dockerfile: SalesforceGrpc/Dockerfile
+      dockerfile: StarPush/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   postgres_data:
-  salesforcegrpc-1:
-    image: salesforcegrpc-1
+  starpush-1:
+    image: starpush-1
     build:
       context: .
-      dockerfile: SalesforceGrpc/Dockerfile
+      dockerfile: StarPush/Dockerfile
 

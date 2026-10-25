@@ -43,7 +43,7 @@ public static class SigningKeypairFactory {
     public static readonly TimeSpan Validity = TimeSpan.FromDays(365 * 5);
 
     /// <summary>The certificate subject. Fixed so an administrator can recognise it in Setup.</summary>
-    public const string SubjectName = "CN=SalesforceGrpc Org Connection";
+    public const string SubjectName = "CN=StarPush Org Connection";
 
     public static SigningKeypair Create(DateTimeOffset now) {
         using var rsa = RSA.Create(KeySizeBits);

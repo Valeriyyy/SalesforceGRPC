@@ -34,7 +34,7 @@
             {:else}
                 <input class={["input", f.name === "filePath" && "font-mono text-sm", isLocked && "opacity-60"]}
                     bind:value={values[f.name]} required={f.required} readonly={isLocked} spellcheck="false" autocomplete="off"
-                    placeholder={f.name === "filePath" ? "/var/lib/salesforcegrpc/target.db" : ""} />
+                    placeholder={f.name === "filePath" ? "/var/lib/starpush/target.db" : ""} />
             {/if}
             {#if f.name === "filePath"}
                 <span class="text-xs text-surface-600-400">A path on the machine running this application, not on your computer.</span>
