@@ -111,8 +111,8 @@ public sealed class ProtectingCertificateResolver : IProtectingCertificateResolv
             return null;
         }
 
-        if (IsSet(variable)) {
-            return LoadFromEnvironment(variable, _options.PasswordEnvironmentVariable, attempts);
+        if (ReadVariable(variable) is { } encoded && !string.IsNullOrWhiteSpace(encoded)) {
+            return LoadFromEnvironment(variable, encoded, _options.PasswordEnvironmentVariable, attempts);
         }
         attempts.Add($"${variable}: unset");
 
@@ -123,20 +123,18 @@ public sealed class ProtectingCertificateResolver : IProtectingCertificateResolv
             return null;
         }
 
-        if (!IsSet(legacy)) {
+        if (ReadVariable(legacy) is not { } legacyEncoded || string.IsNullOrWhiteSpace(legacyEncoded)) {
             attempts.Add($"${legacy}: unset");
             return null;
         }
 
         _logger.LogWarning("${Legacy} is deprecated; rename it to ${Current} (and its password variable to match)",
             legacy, variable);
-        return LoadFromEnvironment(legacy, _options.LegacyPasswordEnvironmentVariable, attempts);
+        return LoadFromEnvironment(legacy, legacyEncoded, _options.LegacyPasswordEnvironmentVariable, attempts);
     }
 
-    private ProtectingCertificateResolution? LoadFromEnvironment(string variable, string? passwordVariable,
-        List<string> attempts) {
-        var encoded = Environment.GetEnvironmentVariable(variable)!;
-
+    private ProtectingCertificateResolution? LoadFromEnvironment(string variable, string encoded,
+        string? passwordVariable, List<string> attempts) {
         try {
             var password = ReadVariable(passwordVariable);
 
@@ -197,9 +195,6 @@ public sealed class ProtectingCertificateResolver : IProtectingCertificateResolv
 
         return null;
     }
-
-    private static bool IsSet(string variable) =>
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variable));
 
     private static string? ReadVariable(string? variable) =>
         string.IsNullOrWhiteSpace(variable) ? null : Environment.GetEnvironmentVariable(variable);
