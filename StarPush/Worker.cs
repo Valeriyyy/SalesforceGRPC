@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Application.Bindings;
 using Application.Services.Interfaces;
 using Application.Targets;
@@ -13,6 +14,7 @@ using Grpc.Core;
 using GrpcClient;
 using StarPush.Extensions;
 using StarPush.Strategies;
+using StarPush.Telemetry;
 
 namespace StarPush;
 
@@ -217,17 +219,22 @@ public class Worker : BackgroundService {
                     await StreamFrom(start, plan, bindings, planToken).ConfigureAwait(false);
                     break;
                 } catch (RpcException exc) when (start.Checkpoint is { } rejected && IsReplayIdRejected(exc)) {
+                    RecordInterruption("checkpoint_rejected");
                     await DiscardRejectedCheckpoint(plan, rejected, exc, planToken).ConfigureAwait(false);
                     start = StartPosition.Earliest;
                 }
             }
         } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
+            RecordInterruption("configuration_changed");
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
         } catch (RpcException exc) when (exc.StatusCode == StatusCode.Cancelled && !stoppingToken.IsCancellationRequested) {
+            RecordInterruption("configuration_changed");
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
         } catch (RpcException exc) {
+            RecordInterruption("stream_dropped");
             await ReportDropAndPause(exc, stoppingToken).ConfigureAwait(false);
         } catch (TargetDatabaseWriteException exc) {
+            RecordInterruption("target_write_failed");
             await ReportTargetFailureAndDrop(exc, stoppingToken).ConfigureAwait(false);
         } finally {
             if (!planScope.IsCancellationRequested) {
@@ -236,6 +243,9 @@ public class Worker : BackgroundService {
             await watcher.ConfigureAwait(false);
         }
     }
+
+    private static void RecordInterruption(string reason) =>
+        StarPushTelemetry.StreamInterruptions.Add(1, new KeyValuePair<string, object?>("reason", reason));
 
     /// <summary>
     /// Opens one subscription at <paramref name="start"/> and applies what arrives until it ends.
@@ -268,24 +278,29 @@ public class Worker : BackgroundService {
             plan.TopicName, start.From, bindings.Count);
 
         using var stream = _pubsubClient.Subscribe(null, null, planToken);
-        await stream.RequestStream.WriteAsync(fetchRequest, planToken).ConfigureAwait(false);
+        StarPushTelemetry.ActiveStreams.Add(1);
+        try {
+            await stream.RequestStream.WriteAsync(fetchRequest, planToken).ConfigureAwait(false);
 
-        while (await stream.ResponseStream.MoveNext(planToken).ConfigureAwait(false)) {
-            var response = stream.ResponseStream.Current;
-            _logger.LogInformation("Latest Replay Id: {replayId}, RPC Id: {RpcId}",
-                response.LatestReplayId.ToLongBE(), response.RpcId);
+            while (await stream.ResponseStream.MoveNext(planToken).ConfigureAwait(false)) {
+                var response = stream.ResponseStream.Current;
+                _logger.LogDebug("Latest Replay Id: {replayId}, RPC Id: {RpcId}",
+                    response.LatestReplayId.ToLongBE(), response.RpcId);
 
-            if (response.Events is { Count: > 0 }) {
-                await ApplyBatch(response.Events, bindings, planToken).ConfigureAwait(false);
+                if (response.Events is { Count: > 0 }) {
+                    await ApplyBatch(response.Events, bindings, plan.TopicName, planToken).ConfigureAwait(false);
+                }
+
+                // A strategy can swallow a cancellation as one record's failure, so a batch that "finished"
+                // after the plan was cancelled may not have been applied. It is replayed rather than trusted.
+                planToken.ThrowIfCancellationRequested();
+                await SaveCheckpoint(plan, response.LatestReplayId, planToken).ConfigureAwait(false);
+
+                await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
+                    .ConfigureAwait(false);
             }
-
-            // A strategy can swallow a cancellation as one record's failure, so a batch that "finished"
-            // after the plan was cancelled may not have been applied. It is replayed rather than trusted.
-            planToken.ThrowIfCancellationRequested();
-            await SaveCheckpoint(plan, response.LatestReplayId, planToken).ConfigureAwait(false);
-
-            await TopUpRequests(stream.RequestStream, plan.TopicName!, response.PendingNumRequested, planToken)
-                .ConfigureAwait(false);
+        } finally {
+            StarPushTelemetry.ActiveStreams.Add(-1);
         }
     }
 
@@ -349,7 +364,9 @@ public class Worker : BackgroundService {
 
         try {
             await _checkpoints.SaveAsync(channelId, latestReplayId.ToByteArray(), cancellationToken).ConfigureAwait(false);
+            StarPushTelemetry.CheckpointSaves.Add(1, new KeyValuePair<string, object?>("outcome", "saved"));
         } catch (Exception ex) when (ex is not OperationCanceledException) {
+            StarPushTelemetry.CheckpointSaves.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
             _logger.LogError(ex,
                 "Could not save the Checkpoint for {Channel}; streaming continues. A restart before the next " +
                 "successful save will replay the events since the last one.",
@@ -406,17 +423,38 @@ public class Worker : BackgroundService {
     /// these dense bursts.
     /// </remarks>
     private async Task ApplyBatch(IReadOnlyList<ConsumerEvent> events, Dictionary<string, CDCSchema> bindings,
-        CancellationToken cancellationToken) {
-        var decoded = await Task.WhenAll(events.Select(e => DecodeEvent(e, bindings, cancellationToken)))
-            .ConfigureAwait(false);
+        string? topic, CancellationToken cancellationToken) {
+        using var activity = StarPushTelemetry.StartBatch(topic, events.Count);
+        var started = Stopwatch.GetTimestamp();
+        StarPushTelemetry.EventsReceived.Add(events.Count);
 
-        var groups = OrderingGroups(decoded.OfType<DecodedEvent>().ToList());
+        try {
+            var decoded = await Task.WhenAll(events.Select(e => DecodeEvent(e, bindings, cancellationToken)))
+                .ConfigureAwait(false);
 
-        await Task.WhenAll(groups.Select(async group => {
-            foreach (var decodedEvent in group) {
-                await ApplyEvent(decodedEvent, cancellationToken).ConfigureAwait(false);
-            }
-        })).ConfigureAwait(false);
+            var routed = decoded.OfType<DecodedEvent>().ToList();
+            var groups = OrderingGroups(routed);
+            var applied = 0;
+
+            await Task.WhenAll(groups.Select(async group => {
+                foreach (var decodedEvent in group) {
+                    if (await ApplyEvent(decodedEvent, cancellationToken).ConfigureAwait(false)) {
+                        Interlocked.Increment(ref applied);
+                    }
+                }
+            })).ConfigureAwait(false);
+
+            var elapsed = Stopwatch.GetElapsedTime(started);
+            _logger.LogInformation(
+                "Applied {Applied} of {Count} event(s) in {ElapsedMs:F0}ms ({Skipped} skipped, {Failed} failed)",
+                applied, events.Count, elapsed.TotalMilliseconds, events.Count - routed.Count, routed.Count - applied);
+            activity?.SetTag("starpush.events.applied", applied);
+        } catch (Exception ex) {
+            activity.RecordException(ex);
+            throw;
+        } finally {
+            StarPushTelemetry.BatchDuration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds);
+        }
     }
 
     /// <summary>
@@ -462,19 +500,21 @@ public class Worker : BackgroundService {
     private async Task<DecodedEvent?> DecodeEvent(ConsumerEvent consumerEvent,
         Dictionary<string, CDCSchema> bindings, CancellationToken cancellationToken) {
         try {
-            _logger.LogInformation("Event Replay Id: {replayId}, Schema Id: {schemaId}",
+            _logger.LogDebug("Event Replay Id: {replayId}, Schema Id: {schemaId}",
                 consumerEvent.ReplayId.ToLongBE(), consumerEvent.Event.SchemaId);
 
             var binding = await ResolveBinding(consumerEvent.Event.SchemaId, bindings, cancellationToken)
                 .ConfigureAwait(false);
 
             if (binding is null) {
+                RecordOutcome("skipped");
                 return null;
             }
 
             if (binding.AvroSchema?.SchemaJson is not { } schemaJson) {
                 _logger.LogError("Binding {BindingId} has no Avro Schema to decode {Entity} with",
                     binding.Id, binding.EntityName);
+                RecordOutcome("undecodable", binding.EntityName);
                 return null;
             }
 
@@ -488,11 +528,13 @@ public class Worker : BackgroundService {
             if (!record.GetTypedValue<GenericRecord>("ChangeEventHeader", out var changeEventHeader) ||
                 !changeEventHeader.GetTypedValue<GenericEnum>("changeType", out var changeType)) {
                 _logger.LogWarning("Event for {Entity} carries no readable ChangeEventHeader", binding.EntityName);
+                RecordOutcome("undecodable", binding.EntityName);
                 return null;
             }
 
             if (!Enum.TryParse(changeType.Value, out ChangeType changeTypeEnum)) {
                 _logger.LogWarning("Unrecognised change type '{ChangeType}' for {Entity}", changeType.Value, binding.EntityName);
+                RecordOutcome("undecodable", binding.EntityName);
                 return null;
             }
 
@@ -506,6 +548,7 @@ public class Worker : BackgroundService {
         } catch (Exception ex) {
             _logger.LogError(ex, "Failed to decode event with Schema Id {SchemaId}; skipping it and continuing with the rest of the batch",
                 consumerEvent.Event.SchemaId);
+            RecordOutcome("undecodable");
             return null;
         }
     }
@@ -513,21 +556,58 @@ public class Worker : BackgroundService {
     /// <summary>
     /// Applies one decoded event, isolating its failure so one bad record cannot stop the batch or the stream.
     /// </summary>
-    private async Task ApplyEvent(DecodedEvent decodedEvent, CancellationToken cancellationToken) {
+    /// <returns>Whether the event was applied.</returns>
+    private async Task<bool> ApplyEvent(DecodedEvent decodedEvent, CancellationToken cancellationToken) {
+        var entity = decodedEvent.Binding.EntityName;
+        var changeType = decodedEvent.ChangeType.ToString();
+
+        using var activity = StarPushTelemetry.ActivitySource.StartActivity($"apply {changeType} {entity}");
+        activity?.SetTag("starpush.entity", entity);
+        activity?.SetTag("starpush.change_type", changeType);
+        activity?.SetTag("starpush.target_table", decodedEvent.Binding.DbSchemaFullName);
+        activity?.SetTag("starpush.binding_id", decodedEvent.Binding.Id);
+        activity?.SetTag("starpush.record_ids", string.Join(",", decodedEvent.RecordIds.Take(10)));
+        activity?.SetTag("starpush.record_count", decodedEvent.RecordIds.Count);
+        activity?.SetTag("messaging.message.id", decodedEvent.Source.ReplayId.ToLongBE());
+
+        var started = Stopwatch.GetTimestamp();
+        var outcome = "failed";
         try {
-            _logger.LogInformation("Processing {ChangeType} for {Entity}", decodedEvent.ChangeType, decodedEvent.Binding.EntityName);
+            _logger.LogInformation("Processing {ChangeType} for {Entity}", decodedEvent.ChangeType, entity);
 
             var strategy = _eventResolver.Resolve(decodedEvent.ChangeType);
             await strategy.ProcessEvent(decodedEvent.Record, decodedEvent.Schema, decodedEvent.Binding, cancellationToken)
                 .ConfigureAwait(false);
+            outcome = "applied";
+            return true;
         } catch (OperationCanceledException) {
+            outcome = "cancelled";
             throw;
-        } catch (TargetDatabaseWriteException) {
+        } catch (TargetDatabaseWriteException ex) {
+            activity.RecordException(ex);
             throw;
         } catch (Exception ex) {
+            activity.RecordException(ex);
             _logger.LogError(ex, "Failed to apply {ChangeType} with Schema Id {SchemaId}; continuing with the rest of the batch",
                 decodedEvent.ChangeType, decodedEvent.Source.Event.SchemaId);
+            return false;
+        } finally {
+            var tags = new TagList {
+                { "entity", entity },
+                { "change_type", changeType },
+                { "outcome", outcome }
+            };
+            StarPushTelemetry.EventDuration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, tags);
+            StarPushTelemetry.EventsProcessed.Add(1, tags);
         }
+    }
+
+    private static void RecordOutcome(string outcome, string? entity = null) {
+        var tags = new TagList { { "outcome", outcome } };
+        if (entity is not null) {
+            tags.Add("entity", entity);
+        }
+        StarPushTelemetry.EventsProcessed.Add(1, tags);
     }
 
     /// <summary>

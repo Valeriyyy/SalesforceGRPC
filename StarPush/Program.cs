@@ -13,6 +13,7 @@ using Database.Utilities;
 using GrpcClient;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.Repositories;
+using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -23,6 +24,7 @@ using StarPush;
 using StarPush.Health;
 using StarPush.Schemas;
 using StarPush.Strategies;
+using StarPush.Telemetry;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,29 +35,61 @@ var config = builder.Configuration;
 builder.Services.Configure<SalesforceConfig>(config.GetSection(nameof(SalesforceConfig)));
 builder.Services.AddSingleton(TimeProvider.System);
 
-builder.Logging.AddSerilog();
-builder.Services.AddSerilog((serilogServices, lc) => lc
-    .ReadFrom.Configuration(config)
-    .ReadFrom.Services(serilogServices)
-    .Enrich.FromLogContext());
+#region Observability
+// Logs, traces and metrics go to any OTLP endpoint — the Aspire Dashboard in compose.observability.yaml, a
+// collector, Seq, Grafana — but only once one is named. Without OTEL_EXPORTER_OTLP_ENDPOINT nothing is exported
+// and nothing fails: the console and the rolling file in logs/ still have everything. See docs/observability.md.
+var otlpEndpoint = config["OTEL_EXPORTER_OTLP_ENDPOINT"];
+var exportTelemetry = !string.IsNullOrWhiteSpace(otlpEndpoint);
+var serviceInstanceId = Environment.MachineName;
 
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(resource => {
-        resource.AddService(serviceName: "StarPushService")
-            .AddAttributes(new Dictionary<string, object> {
-                { "service.namespace", "StarPushService" },
-                { "service.version", "1.0.0" },
-                { "service.instance.id", "StarPushService-1" }
-            });
-    })
-    .WithMetrics(meterProviderBuilder => {
-        meterProviderBuilder.AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddRuntimeInstrumentation();
-    }).WithTracing(tracerProviderBuilder => {
-        tracerProviderBuilder.AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation();
-    });
+builder.Logging.AddSerilog();
+builder.Services.AddSerilog((serilogServices, lc) => {
+    lc.ReadFrom.Configuration(config)
+        .ReadFrom.Services(serilogServices)
+        .Enrich.FromLogContext();
+
+    // Serilog records the current trace and span on every event, so in the dashboard a log line links to
+    // the batch and event it was written during.
+    if (exportTelemetry) {
+        lc.WriteTo.OpenTelemetry(options => {
+            options.Endpoint = otlpEndpoint;
+            options.ResourceAttributes = new Dictionary<string, object> {
+                ["service.name"] = StarPushTelemetry.Name,
+                ["service.version"] = StarPushTelemetry.Version,
+                ["service.instance.id"] = serviceInstanceId
+            };
+        });
+    }
+});
+
+var openTelemetry = builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: StarPushTelemetry.Name,
+        serviceVersion: StarPushTelemetry.Version,
+        serviceInstanceId: serviceInstanceId))
+    .WithMetrics(metrics => metrics
+        .AddMeter(StarPushTelemetry.Name)
+        .AddMeter("Npgsql")
+        .AddMeter("MySqlConnector")
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation())
+    .WithTracing(tracing => tracing
+        .AddSource(StarPushTelemetry.Name)
+        // Both drivers trace their own commands, so a Postgres or MySQL write appears under the event that
+        // made it. SQL Server and SQLite targets have no built-in source; their writes show as the event span.
+        .AddSource("Npgsql")
+        .AddSource("MySqlConnector")
+        .AddAspNetCoreInstrumentation(options =>
+            options.Filter = context => !context.Request.Path.StartsWithSegments("/health"))
+        .AddHttpClientInstrumentation());
+
+if (exportTelemetry) {
+    // Reads the rest of the standard OTEL_EXPORTER_OTLP_* settings (protocol, headers) from configuration.
+    openTelemetry.UseOtlpExporter();
+}
+#endregion
 
 builder.Services.AddMemoryCache();
 SqlMapper.AddTypeHandler(new SqlTimeOnlyTypeHandler());

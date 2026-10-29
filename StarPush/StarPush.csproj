@@ -28,7 +28,8 @@
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="11.0.0-preview.1.26104.118" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.2" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
@@ -37,6 +38,7 @@
     <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1-dev-02339" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="8.0.0-nblumhardt-02322" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.0.0" />
   </ItemGroup>
@@ -60,9 +62,7 @@
     <Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
   </Target>
 
-  <Target Name="NpmBuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'"
-          Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.ts;$(FrontendDir)/src/**/*.*"
-          Outputs="$(FrontendManifest)">
+  <Target Name="NpmBuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'" Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.ts;$(FrontendDir)/src/**/*.*" Outputs="$(FrontendManifest)">
     <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
   </Target>
 
