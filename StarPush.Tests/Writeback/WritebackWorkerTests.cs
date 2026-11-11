@@ -82,11 +82,14 @@ public class WritebackWorkerTests {
         var harness = new WritebackHarness();
 
         await harness.RunUntilConfirmed(Transaction(Insert(
-            Row(("id", 7), ("sf_id", "001000000000001AAA"), ("phone", "222")))));
+            Row(("id", 7), ("sf_id", "001000000000001AAA"), ("phone", "222"), ("industry", null)))));
 
         var record = Assert.Single(SentRecords(harness, "UpdateAsync"));
         Assert.Equal("001000000000001AAA", record["Id"]);
         Assert.Equal("222", record["Phone"]);
+        // Every Writeback-capable field the row has, so the record ends up as the row says, empty fields included.
+        Assert.True(record.ContainsKey("Industry"));
+        Assert.Null(record["Industry"]);
         Assert.Empty(SentRecords(harness, "UpsertAsync"));
         await harness.TaggedTarget.DidNotReceiveWithAnyArgs().UpdateByKey(default!, default!, default!, default!, default);
     }
@@ -262,14 +265,16 @@ public class WritebackWorkerTests {
     }
 
     [Fact]
-    public async Task StartingUp_SetsTheDatabaseUpForExactlyTheTwoWayTables_AndTagsEveryWriteFromThenOn() {
+    public async Task StartingUp_TagsEveryWriteBeforeTheDatabaseStartsKeepingChanges_ThenArmsExactlyTheTwoWayTables() {
         var harness = new WritebackHarness();
+        harness.TargetConnections.When(t => t.SetWritebackArmedAsync(Arg.Is<DateTime?>(at => at != null), Arg.Any<CancellationToken>()))
+            .Do(_ => harness.Capability.Log.Add("armed flag"));
 
         await harness.RunUntilConfirmed(Transaction(Delete(Row(("id", 7)))));
 
+        // Writes made between the slot appearing and the tag being switched on would be echoed to Salesforce.
+        Assert.Equal(["tag", "armed flag", "arm"], harness.Capability.Log);
         Assert.Equal([Table], Assert.Single(harness.Capability.Armed));
-        await harness.TargetConnections.Received(1).SetWritebackArmedAsync(
-            Arg.Is<DateTime?>(at => at != null), Arg.Any<CancellationToken>());
     }
 
     [Fact]

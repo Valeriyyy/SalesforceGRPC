@@ -145,11 +145,12 @@ public sealed class WritebackProcessor {
                     };
                 }
             } else if (salesforceId is not null) {
-                // Inserted already holding a Salesforce ID — copied or restored — so it updates that record.
+                // Inserted already holding a Salesforce ID — copied or restored — so it updates that record with
+                // every field the row has, empty ones included, leaving the record as the row says.
                 return new PendingWrite {
                     Binding = binding, Operation = Operation.UpdateById, RowKey = rowKey,
                     SalesforceId = salesforceId, KeyValue = keyValue, KeyText = keyText,
-                    Fields = WithWritebackKey(binding, keyValue, Convert(binding.Fields, values, includeNulls: false))
+                    Fields = WithWritebackKey(binding, keyValue, Convert(binding.Fields, values, includeNulls: true))
                 };
             }
 

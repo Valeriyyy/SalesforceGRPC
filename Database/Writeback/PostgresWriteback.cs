@@ -7,6 +7,7 @@ using Npgsql.Replication;
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
 using NpgsqlTypes;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 
 namespace Database.Writeback;
@@ -158,13 +159,19 @@ public sealed class PostgresWriteback : IWritebackCapability {
         return unmet;
     }
 
+    public async Task PrepareTagAsync(WritebackEndpoints endpoints, CancellationToken cancellationToken = default) {
+        await using var connection = await OpenAsync(endpoints.ConnectionString, cancellationToken).ConfigureAwait(false);
+        await Execute(connection, @"
+            SELECT pg_replication_origin_create(@Origin)
+            WHERE NOT EXISTS (SELECT 1 FROM pg_replication_origin WHERE roname = @Origin)",
+            new { Origin = OriginName }, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task ArmAsync(WritebackEndpoints endpoints, IReadOnlyList<WritebackTable> tables,
         CancellationToken cancellationToken = default) {
+        await PrepareTagAsync(endpoints, cancellationToken).ConfigureAwait(false);
+
         await using (var connection = await OpenAsync(endpoints.ConnectionString, cancellationToken).ConfigureAwait(false)) {
-            await Execute(connection, @"
-                SELECT pg_replication_origin_create(@Origin)
-                WHERE NOT EXISTS (SELECT 1 FROM pg_replication_origin WHERE roname = @Origin)",
-                new { Origin = OriginName }, cancellationToken).ConfigureAwait(false);
 
             foreach (var table in tables) {
                 var facts = await TableFacts(connection, table, cancellationToken).ConfigureAwait(false);
@@ -472,13 +479,25 @@ public sealed class PostgresWriteback : IWritebackCapability {
 /// A Postgres repository whose every write carries this application's replication origin, so Writeback skips it.
 /// </summary>
 /// <remarks>
-/// The origin is set up once per physical connection, when it is opened, and stays with it for as long as it is
-/// pooled; this repository has a data source and therefore a pool of its own, so no untagged session ever
-/// shares it.
+/// A replication origin can be set up in only one session at a time, so every tagged repository for a database
+/// shares one data source holding a single connection, set up with the origin when it is opened and kept for as
+/// long as the process runs. Concurrent writes queue for it; writes are short, and this is the price of one tag.
+/// Shared across instances because the Target Connection provider builds a new repository each time it is
+/// invalidated, and two pools would each try to hold the origin.
 /// </remarks>
 public sealed class TaggedPostgresRepository : PostgresRepository {
+    private static readonly ConcurrentDictionary<string, NpgsqlDataSource> DataSources = new(StringComparer.Ordinal);
+
     public TaggedPostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery)
-        : base(logger, connectionString, debugQuery, SetUpOrigin) { }
+        : base(logger, connectionString, debugQuery, DataSources.GetOrAdd(connectionString, Build)) { }
+
+    private static NpgsqlDataSource Build(string connectionString) {
+        var builder = new NpgsqlDataSourceBuilder(connectionString);
+        builder.ConnectionStringBuilder.MaxPoolSize = 1;
+        builder.ConnectionStringBuilder.ApplicationName = "StarPush (Writeback-tagged)";
+        builder.UsePhysicalConnectionInitializer(connection => SetUpOrigin(connection).GetAwaiter().GetResult(), SetUpOrigin);
+        return builder.Build();
+    }
 
     private static async Task SetUpOrigin(NpgsqlConnection connection) {
         await using var command = new NpgsqlCommand("SELECT pg_replication_origin_session_setup(@Origin)", connection);

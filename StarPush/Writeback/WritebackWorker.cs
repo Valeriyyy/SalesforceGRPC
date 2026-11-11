@@ -115,14 +115,16 @@ public class WritebackWorker : BackgroundService {
         var endpoints = plan.Endpoints!;
 
         try {
-            var tables = plan.Bindings.Select(b => b.Table).ToList();
-            await capability.ArmAsync(endpoints, tables, planScope.Token).ConfigureAwait(false);
-
-            // From here on every write this application makes to the Target Database is tagged, so neither the
-            // inbound flow's writes nor the IDs stored below are read back as changes.
+            // Every write this application makes to the Target Database is tagged from here on, before the
+            // database starts keeping changes, so neither the inbound flow's writes nor the IDs stored below are
+            // ever read back as changes to send to Salesforce.
+            await capability.PrepareTagAsync(endpoints, planScope.Token).ConfigureAwait(false);
             await _targetConnections.SetWritebackArmedAsync(_time.GetUtcNow().UtcDateTime, planScope.Token).ConfigureAwait(false);
             _target.Invalidate();
             var tagged = await _target.GetRepositoryAsync(planScope.Token).ConfigureAwait(false);
+
+            var tables = plan.Bindings.Select(b => b.Table).ToList();
+            await capability.ArmAsync(endpoints, tables, planScope.Token).ConfigureAwait(false);
 
             await using var stream = await capability.OpenStreamAsync(endpoints, planScope.Token).ConfigureAwait(false);
             _health.Set(WritebackRunState.Running);

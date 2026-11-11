@@ -7,26 +7,22 @@ using Npgsql;
 namespace Database.Repositories;
 
 public class PostgresRepository : RepositoryBase {
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly NpgsqlDataSource? _dataSource;
 
     public PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery)
-        : this(logger, connectionString, debugQuery, connectionInitializer: null) { }
+        : this(logger, connectionString, debugQuery, dataSource: null) { }
 
-    /// <param name="connectionInitializer">
-    /// Run once on every physical connection this repository opens, before its first use. Writeback tags every
-    /// write this way (<see cref="Database.Writeback.PostgresWriteback"/>).
+    /// <param name="dataSource">
+    /// Where connections come from instead of Npgsql's shared pool for the connection string. Writeback's tagged
+    /// repository passes one whose connections carry its replication origin (<see cref="Database.Writeback.TaggedPostgresRepository"/>).
     /// </param>
     protected PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery,
-        Func<NpgsqlConnection, Task>? connectionInitializer) : base(logger, connectionString, debugQuery) {
-        var builder = new NpgsqlDataSourceBuilder(connectionString);
-        if (connectionInitializer is not null) {
-            builder.UsePhysicalConnectionInitializer(
-                connection => connectionInitializer(connection).GetAwaiter().GetResult(), connectionInitializer);
-        }
-        _dataSource = builder.Build();
+        NpgsqlDataSource? dataSource) : base(logger, connectionString, debugQuery) {
+        _dataSource = dataSource;
     }
 
-    private NpgsqlConnection CreateConnection() => _dataSource.CreateConnection();
+    private NpgsqlConnection CreateConnection() =>
+        _dataSource?.CreateConnection() ?? new NpgsqlConnection(_connectionString);
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
 
@@ -106,6 +102,7 @@ public class PostgresRepository : RepositoryBase {
         await using var connection = CreateConnection();
         return await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
+
     public override async Task<int> UpdateByKey(string table, string keyColumn, object keyValue,
         Dictionary<string, object?> data, CancellationToken cancellationToken = default) {
         var setClause = string.Join(", ", data.Keys.Select((k, i) => $"{k} = @p{i}"));

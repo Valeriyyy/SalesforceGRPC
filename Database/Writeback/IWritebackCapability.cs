@@ -26,6 +26,12 @@ public interface IWritebackCapability {
         IReadOnlyList<WritebackTable> tables, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Creates whatever this application's writes are tagged with, so a tagged repository can be handed out before
+    /// <see cref="ArmAsync"/> starts the database keeping changes. Safe to repeat.
+    /// </summary>
+    Task PrepareTagAsync(WritebackEndpoints endpoints, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Sets the database up so exactly these tables are read for Writeback. Safe to repeat; a table no longer
     /// listed stops being read.
     /// </summary>

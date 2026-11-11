@@ -166,6 +166,7 @@ internal sealed class FakeWritebackCapability : IWritebackCapability {
     public int Disarmed { get; private set; }
     public int StreamsOpened { get; private set; }
     public List<WritebackPrerequisite> Prerequisites { get; } = [];
+    public List<string> Log { get; } = [];
 
     public void Enqueue(ChangeTransaction transaction) => _pending.Writer.TryWrite(transaction);
 
@@ -187,10 +188,18 @@ internal sealed class FakeWritebackCapability : IWritebackCapability {
         IReadOnlyList<WritebackTable> tables, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<WritebackPrerequisite>>(Prerequisites);
 
+    public Task PrepareTagAsync(WritebackEndpoints endpoints, CancellationToken cancellationToken = default) {
+        lock (_lock) {
+            Log.Add("tag");
+        }
+        return Task.CompletedTask;
+    }
+
     public Task ArmAsync(WritebackEndpoints endpoints, IReadOnlyList<WritebackTable> tables,
         CancellationToken cancellationToken = default) {
         lock (_lock) {
             Armed.Add(tables);
+            Log.Add("arm");
         }
         return Task.CompletedTask;
     }

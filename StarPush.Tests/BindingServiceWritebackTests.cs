@@ -336,6 +336,9 @@ public class BindingServiceWritebackTests {
             m.Single(x => x.SalesforceFieldName == "AnnualRevenue").FieldDirection == FieldDirection.InboundOnly &&
             m.Single(x => x.SalesforceFieldName == "Fax").FieldDirection == FieldDirection.WritebackOnly &&
             m.Single(x => x.SalesforceFieldName == "Phone").FieldDirection == FieldDirection.TwoWay &&
+            // Forced Inbound only by Salesforce, but the user's own choice is what is kept, so it comes back once
+            // the field can be written.
+            m.Single(x => x.SalesforceFieldName == "LastModifiedDate").FieldDirection == FieldDirection.TwoWay &&
             m.Any(x => x.SalesforceFieldName == "MappedSFKey")));
         await _meta.Received(1).ReplaceWritebackDefaults(BindingId, Arg.Is<IEnumerable<WritebackDefault>>(d =>
             d.Single().SalesforceFieldName == "Name" && d.Single().Value == "Unnamed"));
@@ -368,6 +371,39 @@ public class BindingServiceWritebackTests {
     public async Task AnUnknownSyncDirection_IsRefused() {
         await Assert.ThrowsAsync<ValidationException>(() =>
             NewService().SetSyncDirectionAsync(BindingId, new SetSyncDirectionDTO { SyncDirection = "Sideways" }, Ct));
+    }
+
+    [Fact]
+    public async Task EditingTheFieldMappings_KeepsEachFieldsDirection() {
+        _binding = Binding(SyncDirection.TwoWay, BindingState.Inactive, "id", "Row_Key__c");
+        _mappings[2] = Map("AnnualRevenue", "annual_revenue", FieldDirection.InboundOnly);
+        _mappings[5] = Map("Fax", "fax_digits", FieldDirection.WritebackOnly);
+
+        await NewService().SetFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [
+                new FieldMappingDTO { SalesforceFieldName = "Phone", TargetColumnName = "phone" },
+                new FieldMappingDTO { SalesforceFieldName = "AnnualRevenue", TargetColumnName = "annual_revenue" },
+                new FieldMappingDTO { SalesforceFieldName = "Fax", TargetColumnName = "fax_digits" }
+            ]
+        }, Ct);
+
+        await _meta.Received(1).ReplaceFieldMappings(BindingId, Arg.Is<IEnumerable<MappedField>>(m =>
+            m.Single(x => x.SalesforceFieldName == "AnnualRevenue").FieldDirection == FieldDirection.InboundOnly &&
+            m.Single(x => x.SalesforceFieldName == "Fax").FieldDirection == FieldDirection.WritebackOnly &&
+            m.Single(x => x.SalesforceFieldName == "Phone").FieldDirection == FieldDirection.TwoWay));
+    }
+
+    [Fact]
+    public async Task ANewMappingOntoAGeneratedColumnOfATwoWayBinding_IsWritebackOnly_SoTheInboundFlowNeverWritesIt() {
+        _binding = Binding(SyncDirection.TwoWay, BindingState.Inactive, "id", "Row_Key__c");
+        _mappings = [Map("MappedSFKey", "sf_id")];
+
+        await NewService().SetFieldMappingsAsync(BindingId, new SetFieldMappingsDTO {
+            Mappings = [new FieldMappingDTO { SalesforceFieldName = "Fax", TargetColumnName = "fax_digits" }]
+        }, Ct);
+
+        await _meta.Received(1).ReplaceFieldMappings(BindingId, Arg.Is<IEnumerable<MappedField>>(m =>
+            m.Single(x => x.SalesforceFieldName == "Fax").FieldDirection == FieldDirection.WritebackOnly));
     }
 
     #endregion

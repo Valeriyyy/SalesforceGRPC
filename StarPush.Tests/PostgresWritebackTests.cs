@@ -107,6 +107,31 @@ public class PostgresWritebackTests {
     }
 
     [Fact]
+    public async Task ConcurrentTaggedWrites_AllSucceed_EvenFromTwoRepositories_AndNoneArrive() {
+        await using var scratch = await Scratch.CreateAsync();
+        await scratch.Writeback.ArmAsync(scratch.Endpoints, [scratch.Table], Ct);
+        for (var id = 1; id <= 8; id++) {
+            await scratch.ExecuteAsync($"INSERT INTO {scratch.QualifiedName} (id, phone) VALUES ({id}, 'x')");
+        }
+
+        // The inbound flow writes from parallel ordering groups, and the provider builds a fresh repository each
+        // time it is invalidated; a replication origin can be active in only one session at a time.
+        var first = scratch.Writeback.CreateTaggedRepository(scratch.ConnectionString);
+        var second = scratch.Writeback.CreateTaggedRepository(scratch.ConnectionString);
+        await Task.WhenAll(Enumerable.Range(1, 8).Select(id => (id % 2 == 0 ? first : second).UpdateByKey(
+            scratch.QualifiedName, "id", id, new Dictionary<string, object?> { ["phone"] = $"tagged {id}" }, Ct)));
+        await scratch.ExecuteAsync($"UPDATE {scratch.QualifiedName} SET phone = 'untagged' WHERE id = 1");
+
+        await using var stream = await scratch.Writeback.OpenStreamAsync(scratch.Endpoints, Ct);
+        await using var changes = stream.ReadAsync(Ct).GetAsyncEnumerator(Ct);
+        for (var i = 0; i < 8; i++) {
+            Assert.Equal(RowChangeKind.Insert, Assert.Single((await NextAsync(changes)).Changes).Kind);
+        }
+        var next = Assert.Single((await NextAsync(changes)).Changes);
+        Assert.Equal("untagged", next.NewValues["phone"]);
+    }
+
+    [Fact]
     public async Task ReopeningTheStream_ResumesAfterTheLastConfirmedTransaction() {
         await using var scratch = await Scratch.CreateAsync();
         await scratch.Writeback.ArmAsync(scratch.Endpoints, [scratch.Table], Ct);

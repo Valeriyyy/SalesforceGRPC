@@ -299,11 +299,17 @@ public class BindingService : IBindingService {
             }
         }
 
+        // Each field keeps its Field Direction. A new mapping in a Two-way Binding onto a column the database
+        // generates starts Writeback only, so the inbound flow never writes into it.
+        var directions = existing.ToDictionary(m => m.SalesforceFieldName, m => m.FieldDirection, StringComparer.OrdinalIgnoreCase);
         var replacement = dto.Mappings
             .Select(m => new MappedField {
                 SchemaId = bindingId,
                 SalesforceFieldName = m.SalesforceFieldName,
-                TargetFieldName = m.TargetColumnName
+                TargetFieldName = m.TargetColumnName,
+                FieldDirection = directions.TryGetValue(m.SalesforceFieldName, out var kept) ? kept
+                    : binding.IsTwoWay && columns[m.TargetColumnName].IsGenerated ? FieldDirection.WritebackOnly
+                    : FieldDirection.TwoWay
             })
             .ToList();
 
@@ -812,17 +818,19 @@ public class BindingService : IBindingService {
             throw new WritebackRefusedException(assessment.Issues);
         }
 
-        // A forced direction is stored as the field's direction, so the inbound flow — which knows nothing of
-        // describes or column metadata — never writes a column the database generates. It is still recomputed on
-        // every validation, so a change on either side takes effect.
-        var directionByField = assessment.Fields.ToDictionary(f => f.Mapping.SalesforceFieldName, f => f.Effective,
-            StringComparer.OrdinalIgnoreCase);
+        // The user's choice is what is stored, so it comes back once whatever forced a field changes. The one
+        // exception is a column the database generates: stored as Writeback only, so the inbound flow — which
+        // knows nothing of column metadata — leaves it out. Every validation recomputes the forced directions.
+        var generated = assessment.Fields
+            .Where(f => f.Forced && f.Effective is FieldDirection.WritebackOnly)
+            .Select(f => f.Mapping.SalesforceFieldName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var replacement = mappings.Select(m => new MappedField {
             SchemaId = m.SchemaId,
             SalesforceFieldName = m.SalesforceFieldName,
             TargetFieldName = m.TargetFieldName,
-            FieldDirection = directionByField.TryGetValue(m.SalesforceFieldName, out var effective)
-                ? effective
+            FieldDirection = generated.Contains(m.SalesforceFieldName)
+                ? FieldDirection.WritebackOnly
                 : chosen.GetValueOrDefault(m.SalesforceFieldName, m.FieldDirection)
         }).ToList();
 
