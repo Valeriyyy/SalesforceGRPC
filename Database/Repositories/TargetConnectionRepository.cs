@@ -37,6 +37,13 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
                 last_error AS LastError,
                 last_error_raw AS LastErrorRaw,
                 last_error_at AS LastErrorAt,
+                replication_username AS ReplicationUsername,
+                replication_password_encrypted AS ReplicationPasswordEncrypted,
+                replication_state AS ReplicationState,
+                replication_last_proved_at AS ReplicationLastProvedAt,
+                replication_last_error AS ReplicationLastError,
+                replication_last_error_at AS ReplicationLastErrorAt,
+                writeback_armed_at AS WritebackArmedAt,
                 date_created AS DateCreated,
                 date_updated AS DateUpdated";
 
@@ -195,9 +202,19 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         // Deleted in dependency order rather than leaning on ON DELETE CASCADE, so the statements read as the
         // list of what a repoint destroys. Channel Members are not touched: their cdc_schema_id is
         // ON DELETE SET NULL, which is exactly the outcome wanted.
+        // The Replication Credential and the armed flag belong to the old database too: Writeback was taken
+        // down there before this was called, and a credential for it proves nothing about the new one.
         const string destroy = @"
             DELETE FROM salesforce.mapped_fields;
-            DELETE FROM salesforce.cdc_schemas;";
+            DELETE FROM salesforce.cdc_schemas;
+            UPDATE salesforce.target_connection SET
+                replication_username = NULL,
+                replication_password_encrypted = NULL,
+                replication_state = 'Incomplete',
+                replication_last_proved_at = NULL,
+                replication_last_error = NULL,
+                replication_last_error_at = NULL,
+                writeback_armed_at = NULL;";
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -228,6 +245,68 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
             saved.Engine, saved.Host ?? saved.FilePath, counts.Bindings, counts.FieldMappings);
 
         return (saved, counts);
+    }
+
+    public async Task SetReplicationCredentialAsync(string username, string passwordEncrypted,
+        CancellationToken cancellationToken = default) {
+        const string sql = @"
+            UPDATE salesforce.target_connection SET
+                replication_username = @Username,
+                replication_password_encrypted = @PasswordEncrypted,
+                replication_state = 'Incomplete',
+                replication_last_proved_at = NULL,
+                replication_last_error = NULL,
+                replication_last_error_at = NULL,
+                date_updated = now()";
+        LogQuery("UPDATE", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition(sql,
+            new { Username = username, PasswordEncrypted = passwordEncrypted }, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+    }
+
+    public async Task ClearReplicationCredentialAsync(CancellationToken cancellationToken = default) {
+        const string sql = @"
+            UPDATE salesforce.target_connection SET
+                replication_username = NULL,
+                replication_password_encrypted = NULL,
+                replication_state = 'Incomplete',
+                replication_last_proved_at = NULL,
+                replication_last_error = NULL,
+                replication_last_error_at = NULL,
+                date_updated = now()";
+        LogQuery("UPDATE", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition(sql, cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    public async Task RecordReplicationOutcomeAsync(ConnectionState state, string? error, DateTime at,
+        CancellationToken cancellationToken = default) {
+        // As with the connection itself, the last time it was proved survives a failure.
+        const string sql = @"
+            UPDATE salesforce.target_connection SET
+                replication_state = @State,
+                replication_last_proved_at = CASE WHEN @State = 'Connected' THEN @At ELSE replication_last_proved_at END,
+                replication_last_error = @Error,
+                replication_last_error_at = CASE WHEN @Error IS NULL THEN NULL ELSE @At END,
+                date_updated = now()";
+        LogQuery("UPDATE", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition(sql,
+            new { State = state.ToString(), Error = error, At = at }, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+    }
+
+    public async Task SetWritebackArmedAsync(DateTime? at, CancellationToken cancellationToken = default) {
+        const string sql = "UPDATE salesforce.target_connection SET writeback_armed_at = @At";
+        LogQuery("UPDATE", sql);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.ExecuteAsync(new CommandDefinition(sql, new { At = at }, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
     }
 
     private void LogQuery(string operation, string sql) {

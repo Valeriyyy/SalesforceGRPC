@@ -29,6 +29,9 @@ public class MetaRepository : IMetaRepository {
                 cs.soft_delete_enabled as SoftDeleteEnabled,
                 cs.soft_delete_column_name as SoftDeleteColumnName,
                 cs.forced_incomplete_at as ForcedIncompleteAt,
+                cs.sync_direction as SyncDirection,
+                cs.writeback_key_column as WritebackKeyColumn,
+                cs.writeback_key_sf_field as WritebackKeySalesforceField,
                 avro.id as Id,
                 avro.schema_id as SchemaId,
                 avro.record_name as RecordName,
@@ -67,9 +70,16 @@ public class MetaRepository : IMetaRepository {
         // Fetch mappings if not in cache
         var mappings = await GetEntityMappedFieldsBySchemaId(schemaId).ConfigureAwait(false);
 
+        // This is the mapping inbound writes use, so a Two-way Binding's Writeback-only fields are left out:
+        // their columns belong to the Target Database, and may be ones it generates and refuses to be written.
+        // An Inbound Binding carries every field inbound whatever direction is stored for it.
+        var binding = await GetSchemaById(schemaId.Value).ConfigureAwait(false);
+        var twoWay = binding?.IsTwoWay == true;
+
         // Build the mapping dictionary from the provided mappings
         var mapping = mappings
             .Where(m => m.SchemaId == schemaId)
+            .Where(m => !twoWay || m.FieldDirection.CarriesInbound())
             .ToDictionary(m => m.SalesforceFieldName, m => m.TargetFieldName);
 
         // Store in cache with a 1-hour sliding expiration
@@ -88,7 +98,8 @@ public class MetaRepository : IMetaRepository {
             @"SELECT id as ID,
             schema_id as SchemaId,
             salesforce_field_name as SalesforceFieldName,
-            target_field_name as TargetFieldName
+            target_field_name as TargetFieldName,
+            field_direction as FieldDirection
             FROM salesforce.mapped_fields WHERE schema_id = @SchemaId",
             new { SchemaId = schemaId }).ConfigureAwait(false);
     }
@@ -353,12 +364,13 @@ public class MetaRepository : IMetaRepository {
 
         if (rows.Count > 0) {
             await connection.ExecuteAsync(
-                @"INSERT INTO salesforce.mapped_fields (schema_id, salesforce_field_name, target_field_name)
-                  VALUES (@SchemaId, @SalesforceFieldName, @TargetFieldName)",
+                @"INSERT INTO salesforce.mapped_fields (schema_id, salesforce_field_name, target_field_name, field_direction)
+                  VALUES (@SchemaId, @SalesforceFieldName, @TargetFieldName, @FieldDirection)",
                 rows.Select(m => new {
                     SchemaId = bindingId,
                     m.SalesforceFieldName,
-                    m.TargetFieldName
+                    m.TargetFieldName,
+                    FieldDirection = m.FieldDirection.ToString()
                 }), transaction).ConfigureAwait(false);
         }
 
@@ -367,6 +379,60 @@ public class MetaRepository : IMetaRepository {
         if (_debugQuery) {
             _logger.LogInformation("Replaced {Count} field mappings for binding {BindingId}", rows.Count, bindingId);
         }
+    }
+
+    public async Task<bool> SetWriteback(int bindingId, SyncDirection direction, string? writebackKeyColumn,
+        string? writebackKeySalesforceField) {
+        InvalidateBinding(bindingId);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        const string sql = @"
+            UPDATE salesforce.cdc_schemas
+            SET sync_direction = @Direction,
+                writeback_key_column = @KeyColumn,
+                writeback_key_sf_field = @KeyField
+            WHERE id = @BindingId";
+
+        var affectedRows = await connection.ExecuteAsync(sql, new {
+            BindingId = bindingId,
+            Direction = direction.ToString(),
+            KeyColumn = writebackKeyColumn,
+            KeyField = writebackKeySalesforceField
+        }).ConfigureAwait(false);
+
+        return affectedRows > 0;
+    }
+
+    public async Task<List<WritebackDefault>> GetWritebackDefaults(int bindingId) {
+        await using var connection = new NpgsqlConnection(_connectionString);
+
+        return (await connection.QueryAsync<WritebackDefault>(
+            @"SELECT id as Id, binding_id as BindingId, salesforce_field_name as SalesforceFieldName, value as Value
+              FROM salesforce.writeback_defaults WHERE binding_id = @BindingId ORDER BY salesforce_field_name",
+            new { BindingId = bindingId }).ConfigureAwait(false)).ToList();
+    }
+
+    public async Task ReplaceWritebackDefaults(int bindingId, IEnumerable<WritebackDefault> defaults) {
+        var rows = defaults.ToList();
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync().ConfigureAwait(false);
+
+        await connection.ExecuteAsync(
+            "DELETE FROM salesforce.writeback_defaults WHERE binding_id = @BindingId",
+            new { BindingId = bindingId }, transaction).ConfigureAwait(false);
+
+        if (rows.Count > 0) {
+            await connection.ExecuteAsync(
+                @"INSERT INTO salesforce.writeback_defaults (binding_id, salesforce_field_name, value)
+                  VALUES (@BindingId, @SalesforceFieldName, @Value)",
+                rows.Select(d => new { BindingId = bindingId, d.SalesforceFieldName, d.Value }), transaction)
+                .ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync().ConfigureAwait(false);
     }
 
     /// <summary>

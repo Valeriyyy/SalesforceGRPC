@@ -67,6 +67,12 @@ public class ColumnMetadata {
     /// <summary>The number of digits after the decimal point for numeric types, or null.</summary>
     public int? NumericScale { get; set; }
 
+    /// <summary>
+    /// True when the database writes the column itself and refuses a value for it: a generated column, or an
+    /// identity declared GENERATED ALWAYS. Such a column can be read for Writeback but never written inbound.
+    /// </summary>
+    public bool IsGenerated { get; set; }
+
     /// <summary>True when a PRIMARY KEY constraint covers this column.</summary>
     public bool IsPrimaryKey => ColumnConstraints.Any(c =>
         c.ConstraintType.Contains("PRIMARY", StringComparison.OrdinalIgnoreCase));

@@ -66,6 +66,22 @@ public interface IMetaRepository {
     Task ReplaceFieldMappings(int bindingId, IEnumerable<MappedField> mappings);
 
     #endregion
+
+    #region Writeback
+
+    /// <summary>
+    /// Stores a Binding's Sync Direction and Writeback Key. The Writeback Key is kept as given even when the
+    /// direction is Inbound, so switching back to Two-way restores it.
+    /// </summary>
+    Task<bool> SetWriteback(int bindingId, SyncDirection direction, string? writebackKeyColumn,
+        string? writebackKeySalesforceField);
+
+    Task<List<WritebackDefault>> GetWritebackDefaults(int bindingId);
+
+    /// <summary>Replaces every Writeback Default of a Binding in one transaction.</summary>
+    Task ReplaceWritebackDefaults(int bindingId, IEnumerable<WritebackDefault> defaults);
+
+    #endregion
 }
 
 /// <summary>How many Bindings are in each <see cref="BindingState"/>.</summary>

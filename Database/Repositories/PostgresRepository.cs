@@ -176,7 +176,8 @@ public class PostgresRepository : RepositoryBase {
                 ordinal_position as OrdinalPosition,
                 character_maximum_length as MaxLength,
                 numeric_precision as NumericPrecision,
-                numeric_scale as NumericScale
+                numeric_scale as NumericScale,
+                (is_generated = 'ALWAYS' OR coalesce(identity_generation = 'ALWAYS', false)) as IsGenerated
             FROM information_schema.columns
             WHERE table_schema = @SchemaName
             AND table_name = @TableName
