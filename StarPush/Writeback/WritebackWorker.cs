@@ -30,7 +30,6 @@ public class WritebackWorker : BackgroundService {
     private readonly IConfigurationChangeSignal _changeSignal;
     private readonly ITargetConnectionProvider _target;
     private readonly ITargetConnectionRepository _targetConnections;
-    private readonly WritebackProcessor _processor;
     private readonly WritebackHealth _health;
     private readonly TimeProvider _time;
 
@@ -46,7 +45,6 @@ public class WritebackWorker : BackgroundService {
         IConfigurationChangeSignal changeSignal,
         ITargetConnectionProvider target,
         ITargetConnectionRepository targetConnections,
-        WritebackProcessor processor,
         WritebackHealth health,
         TimeProvider time) {
         _logger = logger;
@@ -54,7 +52,6 @@ public class WritebackWorker : BackgroundService {
         _changeSignal = changeSignal;
         _target = target;
         _targetConnections = targetConnections;
-        _processor = processor;
         _health = health;
         _time = time;
     }
@@ -110,6 +107,10 @@ public class WritebackWorker : BackgroundService {
     private async Task RunAsync(WritebackPlan plan, CancellationToken stoppingToken) {
         using var planScope = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var watch = WatchForConfigurationChange(planScope);
+        // Resolved per run rather than held for the life of the host, so the Salesforce HTTP client it writes
+        // through is renewed each time Writeback re-plans.
+        using var services = _scopeFactory.CreateScope();
+        var processor = services.ServiceProvider.GetRequiredService<WritebackProcessor>();
         var capability = plan.Capability!;
         var endpoints = plan.Endpoints!;
 
@@ -134,7 +135,7 @@ public class WritebackWorker : BackgroundService {
                 using var activity = WritebackTelemetry.ActivitySource.StartActivity(WritebackTelemetry.TransactionSpan);
                 activity?.SetTag("starpush.writeback.changes", transaction.Changes.Count);
 
-                var summary = await _processor.ApplyAsync(transaction, plan, tagged, planScope.Token).ConfigureAwait(false);
+                var summary = await processor.ApplyAsync(transaction, plan, tagged, planScope.Token).ConfigureAwait(false);
                 await stream.ConfirmAsync(transaction.Position, planScope.Token).ConfigureAwait(false);
 
                 WritebackTelemetry.ChangesRead.Add(transaction.Changes.Count);

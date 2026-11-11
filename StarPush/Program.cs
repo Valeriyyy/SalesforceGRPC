@@ -4,6 +4,7 @@ using Application.Pipeline;
 using Application.Services;
 using Application.Services.Interfaces;
 using Application.Targets;
+using Application.Writeback;
 using Dapper;
 using Database.DataProtection;
 using Database.Repositories;
@@ -19,10 +20,13 @@ using OpenTelemetry.Trace;
 using Salesforce;
 using Salesforce.Auth;
 using Salesforce.Clients;
+using Salesforce.Writeback;
 using StarPush;
 using StarPush.Health;
 using StarPush.Schemas;
 using StarPush.Strategies;
+using StarPush.Telemetry;
+using StarPush.Writeback;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -49,11 +53,13 @@ builder.Services.AddOpenTelemetry()
             });
     })
     .WithMetrics(meterProviderBuilder => {
-        meterProviderBuilder.AddAspNetCoreInstrumentation()
+        meterProviderBuilder.AddMeter(WritebackTelemetry.Name)
+            .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddRuntimeInstrumentation();
     }).WithTracing(tracerProviderBuilder => {
-        tracerProviderBuilder.AddAspNetCoreInstrumentation()
+        tracerProviderBuilder.AddSource(WritebackTelemetry.Name)
+            .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation();
     });
 
@@ -65,6 +71,7 @@ builder.Services.AddSingleton<IAvroSchemaRepository, AvroSchemaRepository>();
 builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChannelRepository>();
 builder.Services.AddSingleton<ICheckpointRepository, CheckpointRepository>();
 builder.Services.AddSingleton<IOrgConnectionRepository, OrgConnectionRepository>();
+builder.Services.AddSingleton<IWritebackFailureRepository, WritebackFailureRepository>();
 
 #region Data Protection
 // The one secret this application stores is a private key it generated for itself. The key ring lives in the
@@ -187,6 +194,14 @@ builder.Services.AddHttpClient<SalesforceRestClient>(client => {
     }).AddHttpMessageHandler<SalesforceAuthHandler>()
 .AddPolicyHandler(SalesforcePollyPolicies.RetryWithBackoff());
 
+// Writeback writes records and reads describes through the REST client; describes are cached because every
+// Binding validation and every Writeback plan reads one.
+builder.Services.AddTransient<ISalesforceRecordWriter>(sp => sp.GetRequiredService<SalesforceRestClient>());
+builder.Services.AddTransient<ISObjectDescriber, CachedSObjectDescriber>();
+builder.Services.AddTransient<WritebackProcessor>();
+builder.Services.AddSingleton<WritebackHealth>();
+builder.Services.AddSingleton<IWritebackHealth>(sp => sp.GetRequiredService<WritebackHealth>());
+
 builder.Services.AddHttpClient<SalesforceToolingClient>(client => {
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 }).AddHttpMessageHandler<SalesforceAuthHandler>()
@@ -199,6 +214,7 @@ if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
 }
 
 builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<WritebackWorker>();
 builder.Services.AddHostedService<SecretProtectionStartupCheck>();
 
 builder.Services.AddHealthChecks()
@@ -210,6 +226,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+var writebackHealth = app.Services.GetRequiredService<WritebackHealth>();
+WritebackTelemetry.LagGauge(() => writebackHealth.LagBytes);
 
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment()) {

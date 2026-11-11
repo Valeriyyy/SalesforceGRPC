@@ -1,6 +1,7 @@
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
+using Database.Writeback;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -8,7 +9,11 @@ namespace Database.Targets;
 
 public sealed class PostgresEngineProfile : TargetEngineProfile {
     public PostgresEngineProfile(ILoggerFactory loggerFactory, bool debugQuery = false)
-        : base(loggerFactory, debugQuery) { }
+        : base(loggerFactory, debugQuery) {
+        Writeback = new PostgresWriteback(loggerFactory, debugQuery);
+    }
+
+    public override IWritebackCapability? Writeback { get; }
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
 

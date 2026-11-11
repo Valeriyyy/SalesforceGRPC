@@ -148,5 +148,17 @@ public interface IBindingService {
     /// </summary>
     Task<BindingDTO> SetSyncDirectionAsync(int bindingId, SetSyncDirectionDTO dto, CancellationToken cancellationToken = default);
 
+    /// <summary>The open Writeback Failures, of one Binding or of all.</summary>
+    Task<IReadOnlyList<WritebackFailureDTO>> GetWritebackFailuresAsync(int? bindingId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a failed row's current values again, so fixing the row and pressing Retry is enough. A row that is
+    /// gone discards the failure; Salesforce being unreachable leaves it as it was.
+    /// </summary>
+    Task<WritebackRetryDTO> RetryWritebackFailureAsync(int failureId, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a failure the user has decided to ignore.</summary>
+    Task DismissWritebackFailureAsync(int failureId, CancellationToken cancellationToken = default);
+
     #endregion
 }

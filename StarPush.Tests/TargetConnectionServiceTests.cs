@@ -4,6 +4,7 @@ using Application.Targets;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using Database.Targets;
+using Database.Writeback;
 using DTO;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -44,6 +45,7 @@ public class TargetConnectionServiceTests {
         _postgres.Validate(Arg.Any<TargetConnectionDetails>()).Returns([]);
         _postgres.BuildConnectionString(Arg.Any<TargetConnectionDetails>()).Returns("pg");
         _postgres.CreateRepository("pg").Returns(_provedRepository);
+        _postgres.Writeback.Returns((IWritebackCapability?)null);
         _engines.For(TargetDatabaseEngine.Postgres).Returns(_postgres);
         _engines.All.Returns([_postgres]);
 
@@ -572,4 +574,83 @@ public class TargetConnectionServiceTests {
 
         Assert.False(dto.Exists);
     }
+
+    #region Replication Credential
+
+    private readonly IWritebackCapability _writeback = Substitute.For<IWritebackCapability>();
+
+    private void WithWriteback() {
+        _postgres.Writeback.Returns(_writeback);
+        _postgres.BuildConnectionString(Arg.Is<TargetConnectionDetails>(d => d.Username == "repl")).Returns("pg-repl");
+        _writeback.ProveReplicationCredentialAsync("pg-repl", Arg.Any<CancellationToken>()).Returns((string?)null);
+    }
+
+    [Fact]
+    public async Task AReplicationCredential_IsStoredEncrypted_ProvedAgainstTheSameDatabase_AndRecordedConnected() {
+        WithStored(Stored());
+        WithWriteback();
+
+        await NewService().SetReplicationCredentialAsync(new SetReplicationCredentialDTO { Username = "repl", Password = "r3pl" }, Ct);
+
+        await _repository.Received(1).SetReplicationCredentialAsync("repl", "enc:r3pl", Arg.Any<CancellationToken>());
+        await _writeback.Received(1).ProveReplicationCredentialAsync("pg-repl", Arg.Any<CancellationToken>());
+        await _repository.Received(1).RecordReplicationOutcomeAsync(ConnectionState.Connected, null,
+            _time.GetUtcNow().UtcDateTime, Arg.Any<CancellationToken>());
+        _signal.Received().Signal();
+    }
+
+    [Fact]
+    public async Task AReplicationCredentialThatFailsItsProof_IsStillStored_AsIncompleteWithTheReason() {
+        WithStored(Stored());
+        WithWriteback();
+        _writeback.ProveReplicationCredentialAsync("pg-repl", Arg.Any<CancellationToken>())
+            .Returns("The login 'repl' may not read the database's changes.");
+
+        await NewService().SetReplicationCredentialAsync(new SetReplicationCredentialDTO { Username = "repl", Password = "r3pl" }, Ct);
+
+        await _repository.Received(1).SetReplicationCredentialAsync("repl", "enc:r3pl", Arg.Any<CancellationToken>());
+        await _repository.Received(1).RecordReplicationOutcomeAsync(ConnectionState.Incomplete,
+            "The login 'repl' may not read the database's changes.", Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ChangingTheReplicationCredential_NeverRepoints() {
+        WithStored(Stored());
+        WithWriteback();
+
+        await NewService().SetReplicationCredentialAsync(new SetReplicationCredentialDTO { Username = "repl", Password = "r3pl" }, Ct);
+
+        await _repository.DidNotReceiveWithAnyArgs().RepointAsync(default!, default, default);
+        await _repository.DidNotReceiveWithAnyArgs().UpsertAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task AReplicationCredential_OnAnEngineWithoutWriteback_IsRefused() {
+        WithStored(Stored());
+
+        await Assert.ThrowsAsync<ValidationException>(() => NewService().SetReplicationCredentialAsync(
+            new SetReplicationCredentialDTO { Username = "repl", Password = "r3pl" }, Ct));
+        await _repository.DidNotReceiveWithAnyArgs().SetReplicationCredentialAsync(default!, default!, default);
+    }
+
+    [Fact]
+    public async Task Repointing_TakesWritebackDownInTheOldDatabase_BeforeDestroyingAnything() {
+        WithStored(Stored(host: "old.internal"));
+        _repository.CountBindingsAsync(Arg.Any<CancellationToken>()).Returns(new BindingCounts { Bindings = 1, FieldMappings = 2 });
+        _repository.RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>())
+            .Returns(call => (call.Arg<TargetConnection>(), new BindingCounts { Bindings = 1, FieldMappings = 2 }));
+
+        var request = new RepointTargetConnectionDTO {
+            Engine = "Postgres", Host = "new.internal", Port = 5432, DatabaseName = "warehouse", Username = "loader",
+            Password = "s3cret", ExpectedBindings = 1, ExpectedFieldMappings = 2
+        };
+        await NewService().RepointAsync(request, Ct);
+
+        Received.InOrder(() => {
+            _provider.DisarmWritebackAsync(Arg.Any<CancellationToken>());
+            _repository.RepointAsync(Arg.Any<TargetConnection>(), Arg.Any<DateTime>(), Arg.Any<CancellationToken>());
+        });
+    }
+
+    #endregion
 }

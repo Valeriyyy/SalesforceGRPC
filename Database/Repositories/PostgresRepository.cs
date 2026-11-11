@@ -14,7 +14,7 @@ public class PostgresRepository : RepositoryBase {
 
     /// <param name="connectionInitializer">
     /// Run once on every physical connection this repository opens, before its first use. Writeback tags every
-    /// write this way (<see cref="Writeback.PostgresWriteback"/>).
+    /// write this way (<see cref="Database.Writeback.PostgresWriteback"/>).
     /// </param>
     protected PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery,
         Func<NpgsqlConnection, Task>? connectionInitializer) : base(logger, connectionString, debugQuery) {

@@ -43,6 +43,13 @@ public interface ITargetConnectionProvider {
     /// </summary>
     Task<WritebackEndpoints?> GetWritebackEndpointsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Takes Writeback down in the current Target Database, so it stops keeping changes for a reader that is
+    /// about to be gone. Best effort: a database that cannot be reached is logged, never thrown, because the
+    /// Repoint or Disconnect calling this must still go ahead.
+    /// </summary>
+    Task DisarmWritebackAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Drops what is held so the next read comes from the database.</summary>
     void Invalidate();
 }
@@ -105,6 +112,31 @@ public sealed class TargetConnectionProvider : ITargetConnectionProvider {
             return loaded.Repository;
         } finally {
             _loadLock.Release();
+        }
+    }
+
+    public async Task DisarmWritebackAsync(CancellationToken cancellationToken = default) {
+        var connection = (await LoadAsync(cancellationToken).ConfigureAwait(false)).Connection;
+        if (connection?.WritebackArmedAt is null || _engines.For(connection.Engine).Writeback is not { } writeback) {
+            return;
+        }
+
+        try {
+            var endpoints = await GetWritebackEndpointsAsync(cancellationToken).ConfigureAwait(false);
+            if (endpoints is null) {
+                _logger.LogWarning(
+                    "Writeback is armed in {Engine} at {Address} but there is no Replication Credential to take it down with; the database may keep changes until someone drops the slot {Slot}",
+                    connection.Engine, connection.Host ?? connection.FilePath, "starpush_writeback");
+                return;
+            }
+            await writeback.DisarmAsync(endpoints, cancellationToken).ConfigureAwait(false);
+            await _repository.SetWritebackArmedAsync(null, cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogWarning(ex,
+                "Could not take Writeback down in {Engine} at {Address}; the database may keep changes until its replication slot is dropped",
+                connection.Engine, connection.Host ?? connection.FilePath);
+        } finally {
+            Invalidate();
         }
     }
 

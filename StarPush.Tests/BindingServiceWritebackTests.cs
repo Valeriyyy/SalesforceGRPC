@@ -38,6 +38,7 @@ public class BindingServiceWritebackTests {
     private readonly IConfigurationChangeSignal _signal = Substitute.For<IConfigurationChangeSignal>();
     private readonly ISObjectDescriber _describer = Substitute.For<ISObjectDescriber>();
     private readonly IWritebackFailureRepository _failures = Substitute.For<IWritebackFailureRepository>();
+    private readonly ISalesforceRecordWriter _salesforce = Substitute.For<ISalesforceRecordWriter>();
     private readonly FakeWritebackCapability _capability = new();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 11, 10, 12, 0, 0, TimeSpan.Zero));
 
@@ -78,7 +79,8 @@ public class BindingServiceWritebackTests {
     private BindingService NewService() =>
         new(_meta, Substitute.For<IAvroSchemaRepository>(), _targetConnections, _engines, _channels, _entitySchemas,
             _signal, Substitute.For<IOrgConnectionProvider>(), Substitute.For<ICheckpointRepository>(), _describer,
-            _failures, _time, NullLogger<BindingService>.Instance);
+            _failures, new WritebackProcessor(_salesforce, _failures, _time, NullLogger<WritebackProcessor>.Instance),
+            _time, NullLogger<BindingService>.Instance);
 
     #region Arrangement
 
@@ -463,6 +465,111 @@ public class BindingServiceWritebackTests {
 
         Assert.False(validation.CanActivate);
         Assert.Contains(validation.Results, r => r.TargetColumnName == "fax_digits" && r.Level == "Error");
+    }
+
+    #endregion
+
+    #region Retry and Dismiss
+
+    private const int FailureId = 5;
+
+    private void ArrangeFailure(string? keyValue = "7", string? salesforceId = null) {
+        ArrangeTwoWayBinding();
+        _failures.GetAsync(FailureId, Arg.Any<CancellationToken>()).Returns(new WritebackFailure {
+            Id = FailureId, BindingId = BindingId, RowKey = WritebackFailure.RowKeyFor(keyValue, salesforceId),
+            WritebackKeyValue = keyValue, SalesforceId = salesforceId, Operation = WritebackOperation.Create,
+            StatusCodes = "FIELD_CUSTOM_VALIDATION_EXCEPTION", Message = "Phone must be E.164"
+        });
+    }
+
+    [Fact]
+    public async Task Retry_SendsTheRowsCurrentValues_AndClearsTheFailureWhenSalesforceAcceptsThem() {
+        ArrangeFailure();
+        _target.GetRowByKey("salesforce.account", "id", "7", Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, object?> { ["id"] = 7, ["sf_id"] = null, ["phone"] = "+15550100" });
+        _salesforce.UpsertAsync("Account", "Row_Key__c", Arg.Any<IReadOnlyList<IReadOnlyDictionary<string, object?>>>(),
+            Arg.Any<CancellationToken>()).Returns([new RecordSaveResult { Success = true, Created = true, Id = "001000000000009AAA" }]);
+
+        var outcome = await NewService().RetryWritebackFailureAsync(FailureId, Ct);
+
+        Assert.Equal("Succeeded", outcome.Outcome);
+        await _salesforce.Received(1).UpsertAsync("Account", "Row_Key__c",
+            Arg.Is<IReadOnlyList<IReadOnlyDictionary<string, object?>>>(r => (string?)r.Single()["Phone"] == "+15550100"),
+            Arg.Any<CancellationToken>());
+        await _failures.Received(1).DeleteAsync(FailureId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Retry_OfARowThatHasSinceGone_DiscardsTheFailureAndSendsNothing() {
+        ArrangeFailure();
+        _target.GetRowByKey("salesforce.account", "id", "7", Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyDictionary<string, object?>?)null);
+
+        var outcome = await NewService().RetryWritebackFailureAsync(FailureId, Ct);
+
+        Assert.Equal("Discarded", outcome.Outcome);
+        Assert.Empty(_salesforce.ReceivedCalls());
+        await _failures.Received(1).DeleteAsync(FailureId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Retry_OfARowKnownOnlyByItsSalesforceId_ReadsItByTheKeyMappingColumn() {
+        ArrangeFailure(keyValue: null, salesforceId: "001000000000001AAA");
+        _target.GetRowByKey("salesforce.account", "sf_id", "001000000000001AAA", Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, object?> { ["id"] = null, ["sf_id"] = "001000000000001AAA", ["phone"] = "1" });
+        _salesforce.UpdateAsync("Account", Arg.Any<IReadOnlyList<IReadOnlyDictionary<string, object?>>>(), Arg.Any<CancellationToken>())
+            .Returns([new RecordSaveResult { Success = true, Id = "001000000000001AAA" }]);
+
+        var outcome = await NewService().RetryWritebackFailureAsync(FailureId, Ct);
+
+        Assert.Equal("Succeeded", outcome.Outcome);
+    }
+
+    [Fact]
+    public async Task Retry_ThatSalesforceStillRefuses_ReportsWhyAndKeepsTheFailure() {
+        ArrangeFailure();
+        _target.GetRowByKey("salesforce.account", "id", "7", Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, object?> { ["id"] = 7, ["sf_id"] = null, ["phone"] = "still bad" });
+        _salesforce.UpsertAsync(default!, default!, default!, default).ReturnsForAnyArgs([new RecordSaveResult {
+            Success = false, Errors = [new RecordError { StatusCode = "FIELD_CUSTOM_VALIDATION_EXCEPTION", Message = "Phone must be E.164" }]
+        }]);
+
+        var outcome = await NewService().RetryWritebackFailureAsync(FailureId, Ct);
+
+        Assert.Equal("Failed", outcome.Outcome);
+        Assert.Contains("E.164", outcome.Message);
+        await _failures.DidNotReceive().DeleteAsync(FailureId, Arg.Any<CancellationToken>());
+        await _failures.Received(1).RecordAsync(Arg.Any<WritebackFailure>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Retry_WhenSalesforceCannotBeReached_SaysSo_AndLeavesTheFailureAsItWas() {
+        ArrangeFailure();
+        _target.GetRowByKey("salesforce.account", "id", "7", Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<string, object?> { ["id"] = 7, ["sf_id"] = null, ["phone"] = "1" });
+        _salesforce.UpsertAsync(default!, default!, default!, default)
+            .ReturnsForAnyArgs<IReadOnlyList<RecordSaveResult>>(_ => throw new SalesforceTransientException("Salesforce answered 503"));
+
+        var outcome = await NewService().RetryWritebackFailureAsync(FailureId, Ct);
+
+        Assert.Equal("Failed", outcome.Outcome);
+        Assert.Contains("503", outcome.Message);
+        await _failures.DidNotReceiveWithAnyArgs().RecordAsync(default!, default);
+        await _failures.DidNotReceive().DeleteAsync(FailureId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Dismiss_RemovesTheFailure() {
+        ArrangeFailure();
+
+        await NewService().DismissWritebackFailureAsync(FailureId, Ct);
+
+        await _failures.Received(1).DeleteAsync(FailureId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Dismiss_OfAFailureThatDoesNotExist_IsNotFound() {
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => NewService().DismissWritebackFailureAsync(99, Ct));
     }
 
     #endregion

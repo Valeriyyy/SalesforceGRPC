@@ -47,4 +47,18 @@ public static class BindingMapper {
         Level = compatibility.Level.ToString(),
         Message = compatibility.Message
     };
+
+    public static WritebackFailureDTO ToDto(this WritebackFailure failure) => new() {
+        Id = failure.Id,
+        BindingId = failure.BindingId,
+        WritebackKeyValue = failure.WritebackKeyValue,
+        SalesforceId = failure.SalesforceId,
+        Operation = failure.Operation.ToString(),
+        StatusCodes = failure.StatusCodes,
+        Message = failure.Message,
+        ValuesSent = failure.ValuesSent,
+        FirstFailedAt = failure.FirstFailedAt,
+        LastFailedAt = failure.LastFailedAt,
+        Attempts = failure.Attempts
+    };
 }

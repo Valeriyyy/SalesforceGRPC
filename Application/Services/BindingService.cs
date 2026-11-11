@@ -41,6 +41,7 @@ public class BindingService : IBindingService {
     private readonly ICheckpointRepository _checkpoints;
     private readonly ISObjectDescriber _describer;
     private readonly IWritebackFailureRepository _failures;
+    private readonly WritebackProcessor _writeback;
     private readonly TimeProvider _time;
     private readonly ILogger<BindingService> _logger;
 
@@ -56,6 +57,7 @@ public class BindingService : IBindingService {
         ICheckpointRepository checkpoints,
         ISObjectDescriber describer,
         IWritebackFailureRepository failures,
+        WritebackProcessor writeback,
         TimeProvider time,
         ILogger<BindingService> logger) {
         _meta = meta;
@@ -69,6 +71,7 @@ public class BindingService : IBindingService {
         _checkpoints = checkpoints;
         _describer = describer;
         _failures = failures;
+        _writeback = writeback;
         _time = time;
         _logger = logger;
     }
@@ -903,6 +906,70 @@ public class BindingService : IBindingService {
             BlockedReason = blocked
         };
     }
+
+    public async Task<IReadOnlyList<WritebackFailureDTO>> GetWritebackFailuresAsync(int? bindingId,
+        CancellationToken cancellationToken = default) =>
+        (await _failures.ListAsync(bindingId, cancellationToken).ConfigureAwait(false))
+        .Select(f => f.ToDto())
+        .ToList();
+
+    public async Task<WritebackRetryDTO> RetryWritebackFailureAsync(int failureId, CancellationToken cancellationToken = default) {
+        var failure = await RequireFailure(failureId, cancellationToken).ConfigureAwait(false);
+        var binding = await RequireBinding(failure.BindingId).ConfigureAwait(false);
+        if (!binding.IsTwoWay) {
+            throw new ValidationException(
+                $"Binding {binding.Id} is no longer Two-way, so nothing is written back for it. Dismiss the failure instead.");
+        }
+
+        var mappings = await ReadMappings(binding.Id).ConfigureAwait(false);
+        var defaults = await _meta.GetWritebackDefaults(binding.Id).ConfigureAwait(false);
+        var assessment = await AssessWriteback(binding, mappings, WritebackSettings.Stored(binding, mappings, defaults),
+            includeEnvironment: false, cancellationToken).ConfigureAwait(false);
+        if (assessment.CheckUnavailable is { } unavailable) {
+            return new WritebackRetryDTO { Outcome = "Failed", Message = unavailable };
+        }
+        if (assessment.Plan is not { } plan) {
+            throw new ValidationException(
+                $"Binding {binding.Id} no longer meets Writeback's requirements: {string.Join(" ", assessment.Issues.Select(i => i.Message))}");
+        }
+
+        // The row as it is now: the point of Retry is that the user has fixed it.
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
+        var row = failure.WritebackKeyValue is { } keyValue
+            ? await target.GetRowByKey(plan.TableName, plan.WritebackKey.Column, keyValue, cancellationToken).ConfigureAwait(false)
+            : await target.GetRowByKey(plan.TableName, plan.KeyMappingColumn, failure.SalesforceId!, cancellationToken).ConfigureAwait(false);
+
+        if (row is null) {
+            await _failures.DeleteAsync(failureId, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Writeback Failure {FailureId} discarded on Retry: its row is no longer in {Table}", failureId, plan.TableName);
+            return new WritebackRetryDTO { Outcome = "Discarded", Message = "The row no longer exists, so there is nothing to send." };
+        }
+
+        string? refused;
+        try {
+            refused = await _writeback.RetryAsync(plan, row, target, cancellationToken).ConfigureAwait(false);
+        } catch (WritebackTransientException ex) {
+            return new WritebackRetryDTO { Outcome = "Failed", Message = $"Salesforce could not be reached, so nothing changed: {ex.Message}" };
+        }
+
+        if (refused is not null) {
+            return new WritebackRetryDTO { Outcome = "Failed", Message = refused };
+        }
+
+        // The row may be known by a different key now (it gained a Writeback Key value), so the failure is
+        // removed by its own id rather than trusting the processor's clear to find it.
+        await _failures.DeleteAsync(failureId, cancellationToken).ConfigureAwait(false);
+        return new WritebackRetryDTO { Outcome = "Succeeded" };
+    }
+
+    public async Task DismissWritebackFailureAsync(int failureId, CancellationToken cancellationToken = default) {
+        await RequireFailure(failureId, cancellationToken).ConfigureAwait(false);
+        await _failures.DeleteAsync(failureId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<WritebackFailure> RequireFailure(int failureId, CancellationToken cancellationToken) =>
+        await _failures.GetAsync(failureId, cancellationToken).ConfigureAwait(false)
+        ?? throw new KeyNotFoundException($"Writeback Failure {failureId} was not found.");
 
     /// <summary>
     /// A Binding's Writeback settings: stored, or proposed by an edit.

@@ -64,6 +64,8 @@ public class BindingServiceTests {
     private BindingService NewService() =>
         new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, _checkpoints,
             Substitute.For<Salesforce.Writeback.ISObjectDescriber>(), Substitute.For<IWritebackFailureRepository>(),
+            new Application.Writeback.WritebackProcessor(Substitute.For<Salesforce.Writeback.ISalesforceRecordWriter>(),
+                Substitute.For<IWritebackFailureRepository>(), _time, NullLogger<Application.Writeback.WritebackProcessor>.Instance),
             _time, NullLogger<BindingService>.Instance);
 
     #region Arrangement

@@ -97,12 +97,11 @@ internal sealed class WritebackHarness {
     private WritebackWorker Build() {
         var services = new ServiceCollection();
         services.AddSingleton(Bindings);
+        services.AddSingleton(new WritebackProcessor(Salesforce, Failures, Time, NullLogger<WritebackProcessor>.Instance));
         var provider = services.BuildServiceProvider();
 
-        var processor = new WritebackProcessor(Salesforce, Failures, Time, NullLogger<WritebackProcessor>.Instance);
-
         return new WritebackWorker(Log, provider.GetRequiredService<IServiceScopeFactory>(), Signal, Target,
-            TargetConnections, processor, Health, Time) {
+            TargetConnections, Health, Time) {
             RetryDelay = TimeSpan.FromMilliseconds(20)
         };
     }

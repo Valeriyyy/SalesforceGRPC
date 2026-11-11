@@ -270,6 +270,10 @@ public sealed class OrgConnectionService : IOrgConnectionService {
                   "did not acknowledge that. Nothing has been destroyed. Review the preview and confirm again.");
         }
 
+        // The Target Connection goes with the rest, so Writeback is taken down in its database first, while it can
+        // still be reached; otherwise its replication slot keeps changes forever for a reader that is gone.
+        await _targetConnections.DisarmWritebackAsync(cancellationToken).ConfigureAwait(false);
+
         var destroyed = await _repository.DeleteConnectionAndOrgScopedStateAsync(cancellationToken).ConfigureAwait(false);
 
         _provider.Invalidate();
