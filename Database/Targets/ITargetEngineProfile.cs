@@ -1,5 +1,6 @@
 using Database.Models;
 using Database.Repositories.Interfaces;
+using Database.Writeback;
 
 namespace Database.Targets;
 
@@ -35,4 +36,10 @@ public interface ITargetEngineProfile {
     string BuildConnectionString(TargetConnectionDetails details);
 
     IRepository CreateRepository(string connectionString);
+
+    /// <summary>
+    /// Writeback for this engine, or null when the engine does not support it yet. Two-way is offered only
+    /// where this is set.
+    /// </summary>
+    IWritebackCapability? Writeback { get; }
 }

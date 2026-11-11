@@ -1,3 +1,4 @@
+using Application.Writeback;
 using Application.Bindings;
 using DTO;
 
@@ -123,6 +124,29 @@ public interface IBindingService {
 
     /// <summary>What the worker should subscribe to and which Bindings it should apply.</summary>
     Task<SubscriptionPlan> GetSubscriptionPlanAsync(CancellationToken cancellationToken = default);
+
+    #endregion
+
+    #region Writeback
+
+    /// <summary>
+    /// Which Two-way Bindings the Writeback worker should write back, each re-validated first. A Binding that no
+    /// longer meets Writeback's requirements is forced back to Incomplete and left out.
+    /// </summary>
+    Task<WritebackPlan> GetWritebackPlanAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// What the Binding editor needs to offer Two-way: whether it can be chosen, the Writeback Key choices, each
+    /// field's effective Field Direction, the required Salesforce fields, and whatever stands in the way.
+    /// </summary>
+    Task<WritebackSetupDTO> GetWritebackSetupAsync(int bindingId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets a Binding's Sync Direction. Two-way is checked first, and refused with every reason at once
+    /// (<see cref="WritebackRefusedException"/>); Inbound keeps the Field Directions, Writeback Key and Writeback
+    /// Defaults so switching back restores them.
+    /// </summary>
+    Task<BindingDTO> SetSyncDirectionAsync(int bindingId, SetSyncDirectionDTO dto, CancellationToken cancellationToken = default);
 
     #endregion
 }

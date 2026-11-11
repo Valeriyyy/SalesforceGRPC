@@ -1,5 +1,6 @@
 using Database.Models;
 using Database.Repositories.Interfaces;
+using Database.Writeback;
 using Microsoft.Extensions.Logging;
 
 namespace Database.Targets;
@@ -72,4 +73,6 @@ public abstract class TargetEngineProfile : ITargetEngineProfile {
 
     public abstract string BuildConnectionString(TargetConnectionDetails details);
     public abstract IRepository CreateRepository(string connectionString);
+
+    public virtual IWritebackCapability? Writeback => null;
 }

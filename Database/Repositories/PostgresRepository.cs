@@ -7,7 +7,26 @@ using Npgsql;
 namespace Database.Repositories;
 
 public class PostgresRepository : RepositoryBase {
-    public PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery) : base(logger, connectionString, debugQuery) { }
+    private readonly NpgsqlDataSource _dataSource;
+
+    public PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery)
+        : this(logger, connectionString, debugQuery, connectionInitializer: null) { }
+
+    /// <param name="connectionInitializer">
+    /// Run once on every physical connection this repository opens, before its first use. Writeback tags every
+    /// write this way (<see cref="Writeback.PostgresWriteback"/>).
+    /// </param>
+    protected PostgresRepository(ILogger<RepositoryBase> logger, string connectionString, bool debugQuery,
+        Func<NpgsqlConnection, Task>? connectionInitializer) : base(logger, connectionString, debugQuery) {
+        var builder = new NpgsqlDataSourceBuilder(connectionString);
+        if (connectionInitializer is not null) {
+            builder.UsePhysicalConnectionInitializer(
+                connection => connectionInitializer(connection).GetAwaiter().GetResult(), connectionInitializer);
+        }
+        _dataSource = builder.Build();
+    }
+
+    private NpgsqlConnection CreateConnection() => _dataSource.CreateConnection();
 
     public override TargetDatabaseEngine Engine => TargetDatabaseEngine.Postgres;
 
@@ -27,7 +46,7 @@ public class PostgresRepository : RepositoryBase {
             _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "UPSERT", sql, data);
         }
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
         return await connection.ExecuteAsync(new CommandDefinition(sql, data, cancellationToken: cancellationToken))
             .ConfigureAwait(false);
     }
@@ -43,7 +62,7 @@ public class PostgresRepository : RepositoryBase {
         var parameters = new DynamicParameters(data);
         parameters.Add("RecordIds", recordIds.ToArray());
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
         var resultCount = await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
 
         return resultCount;
@@ -59,7 +78,7 @@ public class PostgresRepository : RepositoryBase {
         var parameters = new DynamicParameters();
         parameters.Add("RecordIds", recordIds.ToArray());
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
         return await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
     }
 
@@ -84,8 +103,47 @@ public class PostgresRepository : RepositoryBase {
         parameters.Add("RecordIds", recordIds.ToArray());
         parameters.Add("Deleted", deleted);
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
         return await connection.ExecuteAsync(sql, parameters).ConfigureAwait(false);
+    }
+    public override async Task<int> UpdateByKey(string table, string keyColumn, object keyValue,
+        Dictionary<string, object?> data, CancellationToken cancellationToken = default) {
+        var setClause = string.Join(", ", data.Keys.Select((k, i) => $"{k} = @p{i}"));
+        var sql = $"UPDATE {table} SET {setClause} WHERE {keyColumn} = @KeyValue";
+        if (_debugQuery) {
+            _logger.LogInformation("QueryType: {QueryType}, SQL: {SQL}, Values: {@Values}", "UPDATE BY KEY", sql, data);
+        }
+
+        var parameters = new DynamicParameters();
+        foreach (var (value, i) in data.Values.Select((v, i) => (v, i))) {
+            parameters.Add($"p{i}", value);
+        }
+        parameters.Add("KeyValue", keyValue);
+
+        await using var connection = CreateConnection();
+        return await connection.ExecuteAsync(new CommandDefinition(sql, parameters, cancellationToken: cancellationToken))
+            .ConfigureAwait(false);
+    }
+
+    public override async Task<IReadOnlyDictionary<string, object?>?> GetRowByKey(string table, string keyColumn,
+        string keyValue, CancellationToken cancellationToken = default) {
+        // Compared as text: a Writeback Failure stores the key in its text form, whatever the column's type.
+        var sql = $"SELECT * FROM {table} WHERE {keyColumn}::text = @KeyValue LIMIT 1";
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("KeyValue", keyValue);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+            return null;
+        }
+
+        var row = new Dictionary<string, object?>(StringComparer.Ordinal);
+        for (var i = 0; i < reader.FieldCount; i++) {
+            row[reader.GetName(i)] = await reader.IsDBNullAsync(i, cancellationToken).ConfigureAwait(false) ? null : reader.GetValue(i);
+        }
+        return row;
     }
     #endregion
     
@@ -97,7 +155,7 @@ public class PostgresRepository : RepositoryBase {
     public override async Task<TableMetadata?> GetTableMetadata(string tableName, string? schemaName = null, CancellationToken cancellationToken = default) {
         schemaName ??= DefaultSchema;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         var columns = await GetTableColumns(connection, schemaName, tableName, cancellationToken).ConfigureAwait(false);
@@ -121,7 +179,7 @@ public class PostgresRepository : RepositoryBase {
     public override async Task<List<TableMetadata>> GetSchemaMetadata(string? schemaName = null, CancellationToken cancellationToken = default) {
         schemaName ??= DefaultSchema;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
 
         const string sql = @"
             SELECT table_name
@@ -148,7 +206,7 @@ public class PostgresRepository : RepositoryBase {
     /// pg_toast and pg_temp families.
     /// </summary>
     public override async Task<List<string?>> GetSchemaNames(CancellationToken cancellationToken = default) {
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
 
         const string sql = @"
             SELECT DISTINCT table_schema
@@ -177,8 +235,15 @@ public class PostgresRepository : RepositoryBase {
                 character_maximum_length as MaxLength,
                 numeric_precision as NumericPrecision,
                 numeric_scale as NumericScale,
-                (is_generated = 'ALWAYS' OR coalesce(identity_generation = 'ALWAYS', false)) as IsGenerated
-            FROM information_schema.columns
+                (is_generated = 'ALWAYS' OR coalesce(identity_generation = 'ALWAYS', false)) as IsGenerated,
+                (data_type = 'USER-DEFINED' OR EXISTS (
+                    SELECT 1 FROM pg_constraint con
+                    JOIN pg_class rel ON rel.oid = con.conrelid
+                    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                    JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
+                    WHERE con.contype = 'c' AND nsp.nspname = c.table_schema AND rel.relname = c.table_name
+                    AND att.attname = c.column_name)) as IsCheckConstrained
+            FROM information_schema.columns c
             WHERE table_schema = @SchemaName
             AND table_name = @TableName
             ORDER BY ordinal_position";
@@ -279,7 +344,7 @@ public class PostgresRepository : RepositoryBase {
     public override async Task<List<ConstraintMetadata>> GetForeignKeys(string tableName, string? schemaName = null) {
         schemaName ??= DefaultSchema;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
+        await using var connection = CreateConnection();
 
         const string sql = @"
             SELECT 

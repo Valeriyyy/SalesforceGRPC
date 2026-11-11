@@ -63,6 +63,7 @@ public class BindingServiceTests {
 
     private BindingService NewService() =>
         new(_meta, _avro, _targetConnections, _engines, _channels, _entitySchemas, _signal, _connections, _checkpoints,
+            Substitute.For<Salesforce.Writeback.ISObjectDescriber>(), Substitute.For<IWritebackFailureRepository>(),
             _time, NullLogger<BindingService>.Instance);
 
     #region Arrangement
@@ -1120,6 +1121,21 @@ public class BindingServiceTests {
         var table = AccountTable();
         // A DBA dropped the constraint after the Binding was activated.
         table.Columns.Single(c => c.ColumnName == "sf_id").ColumnConstraints.Clear();
+        _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
+
+        var plan = await NewService().GetSubscriptionPlanAsync(Ct);
+
+        Assert.Empty(plan.ActiveBindingsBySchemaId);
+        await _meta.Received(1).ForceBindingIncomplete(BindingId, Arg.Any<DateTime>());
+    }
+
+    [Fact]
+    public async Task GetSubscriptionPlan_DemotesAnActiveBindingThatWritesAFieldIntoAColumnTheDatabaseGenerates() {
+        ArrangeValidBinding(BindingState.Active);
+        ArrangePrimaryChannel(Binding(BindingState.Active));
+        var table = AccountTable();
+        // phone became a generated column after the Binding was activated; every write of it would now fail.
+        table.Columns.Single(c => c.ColumnName == "phone").IsGenerated = true;
         _target.GetTableMetadata("account", "salesforce", Arg.Any<CancellationToken>()).Returns(table);
 
         var plan = await NewService().GetSubscriptionPlanAsync(Ct);

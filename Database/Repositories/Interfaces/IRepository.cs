@@ -39,6 +39,20 @@ public interface IRepository {
     /// restored from a change event, which carries no field values for the record.
     /// </remarks>
     Task<int> UnDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds);
+
+    /// <summary>
+    /// Writes values into the row whose <paramref name="keyColumn"/> holds <paramref name="keyValue"/>, given
+    /// as the column's own type. Writeback uses it to store a new Salesforce record ID in the row that created it.
+    /// </summary>
+    Task<int> UpdateByKey(string table, string keyColumn, object keyValue, Dictionary<string, object?> data,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads the row whose <paramref name="keyColumn"/> holds <paramref name="keyValue"/>, compared in its text
+    /// form, or null when there is none. Retrying a Writeback Failure re-reads the row this way.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, object?>?> GetRowByKey(string table, string keyColumn, string keyValue,
+        CancellationToken cancellationToken = default);
     #endregion
 
     #region Meta Queries

@@ -25,6 +25,7 @@ public static class BindingMapper {
         SoftDeleteEnabled = binding.SoftDeleteEnabled,
         SoftDeleteColumnName = binding.SoftDeleteColumnName,
         AvroSchemaId = binding.SchemaId,
+        SyncDirection = binding.SyncDirection.ToString(),
         ChannelMemberIds = channelMemberIds.ToList()
     };
 

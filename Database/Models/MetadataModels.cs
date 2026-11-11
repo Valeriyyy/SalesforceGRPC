@@ -73,6 +73,12 @@ public class ColumnMetadata {
     /// </summary>
     public bool IsGenerated { get; set; }
 
+    /// <summary>
+    /// True when the database limits the column to a set of values: a CHECK constraint names it, or its type is
+    /// an enum. Writeback lets such a column feed a restricted Salesforce picklist.
+    /// </summary>
+    public bool IsCheckConstrained { get; set; }
+
     /// <summary>True when a PRIMARY KEY constraint covers this column.</summary>
     public bool IsPrimaryKey => ColumnConstraints.Any(c =>
         c.ConstraintType.Contains("PRIMARY", StringComparison.OrdinalIgnoreCase));
