@@ -16,6 +16,7 @@ namespace StarPush.Tests;
 /// the publication and slot Writeback uses, which are named the same in every database. The tests in this class
 /// run one after another, as they share that slot.
 /// </remarks>
+[Collection(PostgresTargetDatabase.Name)]
 public class PostgresWritebackTests {
     private const string Variable = "STARPUSH_TEST_TARGET_DATABASE";
 
@@ -26,7 +27,13 @@ public class PostgresWritebackTests {
         public required WritebackTable Table { get; init; }
         public required PostgresWriteback Writeback { get; init; }
         public WritebackEndpoints Endpoints => new(ConnectionString, ConnectionString);
-        public string QualifiedName => $"public.{Table.Table}";
+        public string QualifiedName => $"{Schema}.{Table.Table}";
+
+        /// <summary>
+        /// A schema of their own, so the tables these tests create and drop never race other tests that list
+        /// <c>public</c> against the same database.
+        /// </summary>
+        public const string Schema = "writeback_test";
 
         public static async Task<Scratch> CreateAsync() {
             var connectionString = Environment.GetEnvironmentVariable(Variable);
@@ -38,9 +45,10 @@ public class PostgresWritebackTests {
             Assert.SkipWhen(version < 160000 || walLevel != "logical",
                 $"Writeback needs Postgres 16+ with wal_level = logical; {Variable} has version {version} and wal_level '{walLevel}'.");
 
-            var table = new WritebackTable("public", $"writeback_test_{Guid.NewGuid():N}"[..30]);
+            var table = new WritebackTable(Schema, $"writeback_test_{Guid.NewGuid():N}"[..30]);
+            await connection.ExecuteAsync($"CREATE SCHEMA IF NOT EXISTS {Schema}");
             await connection.ExecuteAsync(
-                $"CREATE TABLE public.{table.Table} (id int PRIMARY KEY, sf_id varchar(18) UNIQUE, phone varchar(40))");
+                $"CREATE TABLE {Schema}.{table.Table} (id int PRIMARY KEY, sf_id varchar(18) UNIQUE, phone varchar(40))");
 
             return new Scratch {
                 ConnectionString = connectionString!,
@@ -163,3 +171,13 @@ public class PostgresWritebackTests {
         Assert.Empty(await scratch.Writeback.CheckPrerequisitesAsync(scratch.Endpoints, [scratch.Table], Ct));
     }
 }
+
+/// <summary>
+/// Tests that create, drop or list tables in the Postgres test database run one class at a time, so one never
+/// lists a table another is about to drop.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class PostgresTargetDatabase {
+    public const string Name = "Postgres target database";
+}
+

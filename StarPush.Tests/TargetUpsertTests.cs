@@ -19,6 +19,7 @@ namespace StarPush.Tests;
 /// unconditionally against a temporary file. The other engines read the same environment variables as the
 /// <c>*MetadataRepositoryTests</c> classes and skip when theirs is unset.
 /// </remarks>
+[Collection(PostgresTargetDatabase.Name)]
 public class TargetUpsertTests {
     public static TheoryData<TargetDatabaseEngine> Engines => [
         TargetDatabaseEngine.Postgres, TargetDatabaseEngine.SqlServer, TargetDatabaseEngine.MySql, TargetDatabaseEngine.Sqlite

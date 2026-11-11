@@ -13,6 +13,7 @@ namespace StarPush.Tests;
 /// target database no longer lives in appsettings.json — and every test skips when it is unset. A failure here
 /// says something about the database that was reachable, not about the code under test.
 /// </remarks>
+[Collection(PostgresTargetDatabase.Name)]
 public class PostgresMetadataRepositoryTests {
     private const string ConnectionStringVariable = "STARPUSH_TEST_TARGET_DATABASE";
 
