@@ -242,6 +242,20 @@ export interface TargetConnectionDetailsView {
     hasPassword: boolean;
     lastConnectedAt: string | null;
     lastError: TargetDatabaseErrorView | null;
+    /** Null until a Replication Credential is entered. */
+    replication: ReplicationCredentialView | null;
+    /** True while this application has the database set up for Writeback. */
+    writebackArmed: boolean;
+}
+
+/** The second login Writeback reads changes with. Its password is never shown. */
+export interface ReplicationCredentialView {
+    username: string;
+    /** "Incomplete" (never proved), "Connected" or "Failed". */
+    state: string;
+    lastProvedAt: string | null;
+    lastError: string | null;
+    lastErrorAt: string | null;
 }
 
 export interface TargetDatabaseErrorView {
@@ -254,6 +268,8 @@ export interface EngineView {
     engine: string;
     isAvailable: boolean;
     unavailableReason: string | null;
+    /** Whether a Binding on this engine can be Two-way. */
+    supportsWriteback: boolean;
     fields: FieldView[];
 }
 
@@ -298,6 +314,8 @@ export interface BindingRowView {
     fieldCount: number | null;
     state: BindingRowState;
     href: string;
+    twoWay: boolean;
+    writebackFailureCount: number;
 }
 
 export interface NewBindingView {
@@ -342,6 +360,12 @@ export interface BindingEditorView {
     /** Null, with targetError set, when the Target Database could not be read. */
     target: BindingTargetView | null;
     targetError: TargetDatabaseErrorView | null;
+    /** "Inbound" or "TwoWay", as stored. */
+    syncDirection: SyncDirection;
+    /** Null, with writebackError set, when Salesforce or the database could not be read for it. */
+    writeback: WritebackSetup | null;
+    writebackError: string | null;
+    writebackFailures: WritebackFailure[];
 }
 
 export interface BindingTargetView {
@@ -405,3 +429,86 @@ export interface BindingValidation {
     results: CompatibilityResult[];
     validatedAgainstSchemaId: string | null;
 }
+
+// Writeback (DTO/WritebackDTOs.cs).
+
+export type SyncDirection = "Inbound" | "TwoWay";
+export type FieldDirection = "TwoWay" | "InboundOnly" | "WritebackOnly";
+
+/** Also the answer of GET api/Bindings/{id}/writeback. */
+export interface WritebackSetup {
+    bindingId: number;
+    syncDirection: SyncDirection;
+    /** False when Two-way cannot be chosen at all: the engine does not support it, or the server is too old. */
+    canBeTwoWay: boolean;
+    unavailableReason: string | null;
+    writebackKeyColumn: string | null;
+    writebackKeySalesforceField: string | null;
+    keyColumnCandidates: string[];
+    externalIdFields: string[];
+    fields: WritebackField[];
+    requiredFields: WritebackRequiredField[];
+    /** What refuses Two-way as the Binding is now configured. */
+    issues: WritebackIssue[];
+    warnings: string[];
+    failureCount: number;
+}
+
+export interface WritebackField {
+    salesforceFieldName: string;
+    targetColumnName: string;
+    /** The field as the REST API names it (FirstName for NameFirstName); null when Salesforce does not report it. */
+    restFieldName: string | null;
+    /** The direction in effect. */
+    direction: FieldDirection;
+    /** The user's own choice, kept while a forced direction outranks it. */
+    chosenDirection: FieldDirection;
+    forced: boolean;
+    reason: string | null;
+}
+
+export interface WritebackRequiredField {
+    salesforceFieldName: string;
+    label: string | null;
+    type: string;
+    suppliedByMapping: boolean;
+    defaultValue: string | null;
+    allowedValues: string[];
+}
+
+export interface WritebackIssue {
+    message: string;
+    /** The SQL that fixes a database prerequisite, for a DBA to run. */
+    sql: string | null;
+}
+
+/** The body of PUT api/Bindings/{id}/sync-direction. */
+export interface SetSyncDirection {
+    syncDirection: SyncDirection;
+    writebackKeyColumn: string | null;
+    writebackKeySalesforceField: string | null;
+    fieldDirections: { salesforceFieldName: string; direction: FieldDirection }[];
+    writebackDefaults: { salesforceFieldName: string; value: string }[];
+}
+
+export interface WritebackFailure {
+    id: number;
+    bindingId: number;
+    writebackKeyValue: string | null;
+    salesforceId: string | null;
+    operation: "Create" | "Update";
+    statusCodes: string;
+    message: string;
+    /** The field values sent, as JSON. */
+    valuesSent: string;
+    firstFailedAt: string;
+    lastFailedAt: string;
+    attempts: number;
+}
+
+/** The answer of POST api/Bindings/writeback-failures/{id}/retry. */
+export interface WritebackRetry {
+    outcome: "Succeeded" | "Failed" | "Discarded";
+    message: string | null;
+}
+

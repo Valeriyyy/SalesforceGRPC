@@ -7,6 +7,7 @@
     import { postJson, putJson, type ApiFailure } from "../../lib/api/client";
     import type { TargetConnectionView } from "../../lib/types/views";
     import EngineForm from "./EngineForm.svelte";
+    import ReplicationCredential from "./ReplicationCredential.svelte";
     import RepointDialog from "./RepointDialog.svelte";
     import Summary from "./Summary.svelte";
     import type { SaveTargetConnection, TargetConnectionResult } from "./engines";
@@ -109,6 +110,10 @@
     {:else if mode === "viewing" || blocked}
         <Summary {page} connection={page.connection} canEdit={!blocked} pending={pending === "verify"} error={failureOf("verify")}
             onverify={verify} onedit={() => setMode("editing")} />
+
+        {#if page.engines.find(e => e.engine === page.connection?.engine)?.supportsWriteback}
+            <ReplicationCredential connection={page.connection} disabled={blocked} />
+        {/if}
 
         {#if page.identityLocked && !blocked}
             <section class="card mt-10 border border-error-500/50 p-5">

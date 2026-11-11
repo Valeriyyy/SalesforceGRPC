@@ -1,4 +1,5 @@
 using Application.Pipeline;
+using Application.Writeback;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using Microsoft.Extensions.Time.Testing;
@@ -24,13 +25,15 @@ public class PipelineStatusServiceTests {
     private readonly ITargetConnectionRepository _target = Substitute.For<ITargetConnectionRepository>();
     private readonly IMetaRepository _meta = Substitute.For<IMetaRepository>();
     private readonly FakeTimeProvider _time = new(Now);
+    private readonly IWritebackFailureRepository _failures = Substitute.For<IWritebackFailureRepository>();
+    private readonly WritebackHealth _writeback = new();
 
     public PipelineStatusServiceTests() {
         _meta.CountBindingsByStateAsync(Arg.Any<CancellationToken>()).Returns(new BindingStateCounts());
     }
 
     private Task<PipelineStatus> Status() =>
-        new PipelineStatusService(_org, _channels, _checkpoints, _target, _meta, _time).GetAsync(Ct);
+        new PipelineStatusService(_org, _channels, _checkpoints, _target, _meta, _failures, _writeback, _time).GetAsync(Ct);
 
     #region Arrange
 
@@ -307,6 +310,46 @@ public class PipelineStatusServiceTests {
 
         Assert.Equal(StageStatus.NeedsAttention, status.Bindings.Status);
         Assert.Equal([StageReason.BindingForcedIncomplete], status.Bindings.Reasons);
+    }
+
+    [Fact]
+    public async Task OpenWritebackFailures_NeedAttention_AndAreCounted() {
+        WithEverythingOk();
+        WithBindings(active: 2);
+        _failures.CountAsync(Arg.Any<CancellationToken>()).Returns(3);
+
+        var status = await Status();
+
+        Assert.Equal(StageStatus.NeedsAttention, status.Bindings.Status);
+        Assert.Equal([StageReason.WritebackFailuresOpen], status.Bindings.Reasons);
+        Assert.Equal(3, status.Bindings.WritebackFailures);
+    }
+
+    [Fact]
+    public async Task AWritebackReaderFarBehindTheDatabase_NeedsAttention_BecauseTheServerIsKeepingChangesForIt() {
+        WithEverythingOk();
+        WithBindings(active: 2);
+        _writeback.Set(WritebackRunState.Running);
+        _writeback.Lag(WritebackHealth.LagAttentionBytes + 1);
+
+        var status = await Status();
+
+        Assert.Equal(StageStatus.NeedsAttention, status.Bindings.Status);
+        Assert.Equal([StageReason.WritebackLagging], status.Bindings.Reasons);
+        Assert.Equal(WritebackHealth.LagAttentionBytes + 1, status.Bindings.WritebackLagBytes);
+    }
+
+    [Fact]
+    public async Task WritebackThatCannotRun_NeedsAttention_AndSaysWhy() {
+        WithEverythingOk();
+        WithBindings(active: 2);
+        _writeback.Set(WritebackRunState.Blocked, "The Replication Credential is missing.");
+
+        var status = await Status();
+
+        Assert.Equal(StageStatus.NeedsAttention, status.Bindings.Status);
+        Assert.Equal([StageReason.WritebackBlocked], status.Bindings.Reasons);
+        Assert.Equal("The Replication Credential is missing.", status.Bindings.WritebackBlockedReason);
     }
 
     [Fact]

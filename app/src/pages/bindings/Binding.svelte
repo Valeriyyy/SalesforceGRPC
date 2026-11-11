@@ -3,13 +3,15 @@
      waits while the draft is unsaved so a reload never loses it. -->
 <script lang="ts">
     import { untrack } from "svelte";
-    import { ArrowLeft, ArrowRight, Check, CircleAlert, KeyRound, Power, Sparkles, Trash2, TriangleAlert } from "@lucide/svelte";
+    import { ArrowLeft, ArrowLeftRight, ArrowRight, Check, CircleAlert, KeyRound, Power, Sparkles, Trash2, TriangleAlert } from "@lucide/svelte";
     import { deleteJson, postJson, putJson, type ApiFailure, type ApiResult } from "../../lib/api/client";
     import ConfirmDialog from "../../lib/components/ConfirmDialog.svelte";
     import DatabaseError from "../../lib/components/DatabaseError.svelte";
     import SalesforceError from "../../lib/components/SalesforceError.svelte";
     import type { BindingEditorView, BindingValidation, BindingView, CompatibilityResult, FieldMapping } from "../../lib/types/views";
     import FieldMappings from "./FieldMappings.svelte";
+    import SyncDirection from "./SyncDirection.svelte";
+    import WritebackFailures from "./WritebackFailures.svelte";
     import WaitingForSetup from "./WaitingForSetup.svelte";
     import { bindingStates, levelTones, plural } from "./state";
 
@@ -168,6 +170,7 @@
         <div class="min-w-0 space-y-2">
             <h1 class="h3 flex flex-wrap items-center gap-3">{binding.entity} <ArrowRight class="size-5" /> <span class="font-mono">{binding.targetTable}</span></h1>
             <span class={["badge", bindingStates[binding.state].badge]}>{bindingStates[binding.state].label}</span>
+            {#if binding.syncDirection === "TwoWay"}<span class="badge preset-tonal-primary gap-1"><ArrowLeftRight class="size-3" />Two-way</span>{/if}
             {#if binding.state === "needsAttention"}
                 <p class="max-w-2xl text-sm text-error-700-300">
                     This Binding was Active and stopped validating, so it was set back to Incomplete and {binding.entity}'s changes are not being synced.
@@ -302,13 +305,38 @@
                 {#if dirty}<p class="text-xs text-warning-700-300">Save or discard Field Mappings first.</p>{/if}
             </section>
 
-            <!-- 5. Validation -->
+            <!-- 5. Sync Direction -->
+            <section class="card space-y-4 border border-surface-200-800 p-6">
+                <div>
+                    <h2 class="h5 mb-1 flex items-center gap-2"><ArrowLeftRight class="size-4" />5 · Sync Direction</h2>
+                    <p class="text-sm text-surface-600-400">Whether changes made in the table itself are written back to Salesforce.</p>
+                </div>
+                {#if binding.writeback}
+                    <SyncDirection bindingId={binding.id} entity={binding.entity} setup={binding.writeback} disabled={locked} />
+                {:else}
+                    <p class="flex gap-2 text-sm text-warning-700-300"><TriangleAlert class="size-4 shrink-0" />{binding.writebackError ?? "The Sync Direction settings could not be read."}</p>
+                {/if}
+                {#if dirty}<p class="text-xs text-warning-700-300">Save or discard Field Mappings first.</p>{/if}
+            </section>
+
+            {#if binding.writebackFailures.length > 0}
+                <section class="card space-y-3 border border-error-500 p-6">
+                    <h2 class="h5">{plural(binding.writebackFailures.length, "change")} Salesforce refused</h2>
+                    <p class="text-sm text-surface-600-400">
+                        These rows didn't reach Salesforce and were skipped, so they don't hold up the changes behind them.
+                        Fix the row in the table and Retry, or Dismiss it.
+                    </p>
+                    <WritebackFailures failures={binding.writebackFailures} disabled={locked} />
+                </section>
+            {/if}
+
+            <!-- 6. Validation -->
             <section class={["card space-y-3 border p-6", validation === null ? "border-surface-200-800" : validation.canActivate ? "border-success-500" : "border-error-500"]}>
                 {#if validation === null}
-                    <h2 class="h5">5 · Ready to activate?</h2>
+                    <h2 class="h5">6 · Ready to activate?</h2>
                     <p class="text-sm text-surface-600-400">Checking your unsaved Field Mappings…</p>
                 {:else}
-                    <h2 class="h5">5 · {validation.canActivate ? "Ready to activate" : "Not ready to activate"}</h2>
+                    <h2 class="h5">6 · {validation.canActivate ? "Ready to activate" : "Not ready to activate"}</h2>
                     {#if dirty}
                         <p class="text-sm text-surface-600-400">With your unsaved Field Mappings:</p>
                     {:else if !validation.canActivate}
