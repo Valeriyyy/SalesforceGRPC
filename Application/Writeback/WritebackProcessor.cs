@@ -50,6 +50,7 @@ public sealed class WritebackProcessor {
         CancellationToken cancellationToken) {
         var writes = new List<PendingWrite>();
         var summary = new WritebackSummary();
+        var deletes = new Dictionary<WritebackBindingPlan, int>();
 
         foreach (var change in transaction.Changes) {
             var binding = plan.BindingFor(change.Table);
@@ -59,9 +60,7 @@ public sealed class WritebackProcessor {
             }
 
             if (change.Kind is RowChangeKind.Delete) {
-                _logger.LogInformation(
-                    "A row was deleted from {Table}; deletes are not written back to Salesforce, so the {Object} record is unchanged",
-                    binding.TableName, binding.SourceObject);
+                deletes[binding] = deletes.GetValueOrDefault(binding) + 1;
                 summary.Skipped++;
                 continue;
             }
@@ -72,6 +71,13 @@ public sealed class WritebackProcessor {
                 continue;
             }
             writes.Add(write);
+        }
+
+        // One line per table, not per row: a bulk delete would otherwise log the same sentence hundreds of times.
+        foreach (var (binding, count) in deletes) {
+            _logger.LogInformation(
+                "{Count} row(s) deleted from {Table}: deletes are not written back to Salesforce, so those {Object} records are unchanged",
+                count, binding.TableName, binding.SourceObject);
         }
 
         foreach (var wave in Waves(writes)) {

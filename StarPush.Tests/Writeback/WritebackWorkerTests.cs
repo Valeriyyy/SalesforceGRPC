@@ -133,6 +133,17 @@ public class WritebackWorkerTests {
     }
 
     [Fact]
+    public async Task ManyRowsDeletedTogether_AreReportedInOneLogLine_NotOnePerRow() {
+        var harness = new WritebackHarness();
+
+        await harness.RunUntilConfirmed(Transaction(
+            Delete(Row(("id", 7))), Delete(Row(("id", 8))), Delete(Row(("id", 9)))));
+
+        var line = Assert.Single(harness.ProcessorLog.Entries, e => e.Message.Contains("deleted"));
+        Assert.StartsWith("3 row(s) deleted from salesforce.account", line.Message);
+    }
+
+    [Fact]
     public async Task ARecordSalesforceRefuses_IsRecordedAsAWritebackFailure_AndThePositionStillMovesOn() {
         var harness = new WritebackHarness();
         harness.Salesforce.UpdateAsync(default!, default!, default).ReturnsForAnyArgs([

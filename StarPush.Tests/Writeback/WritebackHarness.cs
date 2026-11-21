@@ -38,6 +38,7 @@ internal sealed class WritebackHarness {
     public TimeProvider Time { get; } = TimeProvider.System;
     public ITargetConnectionProvider Target { get; }
     public ListLogger<WritebackWorker> Log { get; } = new();
+    public ListLogger<WritebackProcessor> ProcessorLog { get; } = new();
     public WritebackHealth Health { get; } = new();
 
     public static readonly WritebackEndpoints Endpoints = new("Host=db;Username=app", "Host=db;Username=repl");
@@ -97,7 +98,7 @@ internal sealed class WritebackHarness {
     private WritebackWorker Build() {
         var services = new ServiceCollection();
         services.AddSingleton(Bindings);
-        services.AddSingleton(new WritebackProcessor(Salesforce, Failures, Time, NullLogger<WritebackProcessor>.Instance));
+        services.AddSingleton(new WritebackProcessor(Salesforce, Failures, Time, ProcessorLog));
         var provider = services.BuildServiceProvider();
 
         return new WritebackWorker(Log, provider.GetRequiredService<IServiceScopeFactory>(), Signal, Target,
