@@ -28,6 +28,16 @@ public abstract class RepositoryBase : IRepository {
     public abstract Task<int> Upsert(string table, string keyColumn, Dictionary<string, object> data,
         CancellationToken cancellationToken = default);
     public abstract Task<int> Update(string table, string sfFieldMapping, List<string> recordIds, Dictionary<string, object> data);
+
+    /// <remarks>Only an engine that supports Writeback needs it.</remarks>
+    public virtual Task<int> UpdateByKey(string table, string keyColumn, object keyValue, Dictionary<string, object?> data,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"Writeback is not supported for {Engine}.");
+
+    /// <remarks>Only an engine that supports Writeback needs it.</remarks>
+    public virtual Task<IReadOnlyDictionary<string, object?>?> GetRowByKey(string table, string keyColumn, string keyValue,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"Writeback is not supported for {Engine}.");
     public abstract Task<int> Delete(string table, string sfIdColumnName, List<string> recordIds);
     public abstract Task<int> SoftDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds);
     public abstract Task<int> UnDelete(string table, string sfIdColumnName, string softDeleteColumnName, List<string> recordIds);

@@ -293,4 +293,19 @@ public class TypeCompatibilityCheckerTests {
     }
 
     #endregion
+
+    #region Columns the database writes itself
+
+    [Fact]
+    public void AnyField_IntoAColumnTheDatabaseGenerates_IsAnError_BecauseEveryWriteWouldFail() {
+        var column = Column("text");
+        column.IsGenerated = true;
+
+        var result = TypeCompatibilityChecker.Check("Phone", SalesforceFieldType.Phone, column, TargetDatabaseEngine.Postgres);
+
+        Assert.Equal(CompatibilityLevel.Error, result.Level);
+        Assert.Contains("generate", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    #endregion
 }

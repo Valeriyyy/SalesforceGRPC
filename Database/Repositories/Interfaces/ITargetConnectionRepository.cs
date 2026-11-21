@@ -67,6 +67,24 @@ public interface ITargetConnectionRepository {
     /// </remarks>
     Task<(TargetConnection Connection, BindingCounts Destroyed)> RepointAsync(TargetConnection connection,
         DateTime provedAt, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stores a Replication Credential, which says nothing yet about whether it works, so its state goes back
+    /// to Incomplete. A credential edit never Repoints.
+    /// </summary>
+    Task SetReplicationCredentialAsync(string username, string passwordEncrypted, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes the Replication Credential and its outcome.</summary>
+    Task ClearReplicationCredentialAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Records whether the Replication Credential was proved to work, and the reason when not.</summary>
+    Task RecordReplicationOutcomeAsync(ConnectionState state, string? error, DateTime at, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records that this application has set the Target Database up for Writeback (a time) or taken that down
+    /// (null). While set, every write this application makes to it carries its tag.
+    /// </summary>
+    Task SetWritebackArmedAsync(DateTime? at, CancellationToken cancellationToken = default);
 }
 
 /// <summary>What a repoint destroys, so the user can be told before they lose it.</summary>

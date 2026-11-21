@@ -2,6 +2,7 @@ using Application.Connections;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using Database.Targets;
+using Database.Writeback;
 using Microsoft.Extensions.Logging;
 using System.Data.Common;
 
@@ -35,6 +36,19 @@ public interface ITargetConnectionProvider {
     /// <exception cref="NoTargetDatabaseException">Nothing is configured.</exception>
     /// <exception cref="SecretsUnreadableException">The stored password will not decrypt.</exception>
     Task<IRepository> GetRepositoryAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The two logins Writeback uses — the Target Connection's own and the Replication Credential — or null
+    /// when there is no Target Connection or no Replication Credential.
+    /// </summary>
+    Task<WritebackEndpoints?> GetWritebackEndpointsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Takes Writeback down in the current Target Database, so it stops keeping changes for a reader that is
+    /// about to be gone. Best effort: a database that cannot be reached is logged, never thrown, because the
+    /// Repoint or Disconnect calling this must still go ahead.
+    /// </summary>
+    Task DisarmWritebackAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Drops what is held so the next read comes from the database.</summary>
     void Invalidate();
@@ -90,11 +104,55 @@ public sealed class TargetConnectionProvider : ITargetConnectionProvider {
 
             var profile = _engines.For(connection.Engine);
             var connectionString = profile.BuildConnectionString(connection.Decrypt(_protector));
-            loaded.Repository = profile.CreateRepository(connectionString);
+            // While Writeback is armed, every write this application makes carries its tag, so the change
+            // stream never reads the inbound flow's writes back as changes to send to Salesforce (ADR 0007).
+            loaded.Repository = connection.WritebackArmedAt is not null && profile.Writeback is { } writeback
+                ? writeback.CreateTaggedRepository(connectionString)
+                : profile.CreateRepository(connectionString);
             return loaded.Repository;
         } finally {
             _loadLock.Release();
         }
+    }
+
+    public async Task DisarmWritebackAsync(CancellationToken cancellationToken = default) {
+        var connection = (await LoadAsync(cancellationToken).ConfigureAwait(false)).Connection;
+        if (connection?.WritebackArmedAt is null || _engines.For(connection.Engine).Writeback is not { } writeback) {
+            return;
+        }
+
+        try {
+            var endpoints = await GetWritebackEndpointsAsync(cancellationToken).ConfigureAwait(false);
+            if (endpoints is null) {
+                _logger.LogWarning(
+                    "Writeback is armed in {Engine} at {Address} but there is no Replication Credential to take it down with; the database may keep changes until someone drops the slot {Slot}",
+                    connection.Engine, connection.Host ?? connection.FilePath, "starpush_writeback");
+                return;
+            }
+            await writeback.DisarmAsync(endpoints, cancellationToken).ConfigureAwait(false);
+            await _repository.SetWritebackArmedAsync(null, cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            _logger.LogWarning(ex,
+                "Could not take Writeback down in {Engine} at {Address}; the database may keep changes until its replication slot is dropped",
+                connection.Engine, connection.Host ?? connection.FilePath);
+        } finally {
+            Invalidate();
+        }
+    }
+
+    public async Task<WritebackEndpoints?> GetWritebackEndpointsAsync(CancellationToken cancellationToken = default) {
+        var connection = (await LoadAsync(cancellationToken).ConfigureAwait(false)).Connection;
+        if (connection is null || !connection.HasReplicationCredential) {
+            return null;
+        }
+
+        var profile = _engines.For(connection.Engine);
+        var details = connection.Decrypt(_protector);
+        var replication = details with {
+            Username = connection.ReplicationUsername,
+            Password = _protector.Unprotect(connection.ReplicationPasswordEncrypted!)
+        };
+        return new WritebackEndpoints(profile.BuildConnectionString(details), profile.BuildConnectionString(replication));
     }
 
     private async Task<Loaded> LoadAsync(CancellationToken cancellationToken) {

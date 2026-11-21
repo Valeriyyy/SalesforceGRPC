@@ -67,7 +67,9 @@ public sealed record TargetConnectionDetailsView(
     IReadOnlyDictionary<string, string> Options,
     bool HasPassword,
     DateTime? LastConnectedAt,
-    TargetDatabaseErrorView? LastError) {
+    TargetDatabaseErrorView? LastError,
+    ReplicationCredentialView? Replication,
+    bool WritebackArmed) {
 
     public static TargetConnectionDetailsView From(TargetConnectionDTO connection) => new(
         connection.Engine,
@@ -79,8 +81,20 @@ public sealed record TargetConnectionDetailsView(
         connection.Options,
         connection.HasPassword,
         connection.LastConnectedAt,
-        TargetDatabaseErrorView.From(connection.LastError));
+        TargetDatabaseErrorView.From(connection.LastError),
+        connection.Replication is { } replication
+            ? new ReplicationCredentialView(replication.Username, replication.State, replication.LastProvedAt,
+                replication.LastError, replication.LastErrorAt)
+            : null,
+        connection.WritebackArmed);
 }
+
+/// <summary>
+/// The Replication Credential: a second login on the same database that only reads its changes, for Writeback.
+/// Its password is never shown.
+/// </summary>
+public sealed record ReplicationCredentialView(string Username, string State, DateTime? LastProvedAt, string? LastError,
+    DateTime? LastErrorAt);
 
 /// <summary>A Target Database failure: the summary, and the driver's own words.</summary>
 public sealed record TargetDatabaseErrorView(string Message, string RawResponse, DateTime? OccurredAt) {
@@ -90,11 +104,13 @@ public sealed record TargetDatabaseErrorView(string Message, string RawResponse,
 }
 
 /// <summary>One engine card and the form it renders. Unavailable engines are listed with their reason.</summary>
-public sealed record EngineView(string Engine, bool IsAvailable, string? UnavailableReason, IReadOnlyList<FieldView> Fields) {
+public sealed record EngineView(string Engine, bool IsAvailable, string? UnavailableReason, bool SupportsWriteback,
+    IReadOnlyList<FieldView> Fields) {
     public static EngineView From(EngineDefinitionDTO engine) => new(
         engine.Engine,
         engine.IsAvailable,
         engine.UnavailableReason,
+        engine.SupportsWriteback,
         engine.Fields.Select(FieldView.From).ToList());
 }
 

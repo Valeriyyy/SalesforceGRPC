@@ -3,14 +3,20 @@ using Application.Connections;
 using Application.Mappers;
 using Application.Services.Interfaces;
 using Application.Targets;
+using Application.Writeback;
 using Avro;
 using Database.Models;
 using Database.Repositories;
 using Database.Repositories.Interfaces;
 using Database.Targets;
+using Database.Writeback;
 using DTO;
 using Microsoft.Extensions.Logging;
 using Salesforce.Avro;
+using Salesforce.Auth;
+using Salesforce.Clients;
+using Salesforce.Writeback;
+using System.Data.Common;
 using System.ComponentModel.DataAnnotations;
 
 namespace Application.Services;
@@ -33,6 +39,9 @@ public class BindingService : IBindingService {
     private readonly IConfigurationChangeSignal _changeSignal;
     private readonly IOrgConnectionProvider _connections;
     private readonly ICheckpointRepository _checkpoints;
+    private readonly ISObjectDescriber _describer;
+    private readonly IWritebackFailureRepository _failures;
+    private readonly WritebackProcessor _writeback;
     private readonly TimeProvider _time;
     private readonly ILogger<BindingService> _logger;
 
@@ -46,6 +55,9 @@ public class BindingService : IBindingService {
         IConfigurationChangeSignal changeSignal,
         IOrgConnectionProvider connections,
         ICheckpointRepository checkpoints,
+        ISObjectDescriber describer,
+        IWritebackFailureRepository failures,
+        WritebackProcessor writeback,
         TimeProvider time,
         ILogger<BindingService> logger) {
         _meta = meta;
@@ -57,6 +69,9 @@ public class BindingService : IBindingService {
         _changeSignal = changeSignal;
         _connections = connections;
         _checkpoints = checkpoints;
+        _describer = describer;
+        _failures = failures;
+        _writeback = writeback;
         _time = time;
         _logger = logger;
     }
@@ -284,11 +299,17 @@ public class BindingService : IBindingService {
             }
         }
 
+        // Each field keeps its Field Direction. A new mapping in a Two-way Binding onto a column the database
+        // generates starts Writeback only, so the inbound flow never writes into it.
+        var directions = existing.ToDictionary(m => m.SalesforceFieldName, m => m.FieldDirection, StringComparer.OrdinalIgnoreCase);
         var replacement = dto.Mappings
             .Select(m => new MappedField {
                 SchemaId = bindingId,
                 SalesforceFieldName = m.SalesforceFieldName,
-                TargetFieldName = m.TargetColumnName
+                TargetFieldName = m.TargetColumnName,
+                FieldDirection = directions.TryGetValue(m.SalesforceFieldName, out var kept) ? kept
+                    : binding.IsTwoWay && columns[m.TargetColumnName].IsGenerated ? FieldDirection.WritebackOnly
+                    : FieldDirection.TwoWay
             })
             .ToList();
 
@@ -619,7 +640,7 @@ public class BindingService : IBindingService {
             }
 
             if (targetState is ConnectionState.Connected &&
-                await DemoteIfKeyMappingIsNotUnique(binding, cancellationToken).ConfigureAwait(false)) {
+                await DemoteIfInboundColumnsAreUnwritable(binding, cancellationToken).ConfigureAwait(false)) {
                 continue;
             }
             active[schemaId] = binding;
@@ -644,44 +665,652 @@ public class BindingService : IBindingService {
     }
 
     /// <summary>
-    /// Sets an Active Binding back to Incomplete when its Key Mapping column has lost its unique constraint.
+    /// Sets an Active Binding back to Incomplete when the columns the inbound flow writes can no longer take it:
+    /// its Key Mapping column has lost its unique constraint, or a field is mapped onto a column the database
+    /// generates.
     /// </summary>
     /// <remarks>
     /// Delivery is at-least-once (ADR 0005), so a repeated CREATE has to land on the row it already wrote,
     /// and only a unique key lets it. Without one, the repeat fails the write and replays the same batch
-    /// forever. The column may have lost its constraint after activation (a DBA dropped it), or the Binding
-    /// may date from before the constraint was required. A table that cannot be read is not proof of
-    /// anything, so the Binding is kept and the worker's own failure handling takes over.
+    /// forever. A generated column refuses every write the same way. The column may have changed after
+    /// activation (a DBA dropped the constraint, or made the column generated), or the Binding may date from
+    /// before the rule existed. A table that cannot be read is not proof of anything, so the Binding is kept and
+    /// the worker's own failure handling takes over.
     /// </remarks>
-    private async Task<bool> DemoteIfKeyMappingIsNotUnique(CDCSchema binding, CancellationToken cancellationToken) {
-        ColumnMetadata? keyColumn;
+    private async Task<bool> DemoteIfInboundColumnsAreUnwritable(CDCSchema binding, CancellationToken cancellationToken) {
+        List<MappedField> mappings;
+        TableMetadata? table;
         try {
-            var keyMapping = (await ReadMappings(binding.Id).ConfigureAwait(false))
-                .FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
-            if (keyMapping is null) {
-                return false;
-            }
-
-            var table = await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false);
-            keyColumn = table?.Columns.FirstOrDefault(c =>
-                string.Equals(c.ColumnName, keyMapping.TargetFieldName, StringComparison.OrdinalIgnoreCase));
+            mappings = await ReadMappings(binding.Id).ConfigureAwait(false);
+            table = await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
-            _logger.LogWarning(ex, "Could not read the Key Mapping column of Binding {BindingId} ({Table}); keeping it Active",
+            _logger.LogWarning(ex, "Could not read the Target Table of Binding {BindingId} ({Table}); keeping it Active",
                 binding.Id, binding.DbSchemaFullName);
             return false;
         }
 
-        if (keyColumn is null || keyColumn.IsUnique) {
+        if (table is null) {
             return false;
         }
 
-        await ForceIncomplete(binding).ConfigureAwait(false);
-        _logger.LogWarning(
-            "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because its Key Mapping column {Column} " +
-            "has no unique constraint. Change events can arrive more than once, and a repeated CREATE needs a unique " +
-            "key to land on the row it already wrote. Add a unique constraint or primary key to {Column}, then activate it again.",
-            binding.Id, binding.EntityName, binding.DbSchemaFullName, keyColumn.ColumnName, keyColumn.ColumnName);
-        return true;
+        var columns = table.Columns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
+        var keyMapping = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
+
+        if (keyMapping is not null && columns.TryGetValue(keyMapping.TargetFieldName, out var keyColumn) && !keyColumn.IsUnique) {
+            await ForceIncomplete(binding).ConfigureAwait(false);
+            _logger.LogWarning(
+                "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because its Key Mapping column {Column} " +
+                "has no unique constraint. Change events can arrive more than once, and a repeated CREATE needs a unique " +
+                "key to land on the row it already wrote. Add a unique constraint or primary key to {Column}, then activate it again.",
+                binding.Id, binding.EntityName, binding.DbSchemaFullName, keyColumn.ColumnName, keyColumn.ColumnName);
+            return true;
+        }
+
+        var generated = mappings
+            .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
+            .Where(m => !binding.IsTwoWay || m.FieldDirection.CarriesInbound())
+            .FirstOrDefault(m => columns.TryGetValue(m.TargetFieldName, out var column) && column.IsGenerated);
+        if (generated is not null) {
+            await ForceIncomplete(binding).ConfigureAwait(false);
+            _logger.LogWarning(
+                "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because {Field} is mapped onto {Column}, " +
+                "which the database generates and refuses to be written. Map the field to another column, then activate it again.",
+                binding.Id, binding.EntityName, binding.DbSchemaFullName, generated.SalesforceFieldName, generated.TargetFieldName);
+            return true;
+        }
+
+        return false;
+    }
+
+    #endregion
+
+    #region Writeback
+
+    public async Task<WritebackSetupDTO> GetWritebackSetupAsync(int bindingId, CancellationToken cancellationToken = default) {
+        var binding = await RequireBinding(bindingId).ConfigureAwait(false);
+        var mappings = await ReadMappings(bindingId).ConfigureAwait(false);
+        var defaults = await _meta.GetWritebackDefaults(bindingId).ConfigureAwait(false);
+
+        var assessment = await AssessWriteback(binding, mappings, WritebackSettings.Stored(binding, mappings, defaults),
+            includeEnvironment: true, cancellationToken).ConfigureAwait(false);
+        var failures = await _failures.ListAsync(bindingId, cancellationToken).ConfigureAwait(false);
+
+        var issues = assessment.Issues.ToList();
+        if (assessment.CheckUnavailable is { } unavailable) {
+            issues.Add(new WritebackIssueDTO { Message = $"Writeback could not be checked just now: {unavailable}" });
+        }
+
+        return new WritebackSetupDTO {
+            BindingId = binding.Id,
+            SyncDirection = binding.SyncDirection.ToString(),
+            CanBeTwoWay = assessment.UnavailableReason is null,
+            UnavailableReason = assessment.UnavailableReason,
+            WritebackKeyColumn = binding.WritebackKeyColumn,
+            WritebackKeySalesforceField = binding.WritebackKeySalesforceField,
+            KeyColumnCandidates = assessment.KeyColumnCandidates,
+            ExternalIdFields = assessment.ExternalIdFields,
+            Fields = assessment.Fields.Select(f => new WritebackFieldDTO {
+                SalesforceFieldName = f.Mapping.SalesforceFieldName,
+                TargetColumnName = f.Mapping.TargetFieldName,
+                RestFieldName = f.SalesforceField?.Name,
+                Direction = f.Effective.ToString(),
+                ChosenDirection = f.Chosen.ToString(),
+                Forced = f.Forced,
+                Reason = f.Reason
+            }).ToList(),
+            RequiredFields = assessment.RequiredFields,
+            Issues = issues,
+            Warnings = assessment.Warnings,
+            FailureCount = failures.Count
+        };
+    }
+
+    public async Task<BindingDTO> SetSyncDirectionAsync(int bindingId, SetSyncDirectionDTO dto,
+        CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        if (!Enum.TryParse<SyncDirection>(dto.SyncDirection, ignoreCase: true, out var direction) || !Enum.IsDefined(direction)) {
+            throw new ValidationException(
+                $"'{dto.SyncDirection}' is not a Sync Direction. Choose {nameof(SyncDirection.Inbound)} or {nameof(SyncDirection.TwoWay)}.");
+        }
+
+        var binding = await RequireBinding(bindingId).ConfigureAwait(false);
+        var mappings = await ReadMappings(bindingId).ConfigureAwait(false);
+
+        if (direction is SyncDirection.Inbound) {
+            // Field Directions, the Writeback Key and Writeback Defaults are all kept, so switching to Two-way
+            // again restores the same setup.
+            var keyColumn = dto.WritebackKeyColumn ?? binding.WritebackKeyColumn;
+            var keyField = dto.WritebackKeySalesforceField ?? binding.WritebackKeySalesforceField;
+            await _meta.SetWriteback(bindingId, SyncDirection.Inbound, keyColumn, keyField).ConfigureAwait(false);
+            binding.SyncDirection = SyncDirection.Inbound;
+            binding.WritebackKeyColumn = keyColumn;
+            binding.WritebackKeySalesforceField = keyField;
+            _changeSignal.Signal();
+
+            _logger.LogInformation("Binding {BindingId} ({Entity}) is Inbound; Writeback stops for it", bindingId, binding.EntityName);
+            return await ReconcileStateAfterEdit(binding, mappings, cancellationToken).ConfigureAwait(false);
+        }
+
+        var chosen = mappings
+            .Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
+            .ToDictionary(m => m.SalesforceFieldName, m => m.FieldDirection, StringComparer.OrdinalIgnoreCase);
+        foreach (var fieldDirection in dto.FieldDirections) {
+            if (!chosen.ContainsKey(fieldDirection.SalesforceFieldName)) {
+                throw new ValidationException($"'{fieldDirection.SalesforceFieldName}' has no Field Mapping on Binding {bindingId}.");
+            }
+            if (!Enum.TryParse<FieldDirection>(fieldDirection.Direction, ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed)) {
+                throw new ValidationException(
+                    $"'{fieldDirection.Direction}' is not a Field Direction. Choose TwoWay, InboundOnly or WritebackOnly.");
+            }
+            chosen[fieldDirection.SalesforceFieldName] = parsed;
+        }
+
+        var settings = new WritebackSettings(SyncDirection.TwoWay, dto.WritebackKeyColumn, dto.WritebackKeySalesforceField,
+            chosen, dto.WritebackDefaults.ToDictionary(d => d.SalesforceFieldName, d => d.Value, StringComparer.OrdinalIgnoreCase));
+
+        var assessment = await AssessWriteback(binding, mappings, settings, includeEnvironment: true, cancellationToken)
+            .ConfigureAwait(false);
+        if (assessment.CheckUnavailable is { } unavailable) {
+            throw new ValidationException($"Two-way cannot be checked just now, so it was not switched on: {unavailable}");
+        }
+        if (assessment.Issues.Count > 0) {
+            throw new WritebackRefusedException(assessment.Issues);
+        }
+
+        // The user's choice is what is stored, so it comes back once whatever forced a field changes. The one
+        // exception is a column the database generates: stored as Writeback only, so the inbound flow — which
+        // knows nothing of column metadata — leaves it out. Every validation recomputes the forced directions.
+        var generated = assessment.Fields
+            .Where(f => f.Forced && f.Effective is FieldDirection.WritebackOnly)
+            .Select(f => f.Mapping.SalesforceFieldName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var replacement = mappings.Select(m => new MappedField {
+            SchemaId = m.SchemaId,
+            SalesforceFieldName = m.SalesforceFieldName,
+            TargetFieldName = m.TargetFieldName,
+            FieldDirection = generated.Contains(m.SalesforceFieldName)
+                ? FieldDirection.WritebackOnly
+                : chosen.GetValueOrDefault(m.SalesforceFieldName, m.FieldDirection)
+        }).ToList();
+
+        await _meta.ReplaceFieldMappings(bindingId, replacement).ConfigureAwait(false);
+        await _meta.ReplaceWritebackDefaults(bindingId, dto.WritebackDefaults.Select(d => new WritebackDefault {
+            BindingId = bindingId, SalesforceFieldName = d.SalesforceFieldName, Value = d.Value
+        })).ConfigureAwait(false);
+        await _meta.SetWriteback(bindingId, SyncDirection.TwoWay, settings.KeyColumn, settings.KeyField).ConfigureAwait(false);
+
+        binding.SyncDirection = SyncDirection.TwoWay;
+        binding.WritebackKeyColumn = settings.KeyColumn;
+        binding.WritebackKeySalesforceField = settings.KeyField;
+        _changeSignal.Signal();
+
+        _logger.LogInformation("Binding {BindingId} ({Entity} -> {Table}) is Two-way, keyed on {Column} -> {Field}",
+            bindingId, binding.EntityName, binding.DbSchemaFullName, settings.KeyColumn, settings.KeyField);
+
+        return await ReconcileStateAfterEdit(binding, replacement, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<WritebackPlan> GetWritebackPlanAsync(CancellationToken cancellationToken = default) {
+        var connection = await _target.GetAsync(cancellationToken).ConfigureAwait(false);
+        if (connection is null) {
+            return WritebackPlan.Empty;
+        }
+
+        var capability = _engines.For(connection.Engine).Writeback;
+        var endpoints = capability is null ? null : await _target.GetWritebackEndpointsAsync(cancellationToken).ConfigureAwait(false);
+
+        var twoWay = (await _meta.GetCachedSchemas(cancellationToken).ConfigureAwait(false))
+            .Where(b => b.IsActive && b.IsTwoWay)
+            .ToList();
+
+        // Problems of the Target Connection, not of any one Binding: they block Writeback as a whole until
+        // fixed in one place, and demote nothing.
+        string? blocked = capability is null
+            ? $"Writeback is not yet supported for {connection.Engine}."
+            : connection.ConnectionState is not ConnectionState.Connected
+                ? "The Target Connection is not Connected."
+                : endpoints is null || connection.ReplicationState is not ConnectionState.Connected
+                    ? "The Replication Credential is missing or has not been proved. Enter it on the Target Connection page."
+                    : null;
+
+        var plans = new List<WritebackBindingPlan>();
+        foreach (var binding in twoWay) {
+            var mappings = await ReadMappings(binding.Id).ConfigureAwait(false);
+            var defaults = await _meta.GetWritebackDefaults(binding.Id).ConfigureAwait(false);
+
+            WritebackAssessment assessment;
+            try {
+                assessment = await AssessWriteback(binding, mappings, WritebackSettings.Stored(binding, mappings, defaults),
+                    includeEnvironment: blocked is null, cancellationToken).ConfigureAwait(false);
+            } catch (Exception ex) when (ex is not OperationCanceledException) {
+                _logger.LogWarning(ex, "Could not check Two-way Binding {BindingId} ({Table}); leaving it out of Writeback this time",
+                    binding.Id, binding.DbSchemaFullName);
+                continue;
+            }
+
+            if (assessment.CheckUnavailable is { } unavailable) {
+                // A Salesforce or database that cannot be reached is not proof the Binding is broken.
+                _logger.LogWarning("Could not check Two-way Binding {BindingId} ({Table}): {Reason}. It is kept, and left out of Writeback until it can be.",
+                    binding.Id, binding.DbSchemaFullName, unavailable);
+                continue;
+            }
+
+            if (assessment.Issues.Count > 0) {
+                await ForceIncomplete(binding).ConfigureAwait(false);
+                _logger.LogWarning(
+                    "Binding {BindingId} ({Entity} -> {Table}) was set to Incomplete because it no longer meets Writeback's requirements: {Reasons}",
+                    binding.Id, binding.EntityName, binding.DbSchemaFullName, string.Join(" ", assessment.Issues.Select(i => i.Message)));
+                continue;
+            }
+
+            plans.Add(assessment.Plan!);
+        }
+
+        return new WritebackPlan {
+            Bindings = plans,
+            Capability = capability,
+            Endpoints = endpoints,
+            BlockedReason = blocked
+        };
+    }
+
+    public async Task<IReadOnlyList<WritebackFailureDTO>> GetWritebackFailuresAsync(int? bindingId,
+        CancellationToken cancellationToken = default) =>
+        (await _failures.ListAsync(bindingId, cancellationToken).ConfigureAwait(false))
+        .Select(f => f.ToDto())
+        .ToList();
+
+    public async Task<WritebackRetryDTO> RetryWritebackFailureAsync(int failureId, CancellationToken cancellationToken = default) {
+        var failure = await RequireFailure(failureId, cancellationToken).ConfigureAwait(false);
+        var binding = await RequireBinding(failure.BindingId).ConfigureAwait(false);
+        if (!binding.IsTwoWay) {
+            throw new ValidationException(
+                $"Binding {binding.Id} is no longer Two-way, so nothing is written back for it. Dismiss the failure instead.");
+        }
+
+        var mappings = await ReadMappings(binding.Id).ConfigureAwait(false);
+        var defaults = await _meta.GetWritebackDefaults(binding.Id).ConfigureAwait(false);
+        var assessment = await AssessWriteback(binding, mappings, WritebackSettings.Stored(binding, mappings, defaults),
+            includeEnvironment: false, cancellationToken).ConfigureAwait(false);
+        if (assessment.CheckUnavailable is { } unavailable) {
+            return new WritebackRetryDTO { Outcome = "Failed", Message = unavailable };
+        }
+        if (assessment.Plan is not { } plan) {
+            throw new ValidationException(
+                $"Binding {binding.Id} no longer meets Writeback's requirements: {string.Join(" ", assessment.Issues.Select(i => i.Message))}");
+        }
+
+        // The row as it is now: the point of Retry is that the user has fixed it.
+        var target = await _target.GetRepositoryAsync(cancellationToken).ConfigureAwait(false);
+        var row = failure.WritebackKeyValue is { } keyValue
+            ? await target.GetRowByKey(plan.TableName, plan.WritebackKey.Column, keyValue, cancellationToken).ConfigureAwait(false)
+            : await target.GetRowByKey(plan.TableName, plan.KeyMappingColumn, failure.SalesforceId!, cancellationToken).ConfigureAwait(false);
+
+        if (row is null) {
+            await _failures.DeleteAsync(failureId, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Writeback Failure {FailureId} discarded on Retry: its row is no longer in {Table}", failureId, plan.TableName);
+            return new WritebackRetryDTO { Outcome = "Discarded", Message = "The row no longer exists, so there is nothing to send." };
+        }
+
+        string? refused;
+        try {
+            refused = await _writeback.RetryAsync(plan, row, target, cancellationToken).ConfigureAwait(false);
+        } catch (WritebackTransientException ex) {
+            return new WritebackRetryDTO { Outcome = "Failed", Message = $"Salesforce could not be reached, so nothing changed: {ex.Message}" };
+        }
+
+        if (refused is not null) {
+            return new WritebackRetryDTO { Outcome = "Failed", Message = refused };
+        }
+
+        // The row may be known by a different key now (it gained a Writeback Key value), so the failure is
+        // removed by its own id rather than trusting the processor's clear to find it.
+        await _failures.DeleteAsync(failureId, cancellationToken).ConfigureAwait(false);
+        return new WritebackRetryDTO { Outcome = "Succeeded" };
+    }
+
+    public async Task DismissWritebackFailureAsync(int failureId, CancellationToken cancellationToken = default) {
+        await RequireFailure(failureId, cancellationToken).ConfigureAwait(false);
+        await _failures.DeleteAsync(failureId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<WritebackFailure> RequireFailure(int failureId, CancellationToken cancellationToken) =>
+        await _failures.GetAsync(failureId, cancellationToken).ConfigureAwait(false)
+        ?? throw new KeyNotFoundException($"Writeback Failure {failureId} was not found.");
+
+    /// <summary>
+    /// A Binding's Writeback settings: stored, or proposed by an edit.
+    /// </summary>
+    private sealed record WritebackSettings(SyncDirection Direction, string? KeyColumn, string? KeyField,
+        IReadOnlyDictionary<string, FieldDirection> Chosen, IReadOnlyDictionary<string, string> Defaults) {
+
+        public static WritebackSettings Stored(CDCSchema binding, IEnumerable<MappedField> mappings,
+            IEnumerable<WritebackDefault> defaults) => new(
+            binding.SyncDirection, binding.WritebackKeyColumn, binding.WritebackKeySalesforceField,
+            mappings.Where(m => m.SalesforceFieldName != KeyMapping.FieldName)
+                .ToDictionary(m => m.SalesforceFieldName, m => m.FieldDirection, StringComparer.OrdinalIgnoreCase),
+            defaults.ToDictionary(d => d.SalesforceFieldName, d => d.Value, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>One Field Mapping, judged for Writeback.</summary>
+    private sealed record FieldAssessment(MappedField Mapping, ColumnMetadata Column, SObjectField? SalesforceField,
+        FieldDirection Chosen, FieldDirection Effective, bool Forced, string? Reason);
+
+    /// <summary>Everything decided about one Binding's Writeback.</summary>
+    private sealed class WritebackAssessment {
+        public List<WritebackIssueDTO> Issues { get; } = [];
+        public List<string> Warnings { get; } = [];
+        public List<FieldAssessment> Fields { get; } = [];
+        public List<WritebackRequiredFieldDTO> RequiredFields { get; } = [];
+        public List<string> KeyColumnCandidates { get; set; } = [];
+        public List<string> ExternalIdFields { get; set; } = [];
+
+        /// <summary>Why Two-way cannot be chosen at all; null when it can.</summary>
+        public string? UnavailableReason { get; set; }
+
+        /// <summary>Why nothing could be decided right now (Salesforce or the database unreachable); null when it could.</summary>
+        public string? CheckUnavailable { get; set; }
+
+        /// <summary>What the worker runs, set only when there are no issues.</summary>
+        public WritebackBindingPlan? Plan { get; set; }
+
+        public void Issue(string message, string? sql = null) => Issues.Add(new WritebackIssueDTO { Message = message, Sql = sql });
+    }
+
+    /// <summary>
+    /// Judges whether a Binding can be Two-way with these settings: the Target Database Engine and its
+    /// prerequisites, the Writeback Key, every field's effective direction, and the required Salesforce fields.
+    /// </summary>
+    /// <param name="includeEnvironment">
+    /// False to judge only the Binding itself, leaving out the engine, the Replication Credential and the
+    /// database prerequisites — used when those already block Writeback as a whole.
+    /// </param>
+    private async Task<WritebackAssessment> AssessWriteback(CDCSchema binding, List<MappedField> mappings,
+        WritebackSettings settings, bool includeEnvironment, CancellationToken cancellationToken) {
+        var assessment = new WritebackAssessment();
+        var connection = await _target.GetAsync(cancellationToken).ConfigureAwait(false) ?? throw new NoTargetDatabaseException();
+        var engine = connection.Engine;
+        var writebackTable = WritebackTableOf(binding.DbSchemaFullName, engine);
+
+        if (includeEnvironment) {
+            await AssessEnvironment(assessment, connection, writebackTable, cancellationToken).ConfigureAwait(false);
+            if (assessment.CheckUnavailable is not null) {
+                return assessment;
+            }
+        }
+
+        var table = await LoadTable(binding.DbSchemaFullName, cancellationToken).ConfigureAwait(false);
+        if (table is null) {
+            assessment.Issue($"Target Table '{binding.DbSchemaFullName}' no longer exists in the target database.");
+            return assessment;
+        }
+
+        var avro = await _entitySchemas.GetSchemaForEntityAsync(binding.EntityName, cancellationToken).ConfigureAwait(false);
+        if (avro is null) {
+            assessment.Issue($"No Avro Schema is available for {binding.EntityName}, so its fields cannot be checked.");
+            return assessment;
+        }
+
+        var sourceObject = SourceObjectOf(binding.EntityName);
+        SObjectDescribe? describe;
+        try {
+            describe = await _describer.DescribeAsync(sourceObject, cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is SalesforceTransientException or SalesforceUnauthorizedException
+                                         or NoOrgConnectionException or HttpRequestException
+                                         or SalesforceRequestRefusedException) {
+            assessment.CheckUnavailable = $"Salesforce could not describe {sourceObject}: {ex.Message}";
+            return assessment;
+        }
+        if (describe is null) {
+            assessment.Issue($"Salesforce reports no object named {sourceObject} to the Run-as User, so nothing can be written to it.");
+            return assessment;
+        }
+
+        var entityFields = ReadFields(avro).ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
+        var columns = table.Columns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
+        var keyMapping = mappings.FirstOrDefault(m => m.SalesforceFieldName == KeyMapping.FieldName);
+
+        assessment.KeyColumnCandidates = table.Columns
+            .Where(c => c.IsUnique && !string.Equals(c.ColumnName, keyMapping?.TargetFieldName, StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.ColumnName)
+            .ToList();
+        assessment.ExternalIdFields = describe.Fields.Where(f => f.ExternalId && f.Unique).Select(f => f.Name).ToList();
+
+        if (keyMapping is null) {
+            assessment.Issue("No Key Mapping. Writeback stores each new record's Salesforce ID in it.");
+        }
+
+        AssessFields(assessment, mappings, settings, entityFields, columns, describe, engine);
+        AssessWritebackKey(assessment, settings, keyMapping, columns, describe);
+        var defaults = AssessDefaults(assessment, settings, describe);
+        AssessRequiredFields(assessment, settings, describe, defaults);
+
+        if (assessment.Issues.Count == 0 && keyMapping is not null) {
+            var keyField = describe.Field(settings.KeyField!)!;
+            assessment.Plan = new WritebackBindingPlan {
+                BindingId = binding.Id,
+                EntityName = binding.EntityName,
+                SourceObject = sourceObject,
+                Table = writebackTable,
+                TableName = binding.DbSchemaFullName,
+                KeyMappingColumn = keyMapping.TargetFieldName,
+                WritebackKey = new WritebackField(columns[settings.KeyColumn!].ColumnName, keyField.Name, keyField.Type),
+                Fields = assessment.Fields
+                    .Where(f => f.Effective.CarriesWriteback() && f.SalesforceField is not null)
+                    .Select(f => new WritebackField(f.Column.ColumnName, f.SalesforceField!.Name, f.SalesforceField.Type))
+                    .ToList(),
+                Defaults = defaults.Select(d => new WritebackDefaultValue(d.Key, d.Value)).ToList()
+            };
+        }
+
+        return assessment;
+    }
+
+    /// <summary>The engine, the Replication Credential, the server and the database prerequisites.</summary>
+    private async Task AssessEnvironment(WritebackAssessment assessment, TargetConnection connection,
+        WritebackTable table, CancellationToken cancellationToken) {
+        var capability = _engines.For(connection.Engine).Writeback;
+        if (capability is null) {
+            assessment.UnavailableReason = $"Writeback is not yet supported for {connection.Engine}.";
+            assessment.Issue(assessment.UnavailableReason);
+            return;
+        }
+
+        var endpoints = await _target.GetWritebackEndpointsAsync(cancellationToken).ConfigureAwait(false);
+        if (endpoints is null || connection.ReplicationState is not ConnectionState.Connected) {
+            assessment.Issue(
+                "Two-way needs a Replication Credential, proved to work: a login that may read the database's changes, so the login that writes rows never needs that right. Enter it on the Target Connection page.");
+            return;
+        }
+
+        try {
+            if (await capability.GetUnavailableReasonAsync(endpoints.ConnectionString, cancellationToken).ConfigureAwait(false) is { } reason) {
+                assessment.UnavailableReason = reason;
+                assessment.Issue(reason);
+                return;
+            }
+
+            foreach (var prerequisite in await capability.CheckPrerequisitesAsync(endpoints, [table], cancellationToken).ConfigureAwait(false)) {
+                assessment.Issue(prerequisite.Message, prerequisite.FixSql);
+            }
+        } catch (DbException ex) {
+            assessment.CheckUnavailable = $"The Target Database could not be checked: {ex.Message}";
+        }
+    }
+
+    private static void AssessFields(WritebackAssessment assessment, List<MappedField> mappings, WritebackSettings settings,
+        Dictionary<string, EntityField> entityFields, Dictionary<string, ColumnMetadata> columns, SObjectDescribe describe,
+        TargetDatabaseEngine engine) {
+        foreach (var mapping in mappings.Where(m => m.SalesforceFieldName != KeyMapping.FieldName)) {
+            if (!columns.TryGetValue(mapping.TargetFieldName, out var column) ||
+                !entityFields.TryGetValue(mapping.SalesforceFieldName, out var entityField)) {
+                // Validation reports a missing column or field; there is nothing to direct.
+                continue;
+            }
+
+            var chosen = settings.Chosen.GetValueOrDefault(mapping.SalesforceFieldName, mapping.FieldDirection);
+            var salesforceField = RestFieldOf(entityField, describe);
+            var salesforceWritable = salesforceField?.IsWritable == true;
+
+            if (!salesforceWritable && column.IsGenerated) {
+                assessment.Issue(
+                    $"'{mapping.SalesforceFieldName}' cannot be mapped to '{column.ColumnName}' in a Two-way Binding: Salesforce does not let the field be written and the database generates the column, so neither side can take the other's value.");
+                continue;
+            }
+
+            (FieldDirection Direction, string Reason)? forced = null;
+            if (salesforceField is null) {
+                forced = (FieldDirection.InboundOnly,
+                    $"Salesforce does not report {mapping.SalesforceFieldName} on {describe.Name} to the Run-as User, so it cannot be written.");
+            } else if (!salesforceWritable) {
+                forced = (FieldDirection.InboundOnly, $"Salesforce does not let {salesforceField.Name} be written; it sets the value itself.");
+            } else if (column.IsGenerated) {
+                forced = (FieldDirection.WritebackOnly,
+                    $"The database generates column '{column.ColumnName}' itself and refuses any value written into it.");
+            } else {
+                var fit = TypeCompatibilityChecker.CheckWriteback(mapping.SalesforceFieldName, entityField.FieldType,
+                    salesforceField, column, engine);
+                if (fit.Level is CompatibilityLevel.Error) {
+                    forced = (FieldDirection.InboundOnly, fit.Message);
+                    assessment.Warnings.Add($"{mapping.SalesforceFieldName} is Inbound only: {fit.Message}");
+                } else if (fit.Level is CompatibilityLevel.Warning && chosen.CarriesWriteback()) {
+                    assessment.Warnings.Add(fit.Message);
+                }
+            }
+
+            assessment.Fields.Add(new FieldAssessment(mapping, column, salesforceField, chosen,
+                forced?.Direction ?? chosen, forced is not null, forced?.Reason));
+        }
+    }
+
+    private static void AssessWritebackKey(WritebackAssessment assessment, WritebackSettings settings, MappedField? keyMapping,
+        Dictionary<string, ColumnMetadata> columns, SObjectDescribe describe) {
+        if (string.IsNullOrWhiteSpace(settings.KeyColumn)) {
+            assessment.Issue("Choose a Writeback Key column: one that identifies each row, so a row inserted in the database reaches Salesforce exactly once.");
+        } else if (!columns.TryGetValue(settings.KeyColumn, out var keyColumn)) {
+            assessment.Issue($"Writeback Key column '{settings.KeyColumn}' does not exist on the Target Table.");
+        } else if (keyMapping is not null && string.Equals(keyColumn.ColumnName, keyMapping.TargetFieldName, StringComparison.OrdinalIgnoreCase)) {
+            assessment.Issue($"Writeback Key column '{keyColumn.ColumnName}' is the Key Mapping column, which holds the Salesforce record ID. Choose a column of the table's own, such as its primary key.");
+        } else {
+            if (!keyColumn.IsUnique) {
+                assessment.Issue($"Writeback Key column '{keyColumn.ColumnName}' needs a unique constraint or primary key, or two rows could claim the same Salesforce record.");
+            }
+            var receivesInbound = assessment.Fields.FirstOrDefault(f =>
+                string.Equals(f.Column.ColumnName, keyColumn.ColumnName, StringComparison.OrdinalIgnoreCase) && f.Effective.CarriesInbound());
+            if (receivesInbound is not null) {
+                assessment.Issue($"Writeback Key column '{keyColumn.ColumnName}' also receives {receivesInbound.Mapping.SalesforceFieldName} inbound. The key belongs to the database; make that mapping Writeback only, or map it elsewhere.");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.KeyField)) {
+            assessment.Issue("Choose the Salesforce External ID field that stores the Writeback Key.");
+            return;
+        }
+
+        var keyField = describe.Field(settings.KeyField);
+        if (keyField is null) {
+            assessment.Issue($"Salesforce reports no field {settings.KeyField} on {describe.Name} to the Run-as User.");
+            return;
+        }
+        if (!keyField.ExternalId) {
+            assessment.Issue($"{keyField.Name} is not an External ID field, so Salesforce cannot match records on it. Mark it External ID and Unique in Setup, or choose another field.");
+        } else if (!keyField.Unique) {
+            assessment.Issue($"{keyField.Name} is an External ID but not marked Unique, so a match on it could find two records. Mark it Unique in Setup, or choose another field.");
+        }
+
+        var mapped = assessment.Fields.FirstOrDefault(f =>
+            string.Equals(f.Mapping.SalesforceFieldName, keyField.Name, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(f.SalesforceField?.Name, keyField.Name, StringComparison.OrdinalIgnoreCase));
+        if (mapped is not null) {
+            assessment.Issue($"{keyField.Name} stores the Writeback Key, so it cannot also be the subject of a Field Mapping (it is mapped to '{mapped.Column.ColumnName}'). Remove that Field Mapping.");
+        }
+    }
+
+    /// <summary>Checks each Writeback Default and converts it to the value sent.</summary>
+    private static Dictionary<string, object?> AssessDefaults(WritebackAssessment assessment, WritebackSettings settings,
+        SObjectDescribe describe) {
+        var converted = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (fieldName, text) in settings.Defaults) {
+            var field = describe.Field(fieldName);
+            if (field is null || !field.Createable) {
+                assessment.Issue($"Writeback Default for {fieldName}: Salesforce does not let the field be set when a {describe.Name} is created.");
+                continue;
+            }
+            try {
+                converted[field.Name] = WritebackValueConverter.ParseDefault(text, field.Type);
+            } catch (FormatException ex) {
+                assessment.Issue($"Writeback Default for {field.Name}: {ex.Message}");
+            }
+        }
+        return converted;
+    }
+
+    private static void AssessRequiredFields(WritebackAssessment assessment, WritebackSettings settings,
+        SObjectDescribe describe, Dictionary<string, object?> defaults) {
+        var supplied = assessment.Fields
+            .Where(f => f.Effective.CarriesWriteback() && f.SalesforceField is not null)
+            .Select(f => f.SalesforceField!.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var field in describe.Fields.Where(f => f.IsRequiredOnCreate)) {
+            if (string.Equals(field.Name, settings.KeyField, StringComparison.OrdinalIgnoreCase)) {
+                continue;
+            }
+
+            var bySupply = supplied.Contains(field.Name);
+            var defaultValue = settings.Defaults.FirstOrDefault(d =>
+                string.Equals(d.Key, field.Name, StringComparison.OrdinalIgnoreCase)).Value;
+
+            assessment.RequiredFields.Add(new WritebackRequiredFieldDTO {
+                SalesforceFieldName = field.Name,
+                Label = field.Label,
+                Type = field.Type,
+                SuppliedByMapping = bySupply,
+                DefaultValue = defaultValue,
+                AllowedValues = field.PicklistValues.Where(v => v.Active).Select(v => v.Value).ToList()
+            });
+
+            if (!bySupply && !defaults.ContainsKey(field.Name)) {
+                assessment.Warnings.Add(
+                    $"{field.Name} is required to create a {describe.Name} and nothing supplies it. Set a Writeback Default, or every row inserted in the database fails to reach Salesforce unless automation there fills it.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The Salesforce field a flattened Entity field is written to. A compound child is named by the REST API
+    /// differently from its flattened form: NameFirstName is FirstName, BillingAddressStreet is BillingStreet.
+    /// </summary>
+    private static SObjectField? RestFieldOf(EntityField field, SObjectDescribe describe) {
+        if (field.ParentName is not { } parent || field.ChildName is not { } child) {
+            return describe.Field(field.Name);
+        }
+
+        var parts = describe.Fields
+            .Where(f => string.Equals(f.CompoundFieldName, parent, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var prefix = parent.EndsWith("Address", StringComparison.Ordinal) ? parent[..^"Address".Length] : parent;
+
+        return parts.FirstOrDefault(f => string.Equals(f.Name, child, StringComparison.OrdinalIgnoreCase))
+               ?? parts.FirstOrDefault(f => string.Equals(f.Name, prefix + child, StringComparison.OrdinalIgnoreCase))
+               ?? parts.FirstOrDefault(f => f.Name.EndsWith(child, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The Salesforce object an Entity reports on: AccountChangeEvent is Account, Invoice__ChangeEvent is Invoice__c.
+    /// </summary>
+    private static string SourceObjectOf(string entityName) =>
+        entityName.EndsWith("__ChangeEvent", StringComparison.Ordinal)
+            ? entityName[..^"__ChangeEvent".Length] + "__c"
+            : entityName.EndsWith("ChangeEvent", StringComparison.Ordinal)
+                ? entityName[..^"ChangeEvent".Length]
+                : entityName;
+
+    /// <summary>The Target Table as the engine's change stream names it, resolving the engine's default schema.</summary>
+    private static WritebackTable WritebackTableOf(string fullName, TargetDatabaseEngine engine) {
+        var (schemaName, tableName) = SplitFullName(fullName);
+        return new WritebackTable(schemaName ?? (engine is TargetDatabaseEngine.Postgres ? "public" : null), tableName);
     }
 
     #endregion
@@ -740,6 +1369,12 @@ public class BindingService : IBindingService {
                 continue;
             }
 
+            // A Writeback-only field is never written inbound, so whether Salesforce's value would fit the
+            // column does not matter; the Writeback assessment below judges the other direction.
+            if (binding.IsTwoWay && mapping.FieldDirection is FieldDirection.WritebackOnly) {
+                continue;
+            }
+
             result.Results.Add(TypeCompatibilityChecker.Check(field.Name, field.FieldType, column, engine).ToDto());
         }
 
@@ -756,11 +1391,30 @@ public class BindingService : IBindingService {
             }
         }
 
+        if (binding.IsTwoWay) {
+            var defaults = await _meta.GetWritebackDefaults(binding.Id).ConfigureAwait(false);
+            var writeback = await AssessWriteback(binding, mappings, WritebackSettings.Stored(binding, mappings, defaults),
+                includeEnvironment: true, cancellationToken).ConfigureAwait(false);
+
+            if (writeback.CheckUnavailable is { } unavailable) {
+                // Not proof of anything: the Binding is judged again when the worker next plans.
+                result.Results.Add(WritebackNote($"Writeback could not be checked just now: {unavailable}"));
+            } else {
+                result.Blockers.AddRange(writeback.Issues.Select(i => i.Sql is null ? i.Message : $"{i.Message} Fix: {i.Sql}"));
+                result.Results.AddRange(writeback.Warnings.Select(WritebackNote));
+            }
+        }
+
         result.CanActivate = result.Blockers.Count == 0
             && result.Results.All(r => r.Level != nameof(CompatibilityLevel.Error));
 
         return result;
     }
+
+    private static CompatibilityResultDTO WritebackNote(string message) => new() {
+        Level = nameof(CompatibilityLevel.Warning),
+        Message = message
+    };
 
     /// <summary>
     /// Warns about NOT NULL columns nothing writes to, which would fail on the first insert.

@@ -1,8 +1,10 @@
 using Application.Services.Interfaces;
+using Application.Writeback;
 using DTO;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Salesforce.Clients;
+using Salesforce.Writeback;
 using System.ComponentModel.DataAnnotations;
 
 namespace StarPush.Controllers;
@@ -109,6 +111,39 @@ public class BindingsController : ControllerBase {
 
     #endregion
 
+    #region Writeback
+
+    /// <summary>
+    /// What the editor needs to offer Two-way: whether it can be chosen, the Writeback Key choices, each field's
+    /// effective direction, the required Salesforce fields and whatever stands in the way.
+    /// </summary>
+    [HttpGet("{bindingId:int}/writeback")]
+    public Task<ActionResult<WritebackSetupDTO>> GetWritebackSetup(int bindingId, CancellationToken ct) =>
+        Execute(() => _bindings.GetWritebackSetupAsync(bindingId, ct));
+
+    /// <summary>
+    /// Sets the Sync Direction. A refused Two-way answers 400 with every issue, each database prerequisite with
+    /// the SQL that fixes it.
+    /// </summary>
+    [HttpPut("{bindingId:int}/sync-direction")]
+    public Task<ActionResult<BindingDTO>> SetSyncDirection(int bindingId, [FromBody] SetSyncDirectionDTO dto, CancellationToken ct) =>
+        Execute(() => _bindings.SetSyncDirectionAsync(bindingId, dto, ct));
+
+    [HttpGet("writeback-failures")]
+    public Task<ActionResult<IReadOnlyList<WritebackFailureDTO>>> GetWritebackFailures([FromQuery] int? bindingId, CancellationToken ct) =>
+        Execute(() => _bindings.GetWritebackFailuresAsync(bindingId, ct));
+
+    /// <summary>Sends the failed row's current values again.</summary>
+    [HttpPost("writeback-failures/{failureId:int}/retry")]
+    public Task<ActionResult<WritebackRetryDTO>> RetryWritebackFailure(int failureId, CancellationToken ct) =>
+        Execute(() => _bindings.RetryWritebackFailureAsync(failureId, ct));
+
+    [HttpDelete("writeback-failures/{failureId:int}")]
+    public Task<ActionResult> DismissWritebackFailure(int failureId, CancellationToken ct) =>
+        Execute(() => _bindings.DismissWritebackFailureAsync(failureId, ct));
+
+    #endregion
+
     #region Primary channel
 
     /// <summary>The Primary Channel's local ID, or null when none has been selected.</summary>
@@ -145,6 +180,9 @@ public class BindingsController : ControllerBase {
     private async Task<ActionResult<T>> Execute<T>(Func<Task<T>> action) {
         try {
             return Ok(await action().ConfigureAwait(false));
+        } catch (WritebackRefusedException ex) {
+            _logger.LogWarning(ex, ex.Message);
+            return BadRequest(new { error = ex.Message, issues = ex.Issues });
         } catch (ValidationException ex) {
             _logger.LogError(ex, ex.Message);
             return BadRequest(new { error = ex.Message });
@@ -154,6 +192,9 @@ public class BindingsController : ControllerBase {
         } catch (SalesforceToolingException ex) {
             _logger.LogError(ex, ex.Message);
             _logger.LogError(ex, "Salesforce rejected the request");
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = ex.Message });
+        } catch (Exception ex) when (ex is SalesforceTransientException or SalesforceUnauthorizedException or SalesforceRequestRefusedException) {
+            _logger.LogError(ex, "Salesforce could not answer a Writeback request");
             return StatusCode(StatusCodes.Status502BadGateway, new { error = ex.Message });
         } catch (NotImplementedException ex) {
             _logger.LogCritical(ex, ex.Message);

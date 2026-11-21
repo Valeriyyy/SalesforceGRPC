@@ -1,6 +1,6 @@
 // Calls to this application's api/* endpoints, with their error bodies turned into one typed failure. Pages act
 // through these and then reload on success (ADR 0006): the server rebuilds the page and the shell from one read.
-import type { SalesforceErrorView } from "../types/views";
+import type { SalesforceErrorView, WritebackIssue } from "../types/views";
 
 /** Why a call failed, in the shapes the controllers answer with. */
 export type ApiFailure =
@@ -11,7 +11,9 @@ export type ApiFailure =
     /** 409: the credentials belong to a different org than this installation is bound to. */
     | { kind: "orgMismatch"; message: string; storedOrgId: string; discoveredOrgId: string }
     /** {error, rawResponse}: a database refused, with the summary and the driver's own words. */
-    | { kind: "database"; message: string; rawResponse: string };
+    | { kind: "database"; message: string; rawResponse: string }
+    /** {error, issues}: Two-way was refused, with every reason and the SQL that fixes each database prerequisite. */
+    | { kind: "writebackRefused"; message: string; issues: WritebackIssue[] };
 
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; failure: ApiFailure };
 
@@ -57,6 +59,10 @@ function failureFrom(status: number, body: any): ApiFailure {
                 occurredAt: null
             }
         };
+    }
+
+    if (typeof body?.error === "string" && Array.isArray(body?.issues)) {
+        return { kind: "writebackRefused", message: body.error, issues: body.issues };
     }
 
     if (typeof body?.error === "string" && typeof body?.rawResponse === "string") {

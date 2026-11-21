@@ -25,6 +25,7 @@ public static class BindingMapper {
         SoftDeleteEnabled = binding.SoftDeleteEnabled,
         SoftDeleteColumnName = binding.SoftDeleteColumnName,
         AvroSchemaId = binding.SchemaId,
+        SyncDirection = binding.SyncDirection.ToString(),
         ChannelMemberIds = channelMemberIds.ToList()
     };
 
@@ -45,5 +46,19 @@ public static class BindingMapper {
         TargetDataType = compatibility.TargetDataType,
         Level = compatibility.Level.ToString(),
         Message = compatibility.Message
+    };
+
+    public static WritebackFailureDTO ToDto(this WritebackFailure failure) => new() {
+        Id = failure.Id,
+        BindingId = failure.BindingId,
+        WritebackKeyValue = failure.WritebackKeyValue,
+        SalesforceId = failure.SalesforceId,
+        Operation = failure.Operation.ToString(),
+        StatusCodes = failure.StatusCodes,
+        Message = failure.Message,
+        ValuesSent = failure.ValuesSent,
+        FirstFailedAt = failure.FirstFailedAt,
+        LastFailedAt = failure.LastFailedAt,
+        Attempts = failure.Attempts
     };
 }

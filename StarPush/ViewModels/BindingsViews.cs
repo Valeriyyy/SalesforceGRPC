@@ -90,20 +90,23 @@ public sealed record BindingsView(
 
     public static BindingsView WaitingOn(IReadOnlyList<SetupStepView> missing) => new(missing, null, []);
 
-    public static BindingsView For(PlatformEventChannelEntity? primary, IReadOnlyList<BindingDTO> bindings) {
+    public static BindingsView For(PlatformEventChannelEntity? primary, IReadOnlyList<BindingDTO> bindings,
+        IReadOnlyList<WritebackFailureDTO>? writebackFailures = null) {
         if (primary is null) {
             return new BindingsView([], null, []);
         }
 
         var byEntity = BindingsByEntity(bindings);
+        var failures = (writebackFailures ?? []).GroupBy(f => f.BindingId).ToDictionary(g => g.Key, g => g.Count());
 
         return new BindingsView([], primary.MasterLabel ?? primary.DeveloperName, primary.Members
             .OrderBy(m => m.SelectedEntity, StringComparer.OrdinalIgnoreCase)
             .Select(m => byEntity.TryGetValue(m.SelectedEntity, out var b)
                 ? new BindingRowView(m.Id, m.SelectedEntity, b.Id, b.TargetTable, b.KeyMappingColumn,
-                    b.FieldMappingCount, b.FieldCount, StateOf(b), $"/bindings/{b.Id}")
+                    b.FieldMappingCount, b.FieldCount, StateOf(b), $"/bindings/{b.Id}",
+                    b.SyncDirection == nameof(SyncDirection.TwoWay), failures.GetValueOrDefault(b.Id))
                 : new BindingRowView(m.Id, m.SelectedEntity, null, null, null, 0, null, BindingRowState.Unbound,
-                    $"/bindings/new?member={m.Id}"))
+                    $"/bindings/new?member={m.Id}", false, 0))
             .ToList());
     }
 
@@ -130,7 +133,9 @@ public sealed record BindingRowView(
     int FieldMappingCount,
     int? FieldCount,
     BindingRowState State,
-    string Href);
+    string Href,
+    bool TwoWay,
+    int WritebackFailureCount);
 
 /// <summary>
 /// Choosing the Target Table for an unbound Entity. <see cref="Member"/> is null when there is no such member on
@@ -215,10 +220,15 @@ public sealed record BindingEditorView(
     bool SoftDeleteEnabled,
     string? SoftDeleteColumnName,
     BindingTargetView? Target,
-    TargetDatabaseErrorView? TargetError) {
+    TargetDatabaseErrorView? TargetError,
+    string SyncDirection,
+    WritebackSetupDTO? Writeback,
+    string? WritebackError,
+    IReadOnlyList<WritebackFailureDTO> WritebackFailures) {
 
     public static BindingEditorView For(BindingDTO binding, int? memberId, BindingTargetView? target,
-        TargetDatabaseErrorView? targetError) => new(
+        TargetDatabaseErrorView? targetError, WritebackSetupDTO? writeback = null, string? writebackError = null,
+        IReadOnlyList<WritebackFailureDTO>? writebackFailures = null) => new(
         binding.Id,
         binding.EntityName,
         binding.TargetTable,
@@ -229,7 +239,11 @@ public sealed record BindingEditorView(
         binding.SoftDeleteEnabled,
         binding.SoftDeleteColumnName,
         target,
-        targetError);
+        targetError,
+        binding.SyncDirection,
+        writeback,
+        writebackError,
+        writebackFailures ?? []);
 }
 
 /// <summary>

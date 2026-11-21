@@ -138,6 +138,15 @@ public sealed record StageView(
             $"{Plural(n, "Binding")} {(n == 1 ? "was" : "were")} forced back to Incomplete and {(n == 1 ? "is" : "are")} not syncing: " +
             "an edit or a change to the Target Table left " + (n == 1 ? "it" : "them") + " invalid, or a Key Mapping column lost its unique constraint.",
             "Open each Binding marked Needs attention to see what blocks it, fix that, then activate it again."),
+        StageReason.WritebackFailuresOpen when stage is BindingsStage { WritebackFailures: var n } => (
+            $"Salesforce refused {Plural(n, "change")} written back from the Target Database.",
+            "Open Bindings to see Salesforce's reason for each. Fix the row and Retry it, or Dismiss it."),
+        StageReason.WritebackLagging when stage is BindingsStage { WritebackLagBytes: { } lag } => (
+            $"Writeback is {lag / (1024 * 1024)} MB behind the Target Database, which keeps every change until Writeback has sent it.",
+            "Check that Writeback is running and Salesforce is reachable. Setting max_slot_wal_keep_size on the server caps how much it keeps."),
+        StageReason.WritebackBlocked when stage is BindingsStage { WritebackBlockedReason: var why } => (
+            $"A Binding is Two-way, but Writeback cannot run: {why}",
+            "Fix what it names on the Target Connection page; Writeback starts without a restart."),
         _ => ("", "")
     };
 

@@ -1,6 +1,7 @@
 using Database.Models;
 using Database.Repositories;
 using Salesforce.Avro;
+using Salesforce.Writeback;
 
 namespace Application.Bindings;
 
@@ -132,10 +133,137 @@ public static class TypeCompatibilityChecker {
         };
     }
 
+    /// <summary>
+    /// Checks the other direction, for Writeback: whether a Target Column's values can be written into a
+    /// Salesforce field without loss, judged against the field's real describe rather than Salesforce defaults.
+    /// </summary>
+    /// <remarks>
+    /// An Error here does not block the Binding: it forces the field to Inbound only, and the editor reports it
+    /// as a warning. It is reserved for columns whose declared shape guarantees loss (more digits, more
+    /// characters, a type Salesforce cannot take). A column that only might hold a bad value — unbounded text
+    /// into a 255-character field — is a Warning: Salesforce refuses the bad value, and it becomes a Writeback
+    /// Failure the user can see, rather than forcing every unbounded column to Inbound only.
+    /// </remarks>
+    public static FieldCompatibility CheckWriteback(string salesforceFieldName, SalesforceFieldType fieldType,
+        SObjectField field, ColumnMetadata column, TargetDatabaseEngine engine) {
+        ArgumentNullException.ThrowIfNull(field);
+        ArgumentNullException.ThrowIfNull(column);
+
+        var family = Classify(column.DataType, engine);
+        var (level, message) = EvaluateWriteback(field, family, column);
+
+        return new FieldCompatibility {
+            SalesforceFieldName = salesforceFieldName,
+            TargetColumnName = column.ColumnName,
+            FieldType = fieldType,
+            TargetDataType = column.DataType,
+            Level = level,
+            Message = message
+        };
+    }
+
+    private static (CompatibilityLevel, string) EvaluateWriteback(SObjectField field, ColumnFamily family,
+        ColumnMetadata column) {
+        var col = column.ColumnName;
+        var type = column.DataType;
+        var sf = $"{field.Name} ({field.Type})";
+
+        if (family is ColumnFamily.Unknown) {
+            return (CompatibilityLevel.Warning,
+                $"Target type '{type}' on column '{col}' is not one this application recognises, so whether it fits {sf} cannot be checked.");
+        }
+
+        switch (field.Type.ToLowerInvariant()) {
+            case "string" or "textarea" or "phone" or "email" or "url" or "picklist" or "multipicklist" or
+                "combobox" or "encryptedstring" or "reference" or "id":
+                if (field.RestrictedPicklist && !column.IsCheckConstrained) {
+                    var values = string.Join(", ", field.PicklistValues.Where(v => v.Active).Select(v => v.Value).Take(10));
+                    return (CompatibilityLevel.Warning,
+                        $"{sf} accepts only its picklist values ({values}), and nothing limits column '{col}' to them; any other value is refused and recorded as a Writeback Failure.");
+                }
+                if (family is not ColumnFamily.Text) {
+                    return (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') is sent to {sf} as text.");
+                }
+                if (field.Length > 0 && column.MaxLength is int length && length > field.Length) {
+                    return (CompatibilityLevel.Error,
+                        $"Column '{col}' holds up to {length} characters but {sf} holds {field.Length}, so longer values could never be written back.");
+                }
+                if (field.Length > 0 && column.MaxLength is null) {
+                    return (CompatibilityLevel.Warning,
+                        $"Column '{col}' ('{type}') has no length limit but {sf} holds {field.Length} characters; a longer value is refused and recorded as a Writeback Failure.");
+                }
+                return (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}.");
+
+            case "double" or "currency" or "percent":
+                return family switch {
+                    ColumnFamily.Decimal when column.NumericScale is int scale && scale > field.Scale =>
+                        (CompatibilityLevel.Error,
+                            $"Column '{col}' keeps {scale} decimal places but {sf} keeps {field.Scale}, so values would be rounded."),
+                    ColumnFamily.Decimal when column.NumericPrecision is int precision && column.NumericScale is int s &&
+                                              field.Precision > 0 && precision - s > field.Precision - field.Scale =>
+                        (CompatibilityLevel.Error,
+                            $"Column '{col}' holds numbers with up to {precision - s} digits before the decimal point but {sf} holds {field.Precision - field.Scale}."),
+                    ColumnFamily.Decimal or ColumnFamily.Integer =>
+                        (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}."),
+                    _ => (CompatibilityLevel.Error, $"Column '{col}' ('{type}') is not numeric and cannot be written into {sf}.")
+                };
+
+            case "int" or "long":
+                return family switch {
+                    ColumnFamily.Integer => (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}."),
+                    ColumnFamily.Decimal when column.NumericScale is 0 =>
+                        (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}."),
+                    ColumnFamily.Decimal => (CompatibilityLevel.Error,
+                        $"Column '{col}' ('{type}') can hold fractions but {sf} holds whole numbers, so values would be cut."),
+                    _ => (CompatibilityLevel.Error, $"Column '{col}' ('{type}') is not a whole number and cannot be written into {sf}.")
+                };
+
+            case "boolean":
+                return family switch {
+                    ColumnFamily.Boolean => (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}."),
+                    ColumnFamily.Integer => (CompatibilityLevel.Compatible,
+                        $"Column '{col}' ('{type}') is sent to {sf} as false for 0 and true for anything else."),
+                    _ => (CompatibilityLevel.Error, $"Column '{col}' ('{type}') cannot be written into the checkbox {sf}.")
+                };
+
+            case "date":
+                return family switch {
+                    ColumnFamily.Date => (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}."),
+                    ColumnFamily.Timestamp => (CompatibilityLevel.Error,
+                        $"Column '{col}' ('{type}') carries a time that {sf} would drop."),
+                    _ => (CompatibilityLevel.Error, $"Column '{col}' ('{type}') is not a date and cannot be written into {sf}.")
+                };
+
+            case "datetime":
+                return family switch {
+                    ColumnFamily.Timestamp => (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}."),
+                    ColumnFamily.Date => (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') is sent to {sf} as midnight UTC."),
+                    _ => (CompatibilityLevel.Error, $"Column '{col}' ('{type}') is not a date and time and cannot be written into {sf}.")
+                };
+
+            case "time":
+                return family is ColumnFamily.Time
+                    ? (CompatibilityLevel.Compatible, $"Column '{col}' ('{type}') fits {sf}.")
+                    : (CompatibilityLevel.Error, $"Column '{col}' ('{type}') is not a time and cannot be written into {sf}.");
+
+            case "address" or "location" or "base64" or "anytype" or "complexvalue":
+                return (CompatibilityLevel.Error, $"{sf} cannot be written by Writeback.");
+
+            default:
+                return (CompatibilityLevel.Warning,
+                    $"The Salesforce type of {sf} is not one this application recognises, so whether column '{col}' fits it cannot be checked.");
+        }
+    }
+
     private static (CompatibilityLevel, string) Evaluate(SalesforceFieldType fieldType, ColumnFamily family,
         ColumnMetadata column, TargetDatabaseEngine engine) {
         var col = column.ColumnName;
         var type = column.DataType;
+
+        if (column.IsGenerated) {
+            return (CompatibilityLevel.Error,
+                $"Column '{col}' is generated by the database, which refuses any value written into it, so every write of {fieldType} would fail.");
+        }
 
         if (fieldType.IsCompound()) {
             return (CompatibilityLevel.Error,

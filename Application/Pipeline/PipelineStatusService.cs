@@ -1,3 +1,4 @@
+using Application.Writeback;
 using Database.Models;
 using Database.Repositories.Interfaces;
 
@@ -24,15 +25,20 @@ public sealed class PipelineStatusService : IPipelineStatusService {
     private readonly ICheckpointRepository _checkpoints;
     private readonly ITargetConnectionRepository _target;
     private readonly IMetaRepository _meta;
+    private readonly IWritebackFailureRepository _failures;
+    private readonly IWritebackHealth _writeback;
     private readonly TimeProvider _time;
 
     public PipelineStatusService(IOrgConnectionRepository org, IPlatformEventChannelRepository channels,
-        ICheckpointRepository checkpoints, ITargetConnectionRepository target, IMetaRepository meta, TimeProvider time) {
+        ICheckpointRepository checkpoints, ITargetConnectionRepository target, IMetaRepository meta,
+        IWritebackFailureRepository failures, IWritebackHealth writeback, TimeProvider time) {
         _org = org;
         _channels = channels;
         _checkpoints = checkpoints;
         _target = target;
         _meta = meta;
+        _failures = failures;
+        _writeback = writeback;
         _time = time;
     }
 
@@ -46,7 +52,8 @@ public sealed class PipelineStatusService : IPipelineStatusService {
         var targetConnection = WaitFor(TargetConnection(await _target.GetAsync(cancellationToken).ConfigureAwait(false)), org);
 
         var counts = await _meta.CountBindingsByStateAsync(cancellationToken).ConfigureAwait(false);
-        var bindings = WaitFor(Bindings(counts), primaryChannel, targetConnection);
+        var failures = await _failures.CountAsync(cancellationToken).ConfigureAwait(false);
+        var bindings = WaitFor(Bindings(counts, failures, _writeback), primaryChannel, targetConnection);
 
         return new PipelineStatus(org, primaryChannel, targetConnection, bindings);
     }
@@ -146,7 +153,7 @@ public sealed class PipelineStatusService : IPipelineStatusService {
         };
     }
 
-    private static BindingsStage Bindings(BindingStateCounts counts) {
+    private static BindingsStage Bindings(BindingStateCounts counts, int writebackFailures, IWritebackHealth writeback) {
         var reasons = new List<StageReason>();
         if (counts.ForcedIncomplete > 0) {
             reasons.Add(StageReason.BindingForcedIncomplete);
@@ -154,11 +161,25 @@ public sealed class PipelineStatusService : IPipelineStatusService {
         if (counts.Active == 0) {
             reasons.Add(StageReason.NoActiveBindings);
         }
+        if (writebackFailures > 0) {
+            reasons.Add(StageReason.WritebackFailuresOpen);
+        }
+        // The server keeps every change Writeback has not confirmed, so a reader far behind is filling its disk.
+        if (writeback.LagBytes > WritebackHealth.LagAttentionBytes) {
+            reasons.Add(StageReason.WritebackLagging);
+        }
+        if (writeback.State is WritebackRunState.Blocked) {
+            reasons.Add(StageReason.WritebackBlocked);
+        }
 
         return new BindingsStage {
-            Status = StatusFrom(reasons, StageReason.BindingForcedIncomplete),
+            Status = StatusFrom(reasons, StageReason.BindingForcedIncomplete, StageReason.WritebackFailuresOpen,
+                StageReason.WritebackLagging, StageReason.WritebackBlocked),
             Reasons = reasons,
-            Counts = counts
+            Counts = counts,
+            WritebackFailures = writebackFailures,
+            WritebackLagBytes = writeback.LagBytes,
+            WritebackBlockedReason = writeback.State is WritebackRunState.Blocked ? writeback.Reason : null
         };
     }
 }

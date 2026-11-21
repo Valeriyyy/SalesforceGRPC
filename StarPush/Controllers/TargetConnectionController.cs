@@ -85,6 +85,24 @@ public class TargetConnectionController : ControllerBase {
     public Task<ActionResult<TargetConnectionDTO>> Repoint([FromBody] RepointTargetConnectionDTO request, CancellationToken ct) =>
         Execute(() => _connections.RepointAsync(request, ct));
 
+    /// <summary>
+    /// Stores and proves the Replication Credential: a second login on the same database, used only to read
+    /// its changes for Writeback. A blank password keeps the stored one when the username is unchanged.
+    /// </summary>
+    [HttpPut("replication-credential")]
+    public Task<ActionResult<TargetConnectionDTO>> SetReplicationCredential([FromBody] SetReplicationCredentialDTO request,
+        CancellationToken ct) =>
+        Execute(() => _connections.SetReplicationCredentialAsync(request, ct));
+
+    /// <summary>Proves the stored Replication Credential again.</summary>
+    [HttpPost("replication-credential/verify")]
+    public Task<ActionResult<TargetConnectionDTO>> VerifyReplicationCredential(CancellationToken ct) =>
+        Execute(() => _connections.VerifyReplicationCredentialAsync(ct));
+
+    [HttpDelete("replication-credential")]
+    public Task<ActionResult<TargetConnectionDTO>> ClearReplicationCredential(CancellationToken ct) =>
+        Execute(() => _connections.ClearReplicationCredentialAsync(ct));
+
     private async Task<ActionResult<T>> Execute<T>(Func<Task<T>> action) {
         try {
             return Ok(await action().ConfigureAwait(false));
@@ -116,7 +134,8 @@ public class TargetConnectionController : ControllerBase {
             _logger.LogError(ex, "The App Database rejected a request from the Target Connection API");
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new {
                 error = "The App Database could not be read. It may be unreachable, or the Target Connection " +
-                        "table may not exist yet — apply Database/Definitions/migrations/003-target-connection.sql.",
+                        "table may not be up to date — apply Database/Definitions/migrations/003-target-connection.sql " +
+                        "and 007-writeback.sql.",
                 detail = ex.Message
             });
         }

@@ -3,6 +3,7 @@ using Application.Targets;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using Database.Targets;
+using Database.Writeback;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -33,6 +34,7 @@ public class TargetConnectionProviderTests {
         _sqlite.CreateRepository("lite").Returns(_sqliteRepository);
 
         _protector.Unprotect("cipher").Returns("plain");
+        _postgres.Writeback.Returns((IWritebackCapability?)null);
     }
 
     private TargetConnectionProvider NewProvider() {
@@ -124,4 +126,44 @@ public class TargetConnectionProviderTests {
     public void AClientSideFailureWithNoSqlState_IsAboutTheDatabase() {
         Assert.True(TargetDatabaseWriteException.IsDatabaseUnavailable(new Npgsql.NpgsqlException("No route to host")));
     }
+
+    #region Writeback
+
+    [Fact]
+    public async Task WhileWritebackIsArmed_EveryWriteGoesThroughTheTaggedRepository_SoItIsNeverSentBackToSalesforce() {
+        var writeback = Substitute.For<IWritebackCapability>();
+        var tagged = Substitute.For<IRepository>();
+        writeback.CreateTaggedRepository("pg").Returns(tagged);
+        _postgres.Writeback.Returns(writeback);
+        var armed = Stored();
+        armed.WritebackArmedAt = DateTime.UtcNow;
+        _repository.GetAsync(Arg.Any<CancellationToken>()).Returns(armed);
+
+        Assert.Same(tagged, await NewProvider().GetRepositoryAsync(Ct));
+    }
+
+    [Fact]
+    public async Task WhileWritebackIsNotArmed_WritesGoThroughThePlainRepository() {
+        var writeback = Substitute.For<IWritebackCapability>();
+        _postgres.Writeback.Returns(writeback);
+        _repository.GetAsync(Arg.Any<CancellationToken>()).Returns(Stored());
+
+        Assert.Same(_postgresRepository, await NewProvider().GetRepositoryAsync(Ct));
+        writeback.DidNotReceiveWithAnyArgs().CreateTaggedRepository(default!);
+    }
+
+    [Fact]
+    public async Task TheWritebackEndpoints_AreTheConnectionsOwnDetails_OnceWithEachLogin() {
+        _postgres.BuildConnectionString(Arg.Is<TargetConnectionDetails>(d => d.Username == "repl" && d.Password == "repl-plain"))
+            .Returns("pg-repl");
+        _protector.Unprotect("repl-cipher").Returns("repl-plain");
+        var stored = Stored();
+        stored.ReplicationUsername = "repl";
+        stored.ReplicationPasswordEncrypted = "repl-cipher";
+        _repository.GetAsync(Arg.Any<CancellationToken>()).Returns(stored);
+
+        Assert.Equal(new WritebackEndpoints("pg", "pg-repl"), await NewProvider().GetWritebackEndpointsAsync(Ct));
+    }
+
+    #endregion
 }

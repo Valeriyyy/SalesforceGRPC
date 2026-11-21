@@ -32,6 +32,23 @@ public record TargetConnectionDTO {
 
     /// <summary>Whether stored secrets can currently be read.</summary>
     public SecretProtectionDTO SecretProtection { get; set; } = new();
+
+    /// <summary>The Replication Credential, or null when none has been entered. Its password is never returned.</summary>
+    public ReplicationCredentialDTO? Replication { get; set; }
+
+    /// <summary>True while this application has the database set up for Writeback.</summary>
+    public bool WritebackArmed { get; set; }
+}
+
+public record ReplicationCredentialDTO {
+    public string Username { get; set; } = "";
+
+    /// <summary>Incomplete (never proved), Connected or Failed.</summary>
+    public string State { get; set; } = "Incomplete";
+
+    public DateTime? LastProvedAt { get; set; }
+    public string? LastError { get; set; }
+    public DateTime? LastErrorAt { get; set; }
 }
 
 /// <summary>
@@ -59,6 +76,10 @@ public record EngineDefinitionDTO {
     public string Engine { get; set; } = "";
     public bool IsAvailable { get; set; }
     public string? UnavailableReason { get; set; }
+
+    /// <summary>Whether a Binding on this engine can be Two-way.</summary>
+    public bool SupportsWriteback { get; set; }
+
     public List<FieldDefinitionDTO> Fields { get; set; } = [];
 }
 

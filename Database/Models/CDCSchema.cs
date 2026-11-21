@@ -41,6 +41,20 @@ public class CDCSchema {
     [Column("forced_incomplete_at")]
     public DateTime? ForcedIncompleteAt { get; set; }
 
+    [Column("sync_direction")]
+    public SyncDirection SyncDirection { get; set; } = SyncDirection.Inbound;
+
+    /// <summary>
+    /// The Target Column that identifies a row for Writeback: one half of the Writeback Key. Kept when the
+    /// Binding goes back to Inbound, so switching to Two-way again restores it.
+    /// </summary>
+    [Column("writeback_key_column")]
+    public string? WritebackKeyColumn { get; set; }
+
+    /// <summary>The Salesforce External ID field that stores <see cref="WritebackKeyColumn"/>.</summary>
+    [Column("writeback_key_sf_field")]
+    public string? WritebackKeySalesforceField { get; set; }
+
     public DbAvroSchema? AvroSchema { get; set; }
 
     /// <summary>
@@ -61,6 +75,10 @@ public class CDCSchema {
     /// <summary>True when the worker should apply this Binding's events.</summary>
     [NotMapped]
     public bool IsActive => BindingState is BindingState.Active;
+
+    /// <summary>True when the Binding is Two-way.</summary>
+    [NotMapped]
+    public bool IsTwoWay => SyncDirection is SyncDirection.TwoWay;
 
     public override string ToString() => $"{Id} {EntityName} -> {DbSchemaFullName} ({BindingState})";
 }

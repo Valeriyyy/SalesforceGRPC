@@ -96,6 +96,9 @@ public record BindingDTO {
     /// <summary>The Salesforce Schema Id of the Avro Schema this Binding was last linked to.</summary>
     public string? AvroSchemaId { get; set; }
 
+    /// <summary>Inbound or TwoWay.</summary>
+    public string SyncDirection { get; set; } = "Inbound";
+
     /// <summary>Local IDs of the Channel Members pointing at this Binding. Empty when orphaned.</summary>
     public List<int> ChannelMemberIds { get; set; } = [];
 }

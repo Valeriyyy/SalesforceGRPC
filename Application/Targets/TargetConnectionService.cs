@@ -4,6 +4,7 @@ using Application.Mappers;
 using Database.Models;
 using Database.Repositories.Interfaces;
 using Database.Targets;
+using Database.Writeback;
 using DTO;
 using Microsoft.Extensions.Logging;
 using System.ComponentModel.DataAnnotations;
@@ -95,6 +96,18 @@ public interface ITargetConnectionService {
     /// destroying Bindings and then discovering the new database is unreachable leaves the user with neither.
     /// </remarks>
     Task<TargetConnectionDTO> RepointAsync(RepointTargetConnectionDTO request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stores the Replication Credential and proves it: it logs in to the same database, may read its changes,
+    /// and the server can do Two-way. Stored either way, with the outcome. A credential edit never Repoints.
+    /// </summary>
+    Task<TargetConnectionDTO> SetReplicationCredentialAsync(SetReplicationCredentialDTO request, CancellationToken cancellationToken = default);
+
+    /// <summary>Proves the stored Replication Credential again and records the outcome.</summary>
+    Task<TargetConnectionDTO> VerifyReplicationCredentialAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Removes the Replication Credential; Two-way Bindings stop writing back until another is entered.</summary>
+    Task<TargetConnectionDTO> ClearReplicationCredentialAsync(CancellationToken cancellationToken = default);
 }
 
 /// <inheritdoc />
@@ -223,6 +236,10 @@ public sealed class TargetConnectionService : ITargetConnectionService {
             throw new TargetConnectionProofFailedException($"{Summarise(ex)} Nothing has been destroyed.", ex.Message, ex);
         }
 
+        // Taken down while the old database is still the Target Connection, so its replication slot does not keep
+        // changes forever for a reader that is about to be pointed elsewhere.
+        await _provider.DisarmWritebackAsync(cancellationToken).ConfigureAwait(false);
+
         var (_, destroyed) = await _repository.RepointAsync(model, _time.GetUtcNow().UtcDateTime, cancellationToken)
             .ConfigureAwait(false);
 
@@ -233,6 +250,98 @@ public sealed class TargetConnectionService : ITargetConnectionService {
             destroyed.Bindings, destroyed.FieldMappings);
 
         return await GetAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<TargetConnectionDTO> SetReplicationCredentialAsync(SetReplicationCredentialDTO request,
+        CancellationToken cancellationToken = default) {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var stored = await _provider.GetAsync(cancellationToken).ConfigureAwait(false) ?? throw new NoTargetDatabaseException();
+        var (profile, writeback) = RequireWriteback(stored);
+
+        var username = request.Username?.Trim();
+        if (string.IsNullOrEmpty(username)) {
+            throw new ValidationException("The Replication Credential needs a username.");
+        }
+        if (!_protector.IsAvailable) {
+            throw new ValidationException(
+                "This application cannot store a password because no protecting key is available. " +
+                $"Supply a protecting certificate through DataProtection:ProtectingCertificate and restart. Looked at: {_protector.ProtectingKeyDescription}.");
+        }
+
+        string password;
+        if (!string.IsNullOrEmpty(request.Password)) {
+            password = request.Password;
+        } else if (username == stored.ReplicationUsername && stored.ReplicationPasswordEncrypted is { } kept) {
+            password = _protector.Unprotect(kept);
+        } else {
+            throw new ValidationException("The Replication Credential needs a password.");
+        }
+
+        await _repository.SetReplicationCredentialAsync(username, Protect(password), cancellationToken).ConfigureAwait(false);
+        _provider.Invalidate();
+
+        // Never proved yet, so a failed proof leaves it Incomplete rather than Failed.
+        await ProveReplicationAsync(profile, writeback, ReplicationDetails(stored, username, password),
+            ConnectionState.Incomplete, cancellationToken).ConfigureAwait(false);
+        return await GetAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<TargetConnectionDTO> VerifyReplicationCredentialAsync(CancellationToken cancellationToken = default) {
+        var stored = await _provider.GetAsync(cancellationToken).ConfigureAwait(false) ?? throw new NoTargetDatabaseException();
+        var (profile, writeback) = RequireWriteback(stored);
+        if (!stored.HasReplicationCredential) {
+            throw new ValidationException("No Replication Credential has been entered, so there is nothing to verify.");
+        }
+
+        var details = ReplicationDetails(stored, stored.ReplicationUsername!, _protector.Unprotect(stored.ReplicationPasswordEncrypted!));
+        await ProveReplicationAsync(profile, writeback, details, stored.ReplicationState, cancellationToken).ConfigureAwait(false);
+        return await GetAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<TargetConnectionDTO> ClearReplicationCredentialAsync(CancellationToken cancellationToken = default) {
+        await _repository.ClearReplicationCredentialAsync(cancellationToken).ConfigureAwait(false);
+        _provider.Invalidate();
+        _changeSignal.Signal();
+        return await GetAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private (ITargetEngineProfile Profile, IWritebackCapability Writeback) RequireWriteback(TargetConnection stored) {
+        var profile = _engines.For(stored.Engine);
+        return (profile, profile.Writeback
+            ?? throw new ValidationException(
+                $"Writeback is not supported for {stored.Engine}, so there is no Replication Credential to enter."));
+    }
+
+    /// <summary>The Target Connection's own details with the Replication Credential's login: the same database.</summary>
+    private TargetConnectionDetails ReplicationDetails(TargetConnection stored, string username, string password) =>
+        stored.Decrypt(_protector) with { Username = username, Password = password };
+
+    /// <summary>Proves a Replication Credential and records the outcome, in the same terms as the connection's.</summary>
+    private async Task ProveReplicationAsync(ITargetEngineProfile profile, IWritebackCapability writeback,
+        TargetConnectionDetails details, ConnectionState stateBefore, CancellationToken cancellationToken) {
+        string? problem;
+        try {
+            problem = await writeback.ProveReplicationCredentialAsync(profile.BuildConnectionString(details), cancellationToken)
+                .ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            problem = $"The Replication Credential could not be proved: {ex.Message}";
+        }
+
+        var state = problem is null
+            ? ConnectionState.Connected
+            : stateBefore is ConnectionState.Connected or ConnectionState.Failed ? ConnectionState.Failed : ConnectionState.Incomplete;
+        await _repository.RecordReplicationOutcomeAsync(state, problem, _time.GetUtcNow().UtcDateTime, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (problem is null) {
+            _logger.LogInformation("Replication Credential proved");
+        } else {
+            _logger.LogWarning("Replication Credential not proved: {Problem}", problem);
+        }
+
+        _provider.Invalidate();
+        _changeSignal.Signal();
     }
 
     /// <summary>

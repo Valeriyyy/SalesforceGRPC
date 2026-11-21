@@ -36,7 +36,15 @@ public static class TargetConnectionMapper {
                 Message = connection.LastError,
                 RawResponse = connection.LastErrorRaw ?? "",
                 OccurredAt = connection.LastErrorAt
-            }
+            },
+            Replication = connection.ReplicationUsername is null ? null : new ReplicationCredentialDTO {
+                Username = connection.ReplicationUsername,
+                State = connection.ReplicationState.ToString(),
+                LastProvedAt = connection.ReplicationLastProvedAt,
+                LastError = connection.ReplicationLastError,
+                LastErrorAt = connection.ReplicationLastErrorAt
+            },
+            WritebackArmed = connection.WritebackArmedAt is not null
         };
     }
 
@@ -56,6 +64,7 @@ public static class TargetConnectionMapper {
         Engine = profile.Engine.ToString(),
         IsAvailable = profile.IsAvailable,
         UnavailableReason = profile.UnavailableReason,
+        SupportsWriteback = profile.Writeback is not null,
         Fields = profile.Fields.Select(f => new FieldDefinitionDTO {
             Name = f.Name,
             Label = f.Label,

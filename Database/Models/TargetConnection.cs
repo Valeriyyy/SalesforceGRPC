@@ -34,6 +34,29 @@ public class TargetConnection {
     public string? LastErrorRaw { get; set; }
     public DateTime? LastErrorAt { get; set; }
 
+    /// <summary>
+    /// The Replication Credential's username: a second login, used only to read the Target Database's changes
+    /// for Writeback. Null until the user enters one.
+    /// </summary>
+    public string? ReplicationUsername { get; set; }
+
+    public string? ReplicationPasswordEncrypted { get; set; }
+
+    /// <summary>Whether the Replication Credential was proved to work, in the same terms as the connection.</summary>
+    public ConnectionState ReplicationState { get; set; }
+    public DateTime? ReplicationLastProvedAt { get; set; }
+    public string? ReplicationLastError { get; set; }
+    public DateTime? ReplicationLastErrorAt { get; set; }
+
+    /// <summary>
+    /// When this application set the Target Database up for Writeback, or null when it has not (or has since
+    /// taken that down). While set, every write this application makes carries its tag, so Writeback never
+    /// sends it back to Salesforce.
+    /// </summary>
+    public DateTime? WritebackArmedAt { get; set; }
+
+    public bool HasReplicationCredential => ReplicationUsername is not null && ReplicationPasswordEncrypted is not null;
+
     public DateTime DateCreated { get; set; }
     public DateTime? DateUpdated { get; set; }
 

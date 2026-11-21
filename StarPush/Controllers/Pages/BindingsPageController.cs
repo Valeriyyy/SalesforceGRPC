@@ -28,8 +28,9 @@ public class BindingsPageController(IPipelineStatusService pipeline, IBindingSer
 
         var primary = await channels.GetPrimaryChannelAsync(cancellationToken).ConfigureAwait(false);
         var all = await bindings.GetBindingsAsync(cancellationToken).ConfigureAwait(false);
+        var failures = await bindings.GetWritebackFailuresAsync(null, cancellationToken).ConfigureAwait(false);
 
-        return RenderPage("bindings", "Bindings", NavKey.Bindings, status, BindingsView.For(primary, all));
+        return RenderPage("bindings", "Bindings", NavKey.Bindings, status, BindingsView.For(primary, all, failures));
     }
 
     [HttpGet("/bindings/new")]
@@ -95,7 +96,20 @@ public class BindingsPageController(IPipelineStatusService pipeline, IBindingSer
             targetError = BindingsSetup.LoadError(ex);
         }
 
+        // Writeback reads Salesforce's describe as well as the Target Database, so it fails on its own: an
+        // unreachable Salesforce costs this section, not the editor.
+        WritebackSetupDTO? writeback = null;
+        string? writebackError = null;
+        if (target is not null) {
+            try {
+                writeback = await bindings.GetWritebackSetupAsync(id, cancellationToken).ConfigureAwait(false);
+            } catch (Exception ex) when (ex is not OperationCanceledException) {
+                writebackError = $"The Sync Direction settings could not be read: {ex.Message}";
+            }
+        }
+        var failures = await bindings.GetWritebackFailuresAsync(id, cancellationToken).ConfigureAwait(false);
+
         return RenderPage("binding", $"{binding.EntityName} → {binding.TargetTable}", NavKey.Bindings, status,
-            new BindingView([], BindingEditorView.For(binding, memberId, target, targetError)));
+            new BindingView([], BindingEditorView.For(binding, memberId, target, targetError, writeback, writebackError, failures)));
     }
 }
