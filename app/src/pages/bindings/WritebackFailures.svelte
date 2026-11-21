@@ -1,14 +1,19 @@
 <!-- The Target Table changes Salesforce refused for this Binding, each with Salesforce's reason. Retry sends the row
      as it is now, so fixing the row and pressing Retry is enough; Dismiss drops a failure the user has decided to
-     ignore. A Retry Salesforce still refuses says why in place; anything that changes the list reloads (ADR 0006). -->
+     ignore. Either way a failure that is gone leaves the list in place, without a reload, so the user stays where
+     they were; a Retry Salesforce still refuses says why in place. -->
 <script lang="ts">
     import { RotateCcw, X } from "@lucide/svelte";
+    import { flip } from "svelte/animate";
+    import { slide } from "svelte/transition";
     import { deleteJson, postJson, type ApiFailure } from "../../lib/api/client";
     import SalesforceError from "../../lib/components/SalesforceError.svelte";
     import type { WritebackFailure, WritebackRetry } from "../../lib/types/views";
     import { when } from "../../lib/utils/format";
 
-    let { failures, disabled }: { failures: WritebackFailure[]; disabled: boolean } = $props();
+    let { failures = $bindable(), disabled }: { failures: WritebackFailure[]; disabled: boolean } = $props();
+
+    const remove = (id: number) => failures = failures.filter(f => f.id !== id);
 
     let pending = $state<number | null>(null);
     let stillRefused = $state<Record<number, string>>({});
@@ -19,7 +24,8 @@
         failure = null;
         const result = await postJson<WritebackRetry>(`/api/Bindings/writeback-failures/${id}/retry`);
         if (result.ok && result.value.outcome !== "Failed") {
-            location.reload();
+            pending = null;
+            remove(id);
             return;
         }
         pending = null;
@@ -34,12 +40,12 @@
         pending = id;
         failure = null;
         const result = await deleteJson(`/api/Bindings/writeback-failures/${id}`);
-        if (result.ok) {
-            location.reload();
-            return;
-        }
         pending = null;
-        failure = result.failure;
+        if (result.ok) {
+            remove(id);
+        } else {
+            failure = result.failure;
+        }
     }
 
     /** The row, named the way the user will look for it in the table. */
@@ -58,7 +64,7 @@
 
 <ul class="space-y-3">
     {#each failures as f (f.id)}
-        <li class="card space-y-2 border border-error-500/50 p-4 text-sm">
+        <li class="card space-y-2 border border-error-500/50 p-4 text-sm" animate:flip={{ duration: 200 }} out:slide={{ duration: 200 }}>
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0 space-y-1">
                     <p class="font-semibold">{rowName(f)} · {f.operation === "Create" ? "creating a record" : "updating the record"}</p>

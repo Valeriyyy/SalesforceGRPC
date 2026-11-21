@@ -1,8 +1,10 @@
 <!-- One Binding's editor — the one place a Binding is changed. Field Mappings are a draft, validated by the server as
      they change and saved or discarded as a whole set; everything else saves on click and reloads (ADR 0006), and
-     waits while the draft is unsaved so a reload never loses it. -->
+     waits while the draft is unsaved so a reload never loses it. Dismissing a failure is the exception: it only
+     removes that failure, so the list drops it in place rather than reloading and moving the user. -->
 <script lang="ts">
     import { untrack } from "svelte";
+    import { slide } from "svelte/transition";
     import { ArrowLeft, ArrowLeftRight, ArrowRight, Check, CircleAlert, KeyRound, Power, Sparkles, Trash2, TriangleAlert } from "@lucide/svelte";
     import { deleteJson, postJson, putJson, type ApiFailure, type ApiResult } from "../../lib/api/client";
     import ConfirmDialog from "../../lib/components/ConfirmDialog.svelte";
@@ -21,6 +23,9 @@
     // Each page load is one Binding (ADR 0006), so the loaded values are read once.
     const editor = untrack(() => page.binding);
     const target = editor?.target ?? null;
+    // Failures are removed in place as they are dismissed, so the lists outlive the loaded view.
+    let inboundFailures = $state(editor?.inboundFailures ?? []);
+    let writebackFailures = $state(editor?.writebackFailures ?? []);
     const saved: Record<string, string> = Object.fromEntries(
         (target?.fields ?? []).filter(f => f.mappedColumnName).map(f => [f.name, f.mappedColumnName!]));
     // Field Mappings are set up once the Key Mapping is chosen: the record ID's column is the one a field cannot take,
@@ -320,25 +325,25 @@
                 {#if dirty}<p class="text-xs text-warning-700-300">Save or discard Field Mappings first.</p>{/if}
             </section>
 
-            {#if binding.inboundFailures.length > 0}
-                <section class="card space-y-3 border border-error-500 p-6">
-                    <h2 class="h5">{plural(binding.inboundFailures.length, "change")} couldn't be applied</h2>
+            {#if inboundFailures.length > 0}
+                <section class="card space-y-3 border border-error-500 p-6" out:slide={{ duration: 200 }}>
+                    <h2 class="h5">{plural(inboundFailures.length, "change")} couldn't be applied</h2>
                     <p class="text-sm text-surface-600-400">
                         These changes from Salesforce were skipped, so they are missing from {binding.targetTable}. Each one
                         says what went wrong and how to fix it.
                     </p>
-                    <InboundFailures failures={binding.inboundFailures} />
+                    <InboundFailures bind:failures={inboundFailures} />
                 </section>
             {/if}
 
-            {#if binding.writebackFailures.length > 0}
-                <section class="card space-y-3 border border-error-500 p-6">
-                    <h2 class="h5">{plural(binding.writebackFailures.length, "change")} Salesforce refused</h2>
+            {#if writebackFailures.length > 0}
+                <section class="card space-y-3 border border-error-500 p-6" out:slide={{ duration: 200 }}>
+                    <h2 class="h5">{plural(writebackFailures.length, "change")} Salesforce refused</h2>
                     <p class="text-sm text-surface-600-400">
                         These rows didn't reach Salesforce and were skipped, so they don't hold up the changes behind them.
                         Fix the row in the table and Retry, or Dismiss it.
                     </p>
-                    <WritebackFailures failures={binding.writebackFailures} disabled={locked} />
+                    <WritebackFailures bind:failures={writebackFailures} disabled={locked} />
                 </section>
             {/if}
 

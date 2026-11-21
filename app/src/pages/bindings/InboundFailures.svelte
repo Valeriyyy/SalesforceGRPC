@@ -1,15 +1,18 @@
 <!-- The change events that couldn't be applied to this Binding's Target Table. Each says what went wrong in the
      Binding's terms (the field, the column, the sizes) and how to fix the cause; the database's own words and the
      values that were refused are under Details. There is no Retry: StarPush doesn't repair data, so the user corrects
-     the record some other way and then Dismisses the failure. Dismissing reloads the page (ADR 0006). -->
+     the record some other way and then Dismisses the failure. A dismissed failure leaves the list in place, without a
+     reload: nothing else on the page depends on it, so the user stays where they were. -->
 <script lang="ts">
     import { Wrench, X } from "@lucide/svelte";
+    import { flip } from "svelte/animate";
+    import { slide } from "svelte/transition";
     import { deleteJson, type ApiFailure } from "../../lib/api/client";
     import SalesforceError from "../../lib/components/SalesforceError.svelte";
     import type { InboundFailure } from "../../lib/types/views";
     import { when } from "../../lib/utils/format";
 
-    let { failures }: { failures: InboundFailure[] } = $props();
+    let { failures = $bindable() }: { failures: InboundFailure[] } = $props();
 
     let pending = $state<number | null>(null);
     let failure = $state<ApiFailure | null>(null);
@@ -18,12 +21,12 @@
         pending = id;
         failure = null;
         const result = await deleteJson(`/api/Bindings/inbound-failures/${id}`);
-        if (result.ok) {
-            location.reload();
-            return;
-        }
         pending = null;
-        failure = result.failure;
+        if (result.ok) {
+            failures = failures.filter(f => f.id !== id);
+        } else {
+            failure = result.failure;
+        }
     }
 
     const changeName: Record<string, string> = { CREATE: "Create", UPDATE: "Update", DELETE: "Delete", UNDELETE: "Undelete" };
@@ -48,7 +51,7 @@
 
 <ul class="space-y-3">
     {#each failures as f (f.id)}
-        <li class="card space-y-3 border border-error-500/50 p-4 text-sm">
+        <li class="card space-y-3 border border-error-500/50 p-4 text-sm" animate:flip={{ duration: 200 }} out:slide={{ duration: 200 }}>
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0 space-y-1">
                     <p class="font-semibold">{what(f)} wasn't applied</p>
@@ -57,7 +60,7 @@
                     </p>
                 </div>
                 <button type="button" class="btn btn-sm hover:preset-tonal" disabled={pending !== null} onclick={() => dismiss(f.id)}>
-                    <X class="size-3" />Dismiss
+                    <X class={["size-3", pending === f.id && "animate-pulse"]} />{pending === f.id ? "Dismissing…" : "Dismiss"}
                 </button>
             </div>
 
