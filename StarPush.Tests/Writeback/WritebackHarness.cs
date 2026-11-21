@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Runtime;
 using Application.Services.Interfaces;
 using Application.Targets;
 using Application.Writeback;
@@ -7,6 +8,7 @@ using Database.Writeback;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using Salesforce.Writeback;
+using StarPush.Tests.Runtime;
 using StarPush.Tests.Worker;
 using StarPush.Writeback;
 
@@ -37,6 +39,8 @@ internal sealed class WritebackHarness {
     public ListLogger<WritebackWorker> Log { get; } = new();
     public ListLogger<WritebackProcessor> ProcessorLog { get; } = new();
     public WritebackHealth Health { get; } = new();
+    public InMemoryIncidents IncidentStore { get; } = new();
+    public IncidentRecorder Incidents { get; }
 
     public static readonly WritebackEndpoints Endpoints = new("Host=db;Username=app", "Host=db;Username=repl");
 
@@ -44,6 +48,7 @@ internal sealed class WritebackHarness {
 
     public WritebackHarness() {
         Target = TargetProviders.Of(TaggedTarget);
+        Incidents = new IncidentRecorder(IncidentStore, Time, new ListLogger<IncidentRecorder>());
         Plan = PlanWith(Binding());
         Bindings.GetWritebackPlanAsync(Arg.Any<CancellationToken>()).Returns(_ => Plan);
 
@@ -99,7 +104,7 @@ internal sealed class WritebackHarness {
         var provider = services.BuildServiceProvider();
 
         return new WritebackWorker(Log, provider.GetRequiredService<IServiceScopeFactory>(), Signal, Target,
-            TargetConnections, Health, Time) {
+            TargetConnections, Health, Incidents, Time) {
             RetryDelay = TimeSpan.FromMilliseconds(20)
         };
     }

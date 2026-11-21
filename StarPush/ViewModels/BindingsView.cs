@@ -20,22 +20,25 @@ public sealed record BindingsView(
     public static BindingsView WaitingOn(IReadOnlyList<SetupStepView> missing) => new(missing, null, []);
 
     public static BindingsView For(PlatformEventChannelEntity? primary, IReadOnlyList<BindingDTO> bindings,
-        IReadOnlyList<WritebackFailureDTO>? writebackFailures = null) {
+        IReadOnlyList<WritebackFailureDTO>? writebackFailures = null,
+        IReadOnlyDictionary<int, int>? inboundFailureCounts = null) {
         if (primary is null) {
             return new BindingsView([], null, []);
         }
 
         var byEntity = BindingsByEntity(bindings);
         var failures = (writebackFailures ?? []).GroupBy(f => f.BindingId).ToDictionary(g => g.Key, g => g.Count());
+        var inbound = inboundFailureCounts ?? new Dictionary<int, int>();
 
         return new BindingsView([], primary.MasterLabel ?? primary.DeveloperName, primary.Members
             .OrderBy(m => m.SelectedEntity, StringComparer.OrdinalIgnoreCase)
             .Select(m => byEntity.TryGetValue(m.SelectedEntity, out var b)
                 ? new BindingRowView(m.Id, m.SelectedEntity, b.Id, b.TargetTable, b.KeyMappingColumn,
                     b.FieldMappingCount, b.FieldCount, StateOf(b), $"/bindings/{b.Id}",
-                    b.SyncDirection == nameof(SyncDirection.TwoWay), failures.GetValueOrDefault(b.Id))
+                    b.SyncDirection == nameof(SyncDirection.TwoWay), failures.GetValueOrDefault(b.Id),
+                    inbound.GetValueOrDefault(b.Id))
                 : new BindingRowView(m.Id, m.SelectedEntity, null, null, null, 0, null, BindingRowState.Unbound,
-                    $"/bindings/new?member={m.Id}", false, 0))
+                    $"/bindings/new?member={m.Id}", false, 0, 0))
             .ToList());
     }
 

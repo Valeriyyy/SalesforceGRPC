@@ -1,3 +1,4 @@
+using Database.Models;
 using DTO;
 
 namespace StarPush.ViewModels;
@@ -25,11 +26,13 @@ public sealed record BindingEditorView(
     string SyncDirection,
     WritebackSetupDTO? Writeback,
     string? WritebackError,
-    IReadOnlyList<WritebackFailureDTO> WritebackFailures) {
+    IReadOnlyList<WritebackFailureDTO> WritebackFailures,
+    IReadOnlyList<InboundFailureView> InboundFailures) {
 
     public static BindingEditorView For(BindingDTO binding, int? memberId, BindingTargetView? target,
         TargetDatabaseErrorView? targetError, WritebackSetupDTO? writeback = null, string? writebackError = null,
-        IReadOnlyList<WritebackFailureDTO>? writebackFailures = null) => new(
+        IReadOnlyList<WritebackFailureDTO>? writebackFailures = null,
+        IReadOnlyList<InboundFailure>? inboundFailures = null) => new(
         binding.Id,
         binding.EntityName,
         binding.TargetTable,
@@ -44,5 +47,6 @@ public sealed record BindingEditorView(
         binding.SyncDirection,
         writeback,
         writebackError,
-        writebackFailures ?? []);
+        writebackFailures ?? [],
+        (inboundFailures ?? []).Select(InboundFailureView.For).ToList());
 }

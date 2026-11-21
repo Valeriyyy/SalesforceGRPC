@@ -1,3 +1,5 @@
+using Application.Runtime;
+
 namespace Application.Writeback;
 
 /// <summary>
@@ -5,7 +7,7 @@ namespace Application.Writeback;
 /// describes this process, not stored configuration.
 /// </summary>
 public interface IWritebackHealth {
-    WritebackRunState State { get; }
+    RunState State { get; }
     string? Reason { get; }
 
     /// <summary>How far the reader is behind the Target Database, in bytes, when last measured.</summary>

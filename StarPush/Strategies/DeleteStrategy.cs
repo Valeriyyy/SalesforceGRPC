@@ -59,8 +59,6 @@ public class DeleteStrategy : IEventStrategy {
             }
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
-        } catch (Exception e) {
-            _logger.LogCritical(e, "Failed to delete the following {ObjectType} records: {recordIds}", dbSchema.EntityName, string.Join(",", recordIdStrings));
         }
     }
 }

@@ -94,7 +94,13 @@ internal sealed class FakeSubscription : IClientStreamWriter<FetchRequest> {
 
         public async Task<bool> MoveNext(CancellationToken cancellationToken) {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(_callToken, cancellationToken);
-            var next = await _owner.NextAsync(linked.Token).ConfigureAwait(false);
+            FetchResponse? next;
+            try {
+                next = await _owner.NextAsync(linked.Token).ConfigureAwait(false);
+            } catch (OperationCanceledException) when (_callToken.IsCancellationRequested) {
+                // What a real gRPC call does when the token it was opened with is cancelled.
+                throw new RpcException(new Status(StatusCode.Cancelled, "Call canceled by the client."));
+            }
             if (next is null) {
                 return false;
             }

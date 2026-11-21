@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Runtime;
 using Application.Services.Interfaces;
 using Application.Targets;
 using Avro;
@@ -39,6 +40,10 @@ public class Worker : BackgroundService {
     private readonly IMetaRepository _metaRepo;
     private readonly IAvroSchemaRepository _avroSchemaRepo;
     private readonly ICheckpointRepository _checkpoints;
+    private readonly InboundHealth _health;
+    private readonly IIncidentRecorder _incidents;
+    private readonly IInboundFailureRepository _failures;
+    private readonly TimeProvider _time;
 
     private const int EventsPerFetch = 25;
 
@@ -50,7 +55,11 @@ public class Worker : BackgroundService {
         ICheckpointRepository checkpoints,
         IServiceScopeFactory scopeFactory,
         IConfigurationChangeSignal changeSignal,
-        EventResolver eventResolver) {
+        EventResolver eventResolver,
+        InboundHealth health,
+        IIncidentRecorder incidents,
+        IInboundFailureRepository failures,
+        TimeProvider time) {
         _logger = logger;
         _pubsubClient = psClient;
         _metaRepo = metaRepo;
@@ -59,6 +68,10 @@ public class Worker : BackgroundService {
         _scopeFactory = scopeFactory;
         _changeSignal = changeSignal;
         _eventResolver = eventResolver;
+        _health = health;
+        _incidents = incidents;
+        _failures = failures;
+        _time = time;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -75,7 +88,8 @@ public class Worker : BackgroundService {
                     _logger.LogError(ex,
                         "Could not build a subscription plan; retrying in {Delay}s. The API stays available.",
                         RetryDelay.TotalSeconds);
-                    await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
+                    await ReportRetryingAsync($"Could not work out what to stream: {ex.Message}").ConfigureAwait(false);
+                    await Task.Delay(RetryDelay, _time, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -84,6 +98,8 @@ public class Worker : BackgroundService {
                     // this host serves. Idling beats refusing to boot, and beats shutting down.
                     _logger.LogWarning(
                         "No usable Salesforce Org Connection, so there is nothing to stream. Set one up through the API and the worker will start without a restart.");
+                    await ReportAsync(RunState.Blocked,
+                        "There is no usable Org Connection. Set it up or verify it, and syncing starts by itself.").ConfigureAwait(false);
                     await _changeSignal.WaitForChangeAsync(stoppingToken).ConfigureAwait(false);
                     continue;
                 }
@@ -97,16 +113,24 @@ public class Worker : BackgroundService {
                             _logger.LogError(
                                 "The Target Connection is Failed, so events are not being consumed. Retrying in {Delay}s.",
                                 RetryDelay.TotalSeconds);
-                            await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
+                            await ReportRetryingAsync("The Target Connection is Failed, so nothing can be written. Checking it again.")
+                                .ConfigureAwait(false);
+                            await Task.Delay(RetryDelay, _time, stoppingToken).ConfigureAwait(false);
                             await VerifyTargetAsync(stoppingToken).ConfigureAwait(false);
                             continue;
                         case ConnectionState.Incomplete:
                             _logger.LogWarning(
                                 "The Target Connection has never been proved, so there is nowhere to write events. Correct it through the API and the worker will start without a restart.");
+                            await ReportAsync(RunState.Blocked,
+                                "The Target Connection has never been proved, so there is nowhere to write. Correct it, and syncing starts by itself.")
+                                .ConfigureAwait(false);
                             break;
                         default:
                             _logger.LogWarning(
                                 "No Target Connection is configured, so there is nowhere to write events. Set one up through the API and the worker will start without a restart.");
+                            await ReportAsync(RunState.Blocked,
+                                "There is no Target Connection, so there is nowhere to write. Set one up, and syncing starts by itself.")
+                                .ConfigureAwait(false);
                             break;
                     }
                     await _changeSignal.WaitForChangeAsync(stoppingToken).ConfigureAwait(false);
@@ -117,6 +141,7 @@ public class Worker : BackgroundService {
                     // A fresh install has no Primary Channel. Idling beats refusing to boot.
                     _logger.LogWarning(
                         "No Primary Channel is configured, so there is nothing to subscribe to. Select one through the API and the worker will start streaming without a restart.");
+                    await ReportAsync(RunState.Idle, "There is no Primary Channel, so there is nothing to stream.").ConfigureAwait(false);
                     await _changeSignal.WaitForChangeAsync(stoppingToken).ConfigureAwait(false);
                     continue;
                 }
@@ -137,7 +162,7 @@ public class Worker : BackgroundService {
     /// <summary>
     /// Waits before re-planning after a failure, so a persistent fault does not become a hot loop.
     /// </summary>
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
+    public TimeSpan RetryDelay { get; init; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Reports a dropped stream and pauses before reconnecting.
@@ -155,7 +180,9 @@ public class Worker : BackgroundService {
             "from the Checkpoint, so events published meanwhile will be replayed.",
             exc.StatusCode, exc.Message, RetryDelay.TotalSeconds);
 
-        await Task.Delay(RetryDelay, stoppingToken).ConfigureAwait(false);
+        await ReportRetryingAsync($"The Salesforce event stream dropped ({exc.StatusCode}): {exc.Status.Detail.TrimEnd('.')}. " +
+            "Reconnecting from the Checkpoint.").ConfigureAwait(false);
+        await Task.Delay(RetryDelay, _time, stoppingToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -174,6 +201,10 @@ public class Worker : BackgroundService {
             "worker resumes from the Checkpoint and replays everything since, provided that is within 72 hours.",
             exc.Message);
 
+        await ReportAsync(RunState.Retrying,
+            $"The Target Database refused a write: {exc.Message}. Waiting for it to come back, then replaying from the Checkpoint.")
+            .ConfigureAwait(false);
+
         try {
             using var scope = _scopeFactory.CreateScope();
             var targets = scope.ServiceProvider.GetRequiredService<ITargetConnectionService>();
@@ -181,6 +212,20 @@ public class Worker : BackgroundService {
         } catch (Exception ex) when (ex is not OperationCanceledException) {
             _logger.LogError(ex, "Could not record the Target Connection failure; the state may still read Connected");
         }
+    }
+
+    /// <summary>
+    /// Reports that an event's Avro Schema or Binding could not be looked up, and pauses before resubscribing.
+    /// </summary>
+    /// <remarks>
+    /// Salesforce or the App Database not answering right now is not a problem with the event, so nothing is
+    /// skipped: the batch never reaches its Checkpoint and is replayed once the lookup works again.
+    /// </remarks>
+    private async Task ReportSchemaUnavailableAndPause(SchemaUnavailableException exc, CancellationToken stoppingToken) {
+        _logger.LogError(exc, "{Message} Reconnecting in {Delay}s and replaying from the Checkpoint.",
+            exc.Message, RetryDelay.TotalSeconds);
+        await ReportRetryingAsync($"{exc.Message} Replaying from the Checkpoint.").ConfigureAwait(false);
+        await Task.Delay(RetryDelay, _time, stoppingToken).ConfigureAwait(false);
     }
 
     /// <summary>Proves the Failed Target Connection again. Success is recorded, and logged loudly, by the service.</summary>
@@ -193,6 +238,19 @@ public class Worker : BackgroundService {
             _logger.LogError(ex, "Could not verify the Target Connection; will retry");
         }
     }
+
+    /// <summary>
+    /// Sets the Inbound Run State and tells the Incident recorder, which never throws. Recorded without the
+    /// stopping token, so the last change before a shutdown is not lost to it.
+    /// </summary>
+    private Task ReportAsync(RunState state, string? reason = null, DateTimeOffset? nextAttemptAt = null) {
+        _health.Set(state, reason, nextAttemptAt);
+        return _incidents.ReportAsync(RunDirection.Inbound, state, reason);
+    }
+
+    /// <summary>Reports Retrying with when the next attempt is, <see cref="RetryDelay"/> from now.</summary>
+    private Task ReportRetryingAsync(string reason) =>
+        ReportAsync(RunState.Retrying, reason, _time.GetUtcNow() + RetryDelay);
 
     private async Task<SubscriptionPlan> GetPlan(CancellationToken cancellationToken) {
         // The service is scoped; the worker is not, so a scope per re-plan rather than a captured instance.
@@ -225,10 +283,14 @@ public class Worker : BackgroundService {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
         } catch (RpcException exc) when (exc.StatusCode == StatusCode.Cancelled && !stoppingToken.IsCancellationRequested) {
             _logger.LogInformation("Configuration changed; rebuilding the subscription plan");
+        } catch (RpcException exc) when (exc.StatusCode == StatusCode.Cancelled && stoppingToken.IsCancellationRequested) {
+            // The application is stopping and cancelled the call itself: not a drop, and not an Incident.
         } catch (RpcException exc) {
             await ReportDropAndPause(exc, stoppingToken).ConfigureAwait(false);
         } catch (TargetDatabaseWriteException exc) {
             await ReportTargetFailureAndDrop(exc, stoppingToken).ConfigureAwait(false);
+        } catch (SchemaUnavailableException exc) {
+            await ReportSchemaUnavailableAndPause(exc, stoppingToken).ConfigureAwait(false);
         } finally {
             if (!planScope.IsCancellationRequested) {
                 await planScope.CancelAsync().ConfigureAwait(false);
@@ -270,13 +332,22 @@ public class Worker : BackgroundService {
         using var stream = _pubsubClient.Subscribe(null, null, planToken);
         await stream.RequestStream.WriteAsync(fetchRequest, planToken).ConfigureAwait(false);
 
+        // With no Active Binding the stream still runs, so the Checkpoint keeps moving past events nobody wants,
+        // but nothing is being synced: that is Idle, by configuration.
+        if (bindings.Count == 0) {
+            await ReportAsync(RunState.Idle, $"Primary Channel {plan.ChannelFullName} has no Active Binding.").ConfigureAwait(false);
+        } else {
+            await ReportAsync(RunState.Running).ConfigureAwait(false);
+        }
+
         while (await stream.ResponseStream.MoveNext(planToken).ConfigureAwait(false)) {
             var response = stream.ResponseStream.Current;
+            _health.Heard(_time.GetUtcNow());
             _logger.LogInformation("Latest Replay Id: {replayId}, RPC Id: {RpcId}",
                 response.LatestReplayId.ToLongBE(), response.RpcId);
 
             if (response.Events is { Count: > 0 }) {
-                await ApplyBatch(response.Events, bindings, planToken).ConfigureAwait(false);
+                await ApplyBatch(response.Events, bindings, plan.ChannelFullName!, planToken).ConfigureAwait(false);
             }
 
             // A strategy can swallow a cancellation as one record's failure, so a batch that "finished"
@@ -323,6 +394,11 @@ public class Worker : BackgroundService {
             "{RetentionHours} hours. Changes made between that Checkpoint and the oldest event Salesforce still keeps " +
             "have been lost. Resubscribing from Earliest to recover everything still available.",
             plan.ChannelFullName, age.TotalHours, Checkpoint.Retention.TotalHours);
+        await _incidents.CheckpointDiscardedAsync(
+            $"Salesforce rejected the Checkpoint for {plan.ChannelFullName}, saved {age.TotalHours:F1} hours ago; it keeps " +
+            $"change events for {Checkpoint.Retention.TotalHours:F0} hours. Changes made between that Checkpoint and the " +
+            "oldest event Salesforce still keeps are missing from the Target Database. Syncing restarted from Earliest.")
+            .ConfigureAwait(false);
 
         try {
             await _checkpoints.DiscardAsync(rejected.ChannelId, StartingPoint.Earliest, cancellationToken).ConfigureAwait(false);
@@ -406,15 +482,15 @@ public class Worker : BackgroundService {
     /// these dense bursts.
     /// </remarks>
     private async Task ApplyBatch(IReadOnlyList<ConsumerEvent> events, Dictionary<string, CDCSchema> bindings,
-        CancellationToken cancellationToken) {
-        var decoded = await Task.WhenAll(events.Select(e => DecodeEvent(e, bindings, cancellationToken)))
+        string channelFullName, CancellationToken cancellationToken) {
+        var decoded = await Task.WhenAll(events.Select(e => DecodeEvent(e, bindings, channelFullName, cancellationToken)))
             .ConfigureAwait(false);
 
         var groups = OrderingGroups(decoded.OfType<DecodedEvent>().ToList());
 
         await Task.WhenAll(groups.Select(async group => {
             foreach (var decodedEvent in group) {
-                await ApplyEvent(decodedEvent, cancellationToken).ConfigureAwait(false);
+                await ApplyEvent(decodedEvent, channelFullName, cancellationToken).ConfigureAwait(false);
             }
         })).ConfigureAwait(false);
     }
@@ -456,26 +532,30 @@ public class Worker : BackgroundService {
     /// Finds an event's Binding and decodes it, or returns null when the event is to be skipped.
     /// </summary>
     /// <remarks>
-    /// A failure here is this event's problem — a payload that will not decode, a header that cannot be read —
-    /// so it is logged and the event skipped, and one bad record cannot stop the batch or the stream.
+    /// Two kinds of failure, kept apart. Finding the Binding reads Salesforce and the App Database, so failing there
+    /// says nothing about the event: it escapes as <see cref="SchemaUnavailableException"/>, the stream drops and
+    /// the batch is replayed. A failure after that — a payload that will not decode, a header that cannot be read —
+    /// is this event's problem: it is recorded as an Inbound Failure and the event skipped, so one bad record
+    /// cannot stop the batch or the stream.
     /// </remarks>
     private async Task<DecodedEvent?> DecodeEvent(ConsumerEvent consumerEvent,
-        Dictionary<string, CDCSchema> bindings, CancellationToken cancellationToken) {
+        Dictionary<string, CDCSchema> bindings, string channelFullName, CancellationToken cancellationToken) {
+        _logger.LogInformation("Event Replay Id: {replayId}, Schema Id: {schemaId}",
+            consumerEvent.ReplayId.ToLongBE(), consumerEvent.Event.SchemaId);
+
+        var binding = await ResolveBinding(consumerEvent.Event.SchemaId, bindings, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (binding is null) {
+            return null;
+        }
+
+        string? changeTypeName = null;
+        IReadOnlyList<string> recordIds = [];
         try {
-            _logger.LogInformation("Event Replay Id: {replayId}, Schema Id: {schemaId}",
-                consumerEvent.ReplayId.ToLongBE(), consumerEvent.Event.SchemaId);
-
-            var binding = await ResolveBinding(consumerEvent.Event.SchemaId, bindings, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (binding is null) {
-                return null;
-            }
-
             if (binding.AvroSchema?.SchemaJson is not { } schemaJson) {
-                _logger.LogError("Binding {BindingId} has no Avro Schema to decode {Entity} with",
-                    binding.Id, binding.EntityName);
-                return null;
+                throw new InvalidOperationException(
+                    $"Binding {binding.Id} has no Avro Schema to decode {binding.EntityName} with.");
             }
 
             var schema = Schema.Parse(schemaJson);
@@ -487,18 +567,17 @@ public class Worker : BackgroundService {
 
             if (!record.GetTypedValue<GenericRecord>("ChangeEventHeader", out var changeEventHeader) ||
                 !changeEventHeader.GetTypedValue<GenericEnum>("changeType", out var changeType)) {
-                _logger.LogWarning("Event for {Entity} carries no readable ChangeEventHeader", binding.EntityName);
-                return null;
+                throw new InvalidOperationException($"The event for {binding.EntityName} carries no readable ChangeEventHeader.");
             }
 
-            if (!Enum.TryParse(changeType.Value, out ChangeType changeTypeEnum)) {
-                _logger.LogWarning("Unrecognised change type '{ChangeType}' for {Entity}", changeType.Value, binding.EntityName);
-                return null;
-            }
-
-            var recordIds = changeEventHeader.TryGetValue("recordIds", out var ids) && ids is object[] idArray
+            changeTypeName = changeType.Value;
+            recordIds = changeEventHeader.TryGetValue("recordIds", out var ids) && ids is object[] idArray
                 ? idArray.Select(id => id?.ToString() ?? string.Empty).ToList()
                 : [];
+
+            if (!Enum.TryParse(changeType.Value, out ChangeType changeTypeEnum)) {
+                throw new InvalidOperationException($"Unrecognised change type '{changeType.Value}' for {binding.EntityName}.");
+            }
 
             return new DecodedEvent(consumerEvent, binding, record, schema, changeTypeEnum, recordIds);
         } catch (OperationCanceledException) {
@@ -506,27 +585,64 @@ public class Worker : BackgroundService {
         } catch (Exception ex) {
             _logger.LogError(ex, "Failed to decode event with Schema Id {SchemaId}; skipping it and continuing with the rest of the batch",
                 consumerEvent.Event.SchemaId);
+            await RecordFailure(consumerEvent, binding, channelFullName, changeTypeName, recordIds, ex).ConfigureAwait(false);
             return null;
         }
     }
 
     /// <summary>
-    /// Applies one decoded event, isolating its failure so one bad record cannot stop the batch or the stream.
+    /// Applies one event through its strategy. A failure that is the event's own is recorded as an Inbound
+    /// Failure and the batch carries on; a Target Database that refused the write ends the stream instead.
     /// </summary>
-    private async Task ApplyEvent(DecodedEvent decodedEvent, CancellationToken cancellationToken) {
+    private async Task ApplyEvent(DecodedEvent decodedEvent, string channelFullName, CancellationToken cancellationToken) {
         try {
             _logger.LogInformation("Processing {ChangeType} for {Entity}", decodedEvent.ChangeType, decodedEvent.Binding.EntityName);
 
             var strategy = _eventResolver.Resolve(decodedEvent.ChangeType);
             await strategy.ProcessEvent(decodedEvent.Record, decodedEvent.Schema, decodedEvent.Binding, cancellationToken)
                 .ConfigureAwait(false);
+            _health.Applied(_time.GetUtcNow());
         } catch (OperationCanceledException) {
             throw;
         } catch (TargetDatabaseWriteException) {
             throw;
+        } catch (Exception ex) when (cancellationToken.IsCancellationRequested) {
+            // A driver can report a cancelled command as an ordinary error. The batch is being abandoned and will
+            // be replayed, so this is no Inbound Failure — recording one would leave a gap that is not there.
+            throw new OperationCanceledException("The batch was cancelled while applying an event.", ex, cancellationToken);
         } catch (Exception ex) {
             _logger.LogError(ex, "Failed to apply {ChangeType} with Schema Id {SchemaId}; continuing with the rest of the batch",
                 decodedEvent.ChangeType, decodedEvent.Source.Event.SchemaId);
+            await RecordFailure(decodedEvent.Source, decodedEvent.Binding, channelFullName,
+                decodedEvent.ChangeType.ToString(), decodedEvent.RecordIds, ex).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Records an event that is being skipped because it could not be applied, so the gap it leaves in the Target
+    /// Database is never silent. A failure to record is logged and swallowed: it must not stop the batch.
+    /// </summary>
+    private async Task RecordFailure(ConsumerEvent consumerEvent, CDCSchema binding, string channelFullName,
+        string? changeType, IReadOnlyList<string> recordIds, Exception error) {
+        _health.Failed();
+        var now = _time.GetUtcNow().UtcDateTime;
+        try {
+            // Without the batch's token: a skipped event must be recorded even if the batch is being cancelled.
+            await _failures.RecordAsync(new InboundFailure {
+                BindingId = binding.Id,
+                ChannelFullName = channelFullName,
+                ReplayId = consumerEvent.ReplayId.ToByteArray(),
+                EntityName = binding.EntityName,
+                ChangeType = changeType,
+                RecordIds = recordIds.ToArray(),
+                Message = error.Message,
+                FirstFailedAt = now,
+                LastFailedAt = now
+            }).ConfigureAwait(false);
+        } catch (Exception ex) {
+            _logger.LogError(ex,
+                "Could not record the Inbound Failure for {Entity} (records {RecordIds}); the event is skipped and only this log says so",
+                binding.EntityName, string.Join(", ", recordIds));
         }
     }
 
@@ -547,12 +663,18 @@ public class Worker : BackgroundService {
             }
         }
 
+        try {
+            return await ResolveUnknownSchema(schemaId, bindings, cancellationToken).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            throw new SchemaUnavailableException(schemaId, ex);
+        }
+    }
+
+    private async Task<CDCSchema?> ResolveUnknownSchema(string schemaId,
+        Dictionary<string, CDCSchema> bindings, CancellationToken cancellationToken) {
         _logger.LogInformation("Unrecognised Schema Id {SchemaId}; fetching it from Salesforce", schemaId);
 
         var avroSchema = await FetchAndStoreSchema(schemaId, cancellationToken).ConfigureAwait(false);
-        if (avroSchema is null) {
-            return null;
-        }
 
         var binding = await _metaRepo.GetSchemaByEntityName(avroSchema.RecordName).ConfigureAwait(false);
 
@@ -587,32 +709,27 @@ public class Worker : BackgroundService {
         return binding;
     }
 
-    private async Task<DbAvroSchema?> FetchAndStoreSchema(string schemaId, CancellationToken cancellationToken) {
-        try {
-            var existing = await _avroSchemaRepo.GetSchemaBySchemaIdAsync(schemaId, cancellationToken).ConfigureAwait(false);
-            if (existing is not null) {
-                return existing;
-            }
-
-            var schemaInfo = await _pubsubClient.GetSchemaAsync(
-                new SchemaRequest { SchemaId = schemaId }, cancellationToken: cancellationToken);
-
-            var parsed = Schema.Parse(schemaInfo.SchemaJson);
-
-            var avroSchema = new DbAvroSchema {
-                SchemaId = schemaInfo.SchemaId,
-                RecordName = parsed.Name,
-                SchemaJson = schemaInfo.SchemaJson,
-                DateCreated = DateTime.UtcNow
-            };
-
-            avroSchema.Id = await _avroSchemaRepo.InsertSchemaAsync(avroSchema, cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("Stored Avro Schema {SchemaId} for {RecordName}", avroSchema.SchemaId, avroSchema.RecordName);
-
-            return avroSchema;
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-            _logger.LogError(ex, "Error retrieving Avro Schema {SchemaId}", schemaId);
-            return null;
+    private async Task<DbAvroSchema> FetchAndStoreSchema(string schemaId, CancellationToken cancellationToken) {
+        var existing = await _avroSchemaRepo.GetSchemaBySchemaIdAsync(schemaId, cancellationToken).ConfigureAwait(false);
+        if (existing is not null) {
+            return existing;
         }
+
+        var schemaInfo = await _pubsubClient.GetSchemaAsync(
+            new SchemaRequest { SchemaId = schemaId }, cancellationToken: cancellationToken);
+
+        var parsed = Schema.Parse(schemaInfo.SchemaJson);
+
+        var avroSchema = new DbAvroSchema {
+            SchemaId = schemaInfo.SchemaId,
+            RecordName = parsed.Name,
+            SchemaJson = schemaInfo.SchemaJson,
+            DateCreated = DateTime.UtcNow
+        };
+
+        avroSchema.Id = await _avroSchemaRepo.InsertSchemaAsync(avroSchema, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Stored Avro Schema {SchemaId} for {RecordName}", avroSchema.SchemaId, avroSchema.RecordName);
+
+        return avroSchema;
     }
 }

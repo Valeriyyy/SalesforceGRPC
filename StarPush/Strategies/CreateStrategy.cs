@@ -77,8 +77,6 @@ public class CreateStrategy : IEventStrategy {
             _logger.LogInformation("Created {UpdatedCount} records from {ObjectType}", createdCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
-        } catch (Exception e) {
-            _logger.LogCritical(e, "Failed to insert record {Data}", StringExtensions.ToJson(data));
         }
     }
 

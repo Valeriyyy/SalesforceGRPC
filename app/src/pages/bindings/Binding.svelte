@@ -11,6 +11,7 @@
     import type { BindingEditorView, BindingValidation, BindingView, CompatibilityResult, FieldMapping } from "../../lib/types/views";
     import FieldMappings from "./FieldMappings.svelte";
     import SyncDirection from "./SyncDirection.svelte";
+    import InboundFailures from "./InboundFailures.svelte";
     import WritebackFailures from "./WritebackFailures.svelte";
     import WaitingForSetup from "./WaitingForSetup.svelte";
     import { bindingStates, levelTones, plural } from "./state";
@@ -318,6 +319,17 @@
                 {/if}
                 {#if dirty}<p class="text-xs text-warning-700-300">Save or discard Field Mappings first.</p>{/if}
             </section>
+
+            {#if binding.inboundFailures.length > 0}
+                <section class="card space-y-3 border border-error-500 p-6">
+                    <h2 class="h5">{plural(binding.inboundFailures.length, "change")} couldn't be applied</h2>
+                    <p class="text-sm text-surface-600-400">
+                        These changes from Salesforce were skipped, so they are missing from {binding.targetTable}. StarPush
+                        won't retry them. Correct the records yourself, then Dismiss each one.
+                    </p>
+                    <InboundFailures failures={binding.inboundFailures} />
+                </section>
+            {/if}
 
             {#if binding.writebackFailures.length > 0}
                 <section class="card space-y-3 border border-error-500 p-6">

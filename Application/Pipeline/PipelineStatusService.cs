@@ -1,3 +1,4 @@
+using Application.Runtime;
 using Application.Writeback;
 using Database.Models;
 using Database.Repositories.Interfaces;
@@ -157,7 +158,7 @@ public sealed class PipelineStatusService : IPipelineStatusService {
         if (writeback.LagBytes > WritebackHealth.LagAttentionBytes) {
             reasons.Add(StageReason.WritebackLagging);
         }
-        if (writeback.State is WritebackRunState.Blocked) {
+        if (writeback.State is RunState.Blocked) {
             reasons.Add(StageReason.WritebackBlocked);
         }
 
@@ -168,7 +169,7 @@ public sealed class PipelineStatusService : IPipelineStatusService {
             Counts = counts,
             WritebackFailures = writebackFailures,
             WritebackLagBytes = writeback.LagBytes,
-            WritebackBlockedReason = writeback.State is WritebackRunState.Blocked ? writeback.Reason : null
+            WritebackBlockedReason = writeback.State is RunState.Blocked ? writeback.Reason : null
         };
     }
 }

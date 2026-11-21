@@ -1,4 +1,5 @@
 using Application.Pipeline;
+using Application.Runtime;
 using Application.Writeback;
 using Database.Models;
 using Database.Repositories.Interfaces;
@@ -329,7 +330,7 @@ public class PipelineStatusServiceTests {
     public async Task AWritebackReaderFarBehindTheDatabase_NeedsAttention_BecauseTheServerIsKeepingChangesForIt() {
         WithEverythingOk();
         WithBindings(active: 2);
-        _writeback.Set(WritebackRunState.Running);
+        _writeback.Set(RunState.Running);
         _writeback.Lag(WritebackHealth.LagAttentionBytes + 1);
 
         var status = await Status();
@@ -343,7 +344,7 @@ public class PipelineStatusServiceTests {
     public async Task WritebackThatCannotRun_NeedsAttention_AndSaysWhy() {
         WithEverythingOk();
         WithBindings(active: 2);
-        _writeback.Set(WritebackRunState.Blocked, "The Replication Credential is missing.");
+        _writeback.Set(RunState.Blocked, "The Replication Credential is missing.");
 
         var status = await Status();
 

@@ -12,4 +12,5 @@ public sealed record BindingRowView(
     BindingRowState State,
     string Href,
     bool TwoWay,
-    int WritebackFailureCount);
+    int WritebackFailureCount,
+    int InboundFailureCount);

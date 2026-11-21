@@ -9,6 +9,7 @@ import NewBinding from "./bindings/NewBinding.svelte";
 import Channel from "./channels/Channel.svelte";
 import Channels from "./channels/Channels.svelte";
 import NewChannel from "./channels/NewChannel.svelte";
+import Incidents from "./incidents/Incidents.svelte";
 import OrgConnection from "./org-connection/OrgConnection.svelte";
 import Overview from "./overview/Overview.svelte";
 import Placeholder from "./placeholder/Placeholder.svelte";
@@ -18,6 +19,7 @@ import TargetConnection from "./target-connection/TargetConnection.svelte";
 // built (ADR 0006). The key is the component name the controller passes to SveltePage.For.
 const componentRegistry: Record<string, Component<{ page: any }>> = {
     overview: Overview,
+    incidents: Incidents,
     placeholder: Placeholder,
     "org-connection": OrgConnection,
     channels: Channels,

@@ -12,7 +12,8 @@
         active: page.rows.filter(r => r.state === "active").length,
         unbound: page.rows.filter(r => r.state === "unbound").length,
         needsAttention: page.rows.filter(r => r.state === "needsAttention").length,
-        writebackFailures: page.rows.reduce((n, r) => n + r.writebackFailureCount, 0)
+        writebackFailures: page.rows.reduce((n, r) => n + r.writebackFailureCount, 0),
+        inboundFailures: page.rows.reduce((n, r) => n + r.inboundFailureCount, 0)
     });
 </script>
 
@@ -41,6 +42,7 @@
         <span><strong>{counts.active}</strong> of {page.rows.length} {page.rows.length === 1 ? "Entity" : "Entities"} syncing</span>
         {#if counts.needsAttention}<span class="text-error-700-300"><strong>{counts.needsAttention}</strong> need{counts.needsAttention === 1 ? "s" : ""} attention</span>{/if}
         {#if counts.unbound}<span class="text-warning-700-300"><strong>{counts.unbound}</strong> without a Binding</span>{/if}
+        {#if counts.inboundFailures}<span class="text-error-700-300"><strong>{counts.inboundFailures}</strong> {counts.inboundFailures === 1 ? "change" : "changes"} that couldn't be applied</span>{/if}
         {#if counts.writebackFailures}<span class="text-error-700-300"><strong>{counts.writebackFailures}</strong> {counts.writebackFailures === 1 ? "change" : "changes"} Salesforce refused</span>{/if}
     </div>
 
@@ -65,6 +67,9 @@
                                 {#if row.twoWay}<span class="badge preset-tonal-primary gap-1"><ArrowLeftRight class="size-3" />Two-way</span>{/if}
                                 {#if row.state === "needsAttention"}
                                     <span class="block text-xs text-error-700-300">Forced back to Incomplete — not syncing</span>
+                                {/if}
+                                {#if row.inboundFailureCount > 0}
+                                    <span class="block text-xs text-error-700-300">{plural(row.inboundFailureCount, "change")} couldn't be applied</span>
                                 {/if}
                                 {#if row.writebackFailureCount > 0}
                                     <span class="block text-xs text-error-700-300">{plural(row.writebackFailureCount, "change")} Salesforce refused</span>

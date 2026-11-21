@@ -1,6 +1,7 @@
 using Application.Bindings;
 using Application.Connections;
 using Application.Pipeline;
+using Application.Runtime;
 using Application.Services;
 using Application.Services.Interfaces;
 using Application.Targets;
@@ -23,6 +24,7 @@ using Salesforce.Clients;
 using Salesforce.Writeback;
 using StarPush;
 using StarPush.Health;
+using StarPush.Runtime;
 using StarPush.Schemas;
 using StarPush.Strategies;
 using StarPush.Telemetry;
@@ -72,6 +74,8 @@ builder.Services.AddSingleton<IPlatformEventChannelRepository, PlatformEventChan
 builder.Services.AddSingleton<ICheckpointRepository, CheckpointRepository>();
 builder.Services.AddSingleton<IOrgConnectionRepository, OrgConnectionRepository>();
 builder.Services.AddSingleton<IWritebackFailureRepository, WritebackFailureRepository>();
+builder.Services.AddSingleton<IInboundFailureRepository, InboundFailureRepository>();
+builder.Services.AddSingleton<IIncidentRepository, IncidentRepository>();
 
 #region Data Protection
 // The one secret this application stores is a private key it generated for itself. The key ring lives in the
@@ -201,6 +205,10 @@ builder.Services.AddTransient<ISObjectDescriber, CachedSObjectDescriber>();
 builder.Services.AddTransient<WritebackProcessor>();
 builder.Services.AddSingleton<WritebackHealth>();
 builder.Services.AddSingleton<IWritebackHealth>(sp => sp.GetRequiredService<WritebackHealth>());
+builder.Services.AddSingleton<InboundHealth>();
+builder.Services.AddSingleton<IInboundHealth>(sp => sp.GetRequiredService<InboundHealth>());
+builder.Services.AddSingleton<IIncidentRecorder, IncidentRecorder>();
+builder.Services.AddScoped<IWorkerStatusService, WorkerStatusService>();
 
 builder.Services.AddHttpClient<SalesforceToolingClient>(client => {
     client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -213,6 +221,8 @@ if (schemaSaveDir != null && !Directory.Exists(schemaSaveDir)) {
     Directory.CreateDirectory(schemaSaveDir);
 }
 
+// First, so the application's start is recorded before the workers report anything and its stop after they end.
+builder.Services.AddHostedService<LifecycleIncidents>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<WritebackWorker>();
 builder.Services.AddHostedService<SecretProtectionStartupCheck>();

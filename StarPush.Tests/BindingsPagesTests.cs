@@ -29,6 +29,7 @@ public class BindingsPagesTests {
     private readonly IPipelineStatusService _pipeline = Substitute.For<IPipelineStatusService>();
     private readonly IBindingService _bindings = Substitute.For<IBindingService>();
     private readonly IPlatformEventChannelRepository _channels = Substitute.For<IPlatformEventChannelRepository>();
+    private readonly IInboundFailureRepository _inboundFailures = Substitute.For<IInboundFailureRepository>();
 
     private const int PrimaryChannelId = 1;
     private const int BindingId = 42;
@@ -38,7 +39,7 @@ public class BindingsPagesTests {
         _bindings.GetBindingsAsync(Arg.Any<CancellationToken>()).Returns([]);
     }
 
-    private BindingsPageController NewController() => new(_pipeline, _bindings, _channels);
+    private BindingsPageController NewController() => new(_pipeline, _bindings, _channels, _inboundFailures);
 
     #region Waiting
 
@@ -166,6 +167,21 @@ public class BindingsPagesTests {
         Assert.Equal(shown, row.State);
     }
 
+    [Fact]
+    public async Task TheList_CountsEachBindingsInboundFailures() {
+        ArrangePrimaryChannel(("AccountChangeEvent", BindingId), ("ContactChangeEvent", 43));
+        _bindings.GetBindingsAsync(Arg.Any<CancellationToken>()).Returns([
+            Binding(BindingId, "AccountChangeEvent", "Active"),
+            Binding(43, "ContactChangeEvent", "Active")
+        ]);
+        _inboundFailures.CountByBindingAsync(Arg.Any<CancellationToken>())
+            .Returns(new Dictionary<int, int> { [BindingId] = 2, [43] = 1 });
+
+        var rows = Page<BindingsView>(await NewController().Index(Ct)).Rows;
+
+        Assert.Equal([2, 1], rows.Select(r => r.InboundFailureCount));
+    }
+
     #endregion
 
     #region Choosing a Target Table
@@ -242,6 +258,20 @@ public class BindingsPagesTests {
 
         Assert.Empty(view.Waiting);
         Assert.Null(view.Binding);
+    }
+
+    [Fact]
+    public async Task TheEditor_ListsTheBindingsInboundFailures_WithWhatTheUserNeedsToCorrectTheData() {
+        ArrangeEditor();
+        _inboundFailures.ListAsync(BindingId, Arg.Any<CancellationToken>()).Returns([InboundFailure(9, BindingId)]);
+
+        var failure = Assert.Single(Page<BindingView>(await NewController().Show(BindingId, Ct)).Binding!.InboundFailures);
+
+        Assert.Equal(9, failure.Id);
+        Assert.Equal("UPDATE", failure.ChangeType);
+        Assert.Equal(["001A", "001B"], failure.RecordIds);
+        Assert.Equal("mapping is corrupt", failure.Message);
+        Assert.Equal(2, failure.Attempts);
     }
 
     [Fact]
@@ -348,6 +378,12 @@ public class BindingsPagesTests {
         Id = id, EntityName = entity, TargetTable = $"salesforce.{entity.ToLowerInvariant()}", State = state,
         NeedsAttention = needsAttention, KeyMappingColumn = keyColumn, FieldMappingCount = fieldMappings,
         FieldCount = fields
+    };
+
+    private static InboundFailure InboundFailure(int id, int bindingId) => new() {
+        Id = id, BindingId = bindingId, ChannelFullName = "Sales__chn", ReplayId = [0, 1], EntityName = "AccountChangeEvent",
+        ChangeType = "UPDATE", RecordIds = ["001A", "001B"], Message = "mapping is corrupt",
+        FirstFailedAt = DateTime.UtcNow.AddHours(-1), LastFailedAt = DateTime.UtcNow, Attempts = 2
     };
 
     private static TargetTableDTO Table(string name, string? boundTo = null) => new() {

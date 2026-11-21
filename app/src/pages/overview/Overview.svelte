@@ -1,16 +1,24 @@
-<!-- The Overview: the Pipeline as four Stage cards in setup order, then the reserved worker-status card. -->
+<!-- The Overview: the Pipeline as four Stage cards in setup order, then the worker card. -->
 <script lang="ts">
-    import { ChevronRight, PartyPopper } from "@lucide/svelte";
+    import { ChevronRight, PartyPopper, TriangleAlert } from "@lucide/svelte";
+    import { untrack } from "svelte";
     import type { OverviewView } from "../../lib/types/views";
     import StatusBadge from "../../lib/components/StatusBadge.svelte";
+    import { notSyncing } from "../../lib/utils/run";
     import WorkerStatusCard from "./WorkerStatusCard.svelte";
 
     let { page }: { page: OverviewView } = $props();
+
+    // The card polls; the header follows it, so a recovery or a new problem changes both together.
+    let worker = $state(untrack(() => page.workerStatus));
+    const stalled = $derived(page.allOk && notSyncing(worker));
 </script>
 
 <header class="mb-6">
     <h1 class="h3">Overview</h1>
-    {#if page.allOk}
+    {#if stalled}
+        <p class="mt-1 flex items-center gap-2 text-warning-700-300"><TriangleAlert class="size-4" /> Set up, but not syncing right now. The worker status below says why.</p>
+    {:else if page.allOk}
         <p class="mt-1 flex items-center gap-2 text-success-600-400"><PartyPopper class="size-4" /> Pipeline set up</p>
     {:else}
         <p class="mt-1 text-surface-600-400">Set up each Stage in order. The highlighted card is your next step.</p>
@@ -51,4 +59,4 @@
     {/each}
 </div>
 
-<WorkerStatusCard focus={page.allOk} class="mt-8" />
+<WorkerStatusCard bind:status={worker} focus={page.allOk} class="mt-8" />

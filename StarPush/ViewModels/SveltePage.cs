@@ -9,7 +9,7 @@ namespace StarPush.ViewModels;
 /// </summary>
 public sealed class SveltePage {
     /// <summary>camelCase properties and enum values, matching the TypeScript view types by hand.</summary>
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) {
+    internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) {
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 

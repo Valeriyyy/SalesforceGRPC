@@ -13,6 +13,7 @@ namespace StarPush.Tests;
 /// unset. <b>These tests Disconnect</b>: they destroy the Org Connection and every org-scoped row in that
 /// database. Point the variable at a throwaway App Database with migrations 002–006 applied, never at a real one.
 /// </remarks>
+[Collection(AppDatabaseCollection.Name)]
 public class OrgConnectionRepositoryTests {
     private const string ConnectionStringVariable = "STARPUSH_TEST_APP_DATABASE";
 

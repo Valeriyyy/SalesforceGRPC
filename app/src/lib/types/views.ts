@@ -26,7 +26,9 @@ export interface OverviewView {
     stages: StageView[];
     nextStep: PipelineStage | null;
     allOk: boolean;
-    workerStatus: WorkerStatusView | null;
+    /** Every Stage is OK, yet a direction of syncing is Blocked or Retrying. */
+    notSyncing: boolean;
+    workerStatus: WorkerStatusView;
 }
 
 export interface StageView {
@@ -42,8 +44,59 @@ export interface StageView {
     waitingOn: string[];
 }
 
-/** Reserved: the worker does not report its runtime status yet, so this is always null. */
-export type WorkerStatusView = Record<string, never>;
+/** A Run State as the card shows it: the four Run States, plus the moment after startup before the first. */
+export type RunStateView = "starting" | "idle" | "blocked" | "running" | "retrying";
+export type RunDirection = "inbound" | "writeback";
+export type IncidentKind = "retrying" | "blocked" | "checkpointDiscarded" | "started" | "stopped";
+
+/** The Overview's worker card. Also the answer of GET api/worker-status, which the card polls. */
+export interface WorkerStatusView {
+    startedAt: string;
+    inbound: InboundRunView;
+    /** Null when no Binding is Two-way. */
+    writeback: WritebackRunView | null;
+    /** The latest Incident of the last 24 hours. */
+    latestIncident: IncidentView | null;
+    /** How many more there were in the last 24 hours. */
+    otherIncidents: number;
+    inboundFailures: number;
+    writebackFailures: number;
+}
+
+export interface InboundRunView {
+    state: RunStateView;
+    reason: string | null;
+    nextAttemptAt: string | null;
+    lastHeardAt: string | null;
+    /** Running, but nothing heard from Salesforce for more than five minutes. */
+    stale: boolean;
+    eventsApplied: number;
+    lastAppliedAt: string | null;
+}
+
+export interface WritebackRunView {
+    state: RunStateView;
+    reason: string | null;
+    lastAppliedAt: string | null;
+    /** Only when it is high enough to be worth a look. */
+    lagBytes: number | null;
+}
+
+export interface IncidentView {
+    id: number;
+    /** Null for the application starting or stopping. */
+    direction: RunDirection | null;
+    kind: IncidentKind;
+    message: string;
+    startedAt: string;
+    /** Null while it is still going on. */
+    endedAt: string | null;
+    occurrences: number;
+}
+
+export interface IncidentsView {
+    incidents: IncidentView[];
+}
 
 export interface PlaceholderView {
     title: string;
@@ -316,6 +369,7 @@ export interface BindingRowView {
     href: string;
     twoWay: boolean;
     writebackFailureCount: number;
+    inboundFailureCount: number;
 }
 
 export interface NewBindingView {
@@ -366,6 +420,20 @@ export interface BindingEditorView {
     writeback: WritebackSetup | null;
     writebackError: string | null;
     writebackFailures: WritebackFailure[];
+    inboundFailures: InboundFailure[];
+}
+
+/** A change event that was skipped because it could not be applied, so the change is missing from the table. */
+export interface InboundFailure {
+    id: number;
+    /** Null when the event's header could not be read. */
+    changeType: string | null;
+    /** Empty when the event could not be decoded far enough to say. */
+    recordIds: string[];
+    message: string;
+    firstFailedAt: string;
+    lastFailedAt: string;
+    attempts: number;
 }
 
 export interface BindingTargetView {

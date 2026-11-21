@@ -1,5 +1,6 @@
 using Application.Services.Interfaces;
 using Application.Writeback;
+using Database.Repositories.Interfaces;
 using DTO;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -20,10 +21,13 @@ namespace StarPush.Controllers;
 [Route("api/[controller]")]
 public class BindingsController : ControllerBase {
     private readonly IBindingService _bindings;
+    private readonly IInboundFailureRepository _inboundFailures;
     private readonly ILogger<BindingsController> _logger;
 
-    public BindingsController(IBindingService bindings, ILogger<BindingsController> logger) {
+    public BindingsController(IBindingService bindings, IInboundFailureRepository inboundFailures,
+        ILogger<BindingsController> logger) {
         _bindings = bindings;
+        _inboundFailures = inboundFailures;
         _logger = logger;
     }
 
@@ -141,6 +145,14 @@ public class BindingsController : ControllerBase {
     [HttpDelete("writeback-failures/{failureId:int}")]
     public Task<ActionResult> DismissWritebackFailure(int failureId, CancellationToken ct) =>
         Execute(() => _bindings.DismissWritebackFailureAsync(failureId, ct));
+
+    /// <summary>
+    /// Dismisses an Inbound Failure the user has dealt with. There is nothing to retry: the user corrects the data
+    /// themselves, outside this application. Dismissing one already gone succeeds.
+    /// </summary>
+    [HttpDelete("inbound-failures/{failureId:int}")]
+    public Task<ActionResult> DismissInboundFailure(int failureId, CancellationToken ct) =>
+        Execute(() => _inboundFailures.DeleteAsync(failureId, ct));
 
     #endregion
 

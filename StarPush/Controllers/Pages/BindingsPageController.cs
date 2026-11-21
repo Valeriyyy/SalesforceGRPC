@@ -17,7 +17,7 @@ namespace StarPush.Controllers.Pages;
 /// missing, until there is a Primary Channel and a usable Target Connection.
 /// </remarks>
 public class BindingsPageController(IPipelineStatusService pipeline, IBindingService bindings,
-    IPlatformEventChannelRepository channels) : PageController(pipeline) {
+    IPlatformEventChannelRepository channels, IInboundFailureRepository inboundFailures) : PageController(pipeline) {
 
     [HttpGet("/bindings")]
     public async Task<IActionResult> Index(CancellationToken cancellationToken) {
@@ -29,8 +29,9 @@ public class BindingsPageController(IPipelineStatusService pipeline, IBindingSer
         var primary = await channels.GetPrimaryChannelAsync(cancellationToken).ConfigureAwait(false);
         var all = await bindings.GetBindingsAsync(cancellationToken).ConfigureAwait(false);
         var failures = await bindings.GetWritebackFailuresAsync(null, cancellationToken).ConfigureAwait(false);
+        var inbound = await inboundFailures.CountByBindingAsync(cancellationToken).ConfigureAwait(false);
 
-        return RenderPage("bindings", "Bindings", NavKey.Bindings, status, BindingsView.For(primary, all, failures));
+        return RenderPage("bindings", "Bindings", NavKey.Bindings, status, BindingsView.For(primary, all, failures, inbound));
     }
 
     [HttpGet("/bindings/new")]
@@ -108,8 +109,9 @@ public class BindingsPageController(IPipelineStatusService pipeline, IBindingSer
             }
         }
         var failures = await bindings.GetWritebackFailuresAsync(id, cancellationToken).ConfigureAwait(false);
+        var inbound = await inboundFailures.ListAsync(id, cancellationToken).ConfigureAwait(false);
 
         return RenderPage("binding", $"{binding.EntityName} → {binding.TargetTable}", NavKey.Bindings, status,
-            new BindingView([], BindingEditorView.For(binding, memberId, target, targetError, writeback, writebackError, failures)));
+            new BindingView([], BindingEditorView.For(binding, memberId, target, targetError, writeback, writebackError, failures, inbound)));
     }
 }

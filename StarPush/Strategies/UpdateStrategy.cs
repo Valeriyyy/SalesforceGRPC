@@ -78,8 +78,6 @@ public class UpdateStrategy : IEventStrategy {
             _logger.LogInformation("Updated {UpdatedCount} records from {ObjectType}", updatedCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
-        } catch (Exception e) {
-            _logger.LogCritical(e, "Failed to update record {Data}", StringExtensions.ToJson(data));
         }
     }
 

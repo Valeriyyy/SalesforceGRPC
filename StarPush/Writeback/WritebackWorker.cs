@@ -1,7 +1,9 @@
 using Application.Bindings;
+using Application.Runtime;
 using Application.Services.Interfaces;
 using Application.Targets;
 using Application.Writeback;
+using Database.Models;
 using Database.Repositories.Interfaces;
 using Salesforce.Writeback;
 using StarPush.Telemetry;
@@ -31,6 +33,7 @@ public class WritebackWorker : BackgroundService {
     private readonly ITargetConnectionProvider _target;
     private readonly ITargetConnectionRepository _targetConnections;
     private readonly WritebackHealth _health;
+    private readonly IIncidentRecorder _incidents;
     private readonly TimeProvider _time;
 
     /// <summary>How long to wait before trying again after a failure, so a persistent fault is not a hot loop.</summary>
@@ -46,6 +49,7 @@ public class WritebackWorker : BackgroundService {
         ITargetConnectionProvider target,
         ITargetConnectionRepository targetConnections,
         WritebackHealth health,
+        IIncidentRecorder incidents,
         TimeProvider time) {
         _logger = logger;
         _scopeFactory = scopeFactory;
@@ -53,6 +57,7 @@ public class WritebackWorker : BackgroundService {
         _target = target;
         _targetConnections = targetConnections;
         _health = health;
+        _incidents = incidents;
         _time = time;
     }
 
@@ -67,14 +72,14 @@ public class WritebackWorker : BackgroundService {
                     plan = await GetPlan(stoppingToken).ConfigureAwait(false);
                 } catch (Exception ex) when (ex is not OperationCanceledException) {
                     _logger.LogError(ex, "Could not build a Writeback plan; retrying in {Delay}s.", RetryDelay.TotalSeconds);
-                    _health.Set(WritebackRunState.Retrying, ex.Message);
+                    await SetAsync(RunState.Retrying, $"Could not work out what to write back: {ex.Message}").ConfigureAwait(false);
                     await Task.Delay(RetryDelay, _time, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
                 if (!plan.HasWork) {
                     await DisarmIfArmed(plan, stoppingToken).ConfigureAwait(false);
-                    _health.Set(WritebackRunState.Idle);
+                    await SetAsync(RunState.Idle).ConfigureAwait(false);
                     await changed.ConfigureAwait(false);
                     continue;
                 }
@@ -83,7 +88,7 @@ public class WritebackWorker : BackgroundService {
                     var reason = plan.BlockedReason ?? "Writeback is not set up for the Target Database.";
                     _logger.LogWarning("{Count} Binding(s) are Two-way, but Writeback cannot run: {Reason}",
                         plan.Bindings.Count, reason);
-                    _health.Set(WritebackRunState.Blocked, reason);
+                    await SetAsync(RunState.Blocked, reason).ConfigureAwait(false);
                     await changed.ConfigureAwait(false);
                     continue;
                 }
@@ -127,7 +132,7 @@ public class WritebackWorker : BackgroundService {
             await capability.ArmAsync(endpoints, tables, planScope.Token).ConfigureAwait(false);
 
             await using var stream = await capability.OpenStreamAsync(endpoints, planScope.Token).ConfigureAwait(false);
-            _health.Set(WritebackRunState.Running);
+            await SetAsync(RunState.Running).ConfigureAwait(false);
             _logger.LogInformation("Writing back {Count} Two-way Binding(s): {Tables}", plan.Bindings.Count,
                 string.Join(", ", tables));
 
@@ -164,8 +169,14 @@ public class WritebackWorker : BackgroundService {
 
     private async Task PauseAfter(Exception ex, string message, CancellationToken stoppingToken) {
         _logger.LogWarning(ex, message, RetryDelay.TotalSeconds, ex.Message);
-        _health.Set(WritebackRunState.Retrying, ex.Message);
+        await SetAsync(RunState.Retrying, ex.Message).ConfigureAwait(false);
         await Task.Delay(RetryDelay, _time, stoppingToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Sets the Writeback Run State and tells the Incident recorder, which never throws.</summary>
+    private Task SetAsync(RunState state, string? reason = null) {
+        _health.Set(state, reason);
+        return _incidents.ReportAsync(RunDirection.Writeback, state, reason);
     }
 
     private async Task WatchForConfigurationChange(CancellationTokenSource planScope) {

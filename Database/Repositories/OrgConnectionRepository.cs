@@ -242,6 +242,7 @@ public class OrgConnectionRepository : IOrgConnectionRepository {
             DELETE FROM salesforce.channel_checkpoints;
             DELETE FROM salesforce.platform_event_channel_members;
             DELETE FROM salesforce.platform_event_channels;
+            DELETE FROM salesforce.inbound_failures;
             DELETE FROM salesforce.mapped_fields;
             DELETE FROM salesforce.cdc_schemas;
             DELETE FROM salesforce.avro_schemas;

@@ -205,6 +205,7 @@ public class TargetConnectionRepository : ITargetConnectionRepository {
         // The Replication Credential and the armed flag belong to the old database too: Writeback was taken
         // down there before this was called, and a credential for it proves nothing about the new one.
         const string destroy = @"
+            DELETE FROM salesforce.inbound_failures;
             DELETE FROM salesforce.mapped_fields;
             DELETE FROM salesforce.cdc_schemas;
             UPDATE salesforce.target_connection SET

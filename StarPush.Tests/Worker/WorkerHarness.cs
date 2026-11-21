@@ -1,4 +1,5 @@
 using Application.Bindings;
+using Application.Runtime;
 using Application.Services.Interfaces;
 using Application.Targets;
 using Avro;
@@ -12,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using StarPush.Strategies;
+using StarPush.Tests.Runtime;
 
 namespace StarPush.Tests.Worker;
 
@@ -58,10 +60,21 @@ internal sealed class WorkerHarness {
     public ICheckpointRepository Checkpoints { get; } = Substitute.For<ICheckpointRepository>();
     public ConfigurationChangeSignal Signal { get; } = new();
     public ListLogger<StarPush.Worker> Log { get; } = new();
+    public IInboundFailureRepository Failures { get; } = Substitute.For<IInboundFailureRepository>();
+    public InMemoryIncidents IncidentStore { get; } = new();
+    public IncidentRecorder Incidents { get; }
+    // The real clock: the worker's pauses are timers; a test that needs one to pass shortens RetryDelay.
+    public TimeProvider Time { get; } = TimeProvider.System;
+    public InboundHealth Health { get; }
+
+    /// <summary>The production delay unless a test shortens it, so a test that must not pause still proves it does not.</summary>
+    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(15);
 
     public SubscriptionPlan Plan { get; set; }
 
     public WorkerHarness() {
+        Health = new InboundHealth(Time);
+        Incidents = new IncidentRecorder(IncidentStore, Time, new ListLogger<IncidentRecorder>());
         Plan = new SubscriptionPlan {
             HasConnection = true,
             TargetConnectionState = ConnectionState.Connected,
@@ -104,7 +117,10 @@ internal sealed class WorkerHarness {
         };
 
         return new StarPush.Worker(Log, PubSub, Meta, AvroSchemas, Checkpoints,
-            provider.GetRequiredService<IServiceScopeFactory>(), Signal, new EventResolver(strategies));
+            provider.GetRequiredService<IServiceScopeFactory>(), Signal, new EventResolver(strategies),
+            Health, Incidents, Failures, Time) {
+            RetryDelay = RetryDelay
+        };
     }
 
     /// <summary>Starts the worker, waits for <paramref name="until"/>, then stops it.</summary>
@@ -123,6 +139,13 @@ internal sealed class WorkerHarness {
     }
 
     public Task RunUntil(FakeSubscription subscription) => RunUntil(() => subscription.Drained.Task);
+
+    /// <summary>Completes once the worker reports <paramref name="state"/> and <paramref name="also"/> holds.</summary>
+    public async Task UntilState(RunState state, Func<bool>? also = null) {
+        while (Health.State != state || Health.Starting || also?.Invoke() == false) {
+            await Task.Delay(5);
+        }
+    }
 
     #region Scripting events
 
@@ -146,6 +169,12 @@ internal sealed class WorkerHarness {
         ReplayId = ReplayId(0),
         Event = new ProducerEvent { SchemaId = SchemaId, Payload = ByteString.CopyFrom(0xFF, 0xFF, 0xFF) }
     };
+
+    /// <summary>The same event, stamped with another Avro Schema Id.</summary>
+    public static ConsumerEvent WithSchema(ConsumerEvent consumerEvent, string schemaId) {
+        consumerEvent.Event.SchemaId = schemaId;
+        return consumerEvent;
+    }
 
     public static ConsumerEvent Create(string recordId, string phone) =>
         Event("CREATE", [recordId], phone, []);

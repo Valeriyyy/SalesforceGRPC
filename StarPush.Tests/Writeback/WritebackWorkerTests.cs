@@ -304,4 +304,51 @@ public class WritebackWorkerTests {
         Assert.Equal(1, harness.Capability.Disarmed);
         Assert.Empty(harness.Capability.Armed);
     }
+
+    #region Incidents
+
+    [Fact]
+    public async Task AFailureThatMayPass_IsAWritebackIncident_ThatEndsOnceWritebackRunsAgain() {
+        var harness = new WritebackHarness();
+        var attempts = 0;
+        harness.Salesforce.UpdateAsync(default!, default!, default).ReturnsForAnyArgs(call => {
+            if (Interlocked.Increment(ref attempts) == 1) {
+                throw new SalesforceTransientException("Salesforce answered 503");
+            }
+            return Succeed(call.ArgAt<IReadOnlyList<IReadOnlyDictionary<string, object?>>>(1));
+        });
+
+        await harness.RunUntilConfirmed(Transaction(Update(
+            before: Row(("id", 7), ("sf_id", "001000000000001AAA"), ("phone", "111")),
+            after: Row(("id", 7), ("sf_id", "001000000000001AAA"), ("phone", "222")))));
+
+        var incident = Assert.Single(harness.IncidentStore.All);
+        Assert.Equal(IncidentKind.Retrying, incident.Kind);
+        Assert.Equal(RunDirection.Writeback, incident.Direction);
+        Assert.Contains("503", incident.Message);
+        Assert.NotNull(incident.EndedAt);
+    }
+
+    [Fact]
+    public async Task BecomingBlockedWhileRunning_IsAWritebackIncident() {
+        var harness = new WritebackHarness();
+        var running = harness.RunUntil(async () => {
+            while (harness.Health.State != Application.Runtime.RunState.Running) {
+                await Task.Delay(5);
+            }
+            harness.Plan = new WritebackPlan { Bindings = harness.Plan.Bindings, BlockedReason = "The Replication Credential was refused." };
+            harness.Signal.Signal();
+            while (harness.IncidentStore.All.Count == 0) {
+                await Task.Delay(5);
+            }
+        });
+        await running;
+
+        var incident = Assert.Single(harness.IncidentStore.All);
+        Assert.Equal(IncidentKind.Blocked, incident.Kind);
+        Assert.Equal(RunDirection.Writeback, incident.Direction);
+        Assert.Contains("Replication Credential", incident.Message);
+    }
+
+    #endregion
 }

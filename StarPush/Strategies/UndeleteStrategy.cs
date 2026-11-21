@@ -64,9 +64,6 @@ public class UndeleteStrategy : IEventStrategy {
             _logger.LogInformation("Restored {RestoredCount} records in {ObjectType}", restoredCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
-        } catch (Exception e) {
-            _logger.LogCritical(e, "Failed to restore the following {ObjectType} records: {recordIds}",
-                dbSchema.EntityName, string.Join(",", recordIdStrings));
         }
     }
 }
