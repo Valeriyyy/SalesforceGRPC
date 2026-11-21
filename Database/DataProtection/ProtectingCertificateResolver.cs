@@ -1,68 +1,8 @@
-using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography.X509Certificates;
 
 namespace Database.DataProtection;
-
-/// <summary>
-/// Where to look for the certificate that protects the Data Protection key ring.
-/// </summary>
-/// <remarks>
-/// Bound from the <c>DataProtection:ProtectingCertificate</c> section. Every setting here names a
-/// <em>location</em>; none of them is key material, so this object is safe to log.
-/// </remarks>
-public sealed class ProtectingCertificateOptions {
-    /// <summary>Environment variable holding a base64-encoded PFX. Tried first.</summary>
-    public string? EnvironmentVariable { get; set; } = "STARPUSH_PROTECTING_CERT";
-
-    /// <summary>Environment variable holding the PFX password, if it has one.</summary>
-    public string? PasswordEnvironmentVariable { get; set; } = "STARPUSH_PROTECTING_CERT_PASSWORD";
-
-    /// <summary>
-    /// The pre-rename name of <see cref="EnvironmentVariable"/>, read only when that one is unset so an
-    /// existing deployment keeps starting. Deprecated: using it logs a Warning.
-    /// </summary>
-    public string? LegacyEnvironmentVariable { get; set; } = "SALESFORCEGRPC_PROTECTING_CERT";
-
-    /// <summary>The pre-rename name of <see cref="PasswordEnvironmentVariable"/>. Deprecated.</summary>
-    public string? LegacyPasswordEnvironmentVariable { get; set; } = "SALESFORCEGRPC_PROTECTING_CERT_PASSWORD";
-
-    /// <summary>Path to a PFX file. Tried second.</summary>
-    public string? FilePath { get; set; }
-
-    /// <summary>
-    /// Identifier of a key in a cloud KMS. Tried last, and not implemented — the seam exists so the third
-    /// option does not require rearranging this class, and a configured value is reported rather than
-    /// silently ignored.
-    /// </summary>
-    public string? KeyManagementServiceKeyId { get; set; }
-}
-
-/// <summary>
-/// The outcome of looking for the protecting certificate: what was found, and where every attempt looked.
-/// </summary>
-/// <remarks>
-/// <see cref="Attempts"/> carries the failure message, not just the fact of failure. "No protecting
-/// certificate" tells an operator nothing; "looked at $STARPUSH_PROTECTING_CERT (unset),
-/// $SALESFORCEGRPC_PROTECTING_CERT (unset) and /etc/certs/dp.pfx (no such file)" tells them what to do next.
-/// </remarks>
-public sealed record ProtectingCertificateResolution {
-    public X509Certificate2? Certificate { get; init; }
-
-    /// <summary>Where the certificate came from, or a summary of where it was not.</summary>
-    public required string Source { get; init; }
-
-    public IReadOnlyList<string> Attempts { get; init; } = [];
-
-    public bool Resolved => Certificate is not null;
-}
-
-/// <summary>
-/// Resolves the certificate that protects the Data Protection key ring, from outside the database.
-/// </summary>
-public interface IProtectingCertificateResolver {
-    ProtectingCertificateResolution Resolve();
-}
 
 /// <inheritdoc />
 /// <remarks>

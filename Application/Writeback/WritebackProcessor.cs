@@ -384,19 +384,3 @@ public sealed class WritebackProcessor {
 
     #endregion
 }
-
-/// <summary>What became of one transaction's changes.</summary>
-public sealed class WritebackSummary {
-    public int Sent { get; set; }
-    public int Failed { get; set; }
-    public int Skipped { get; set; }
-    public string? LastFailure { get; set; }
-}
-
-/// <summary>
-/// Writeback could not finish for a reason that may pass. Nothing is confirmed, and the same changes are sent
-/// again; every Writeback is safe to repeat.
-/// </summary>
-public sealed class WritebackTransientException : Exception {
-    public WritebackTransientException(string message, Exception? inner = null) : base(message, inner) { }
-}

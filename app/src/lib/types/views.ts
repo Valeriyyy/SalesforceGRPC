@@ -120,7 +120,7 @@ export interface OrgMismatchView {
     discoveredOrgId: string;
 }
 
-// Channels pages (ChannelsViews.cs). Only Change Data Capture Channels ever appear.
+// Channels pages (ChannelsView.cs, ChannelView.cs and their parts). Only Change Data Capture Channels ever appear.
 
 export type StartingPoint = "latest" | "earliest";
 export type BindingState = "incomplete" | "active" | "inactive";
@@ -284,7 +284,7 @@ export interface FieldView {
     choices: string[] | null;
 }
 
-// Bindings pages (BindingsViews.cs). Every page waits, showing only `waiting`, until a Primary Channel and a usable
+// Bindings pages (BindingsView.cs, BindingView.cs and their parts). Every page waits, showing only `waiting`, until a Primary Channel and a usable
 // Target Connection exist.
 
 /** Where a Binding stands. needsAttention: was Active, forced back to Incomplete by the worker or an edit. */
@@ -381,7 +381,7 @@ export interface BindingTargetView {
     validation: BindingValidation;
 }
 
-// The api/Bindings DTOs the Bindings pages carry and send (DTO/BindingResponses.cs, DTO/BindingRequests.cs).
+// The api/Bindings DTOs the Bindings pages carry and send (BindingDTO, CreateBindingDTO and the rest in DTO/).
 
 export interface BindableField {
     /** Flattened: a compound's parts appear as e.g. BillingAddressCity, never the compound itself. */
@@ -430,7 +430,7 @@ export interface BindingValidation {
     validatedAgainstSchemaId: string | null;
 }
 
-// Writeback (DTO/WritebackDTOs.cs).
+// Writeback (the Writeback*DTO files in DTO/).
 
 export type SyncDirection = "Inbound" | "TwoWay";
 export type FieldDirection = "TwoWay" | "InboundOnly" | "WritebackOnly";

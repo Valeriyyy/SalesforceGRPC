@@ -3,11 +3,6 @@ using System.Text.Json;
 
 namespace StarPush.ViewModels;
 
-public enum NoticeKind {
-    Success,
-    Error
-}
-
 /// <summary>
 /// What happened on the way back from Salesforce, shown once on the Org Connection page.
 /// </summary>
@@ -38,6 +33,3 @@ public sealed record OrgConnectionNotice(NoticeKind Kind, string Message, Salesf
     public static OrgConnectionNotice Mismatch(string message, string storedOrgId, string discoveredOrgId) =>
         new(NoticeKind.Error, message, null, new OrgMismatchView(storedOrgId, discoveredOrgId));
 }
-
-/// <summary>Both org ids, because that is the first thing anyone asks when a connection is refused for one.</summary>
-public sealed record OrgMismatchView(string StoredOrgId, string DiscoveredOrgId);

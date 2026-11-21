@@ -1,33 +1,5 @@
 namespace Application.Writeback;
 
-public enum WritebackRunState {
-    /// <summary>No Binding is Two-way and Active, so there is nothing to write back.</summary>
-    Idle,
-
-    /// <summary>A Binding wants Writeback but something it needs is missing; <see cref="IWritebackHealth.Reason"/> says what.</summary>
-    Blocked,
-
-    /// <summary>Reading the Target Database's changes and writing them back.</summary>
-    Running,
-
-    /// <summary>Paused after a failure that may pass, and about to try again.</summary>
-    Retrying
-}
-
-/// <summary>
-/// What the Writeback worker is doing right now, for the pipeline status and telemetry. Kept in memory: it
-/// describes this process, not stored configuration.
-/// </summary>
-public interface IWritebackHealth {
-    WritebackRunState State { get; }
-    string? Reason { get; }
-
-    /// <summary>How far the reader is behind the Target Database, in bytes, when last measured.</summary>
-    long? LagBytes { get; }
-
-    DateTimeOffset? LastAppliedAt { get; }
-}
-
 /// <summary>The one <see cref="IWritebackHealth"/>, written by the Writeback worker.</summary>
 public sealed class WritebackHealth : IWritebackHealth {
     /// <summary>Lag beyond this shows the Bindings stage as Needs attention: the database is keeping a lot for us.</summary>

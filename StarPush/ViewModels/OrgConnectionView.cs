@@ -2,17 +2,6 @@ using DTO;
 
 namespace StarPush.ViewModels;
 
-/// <summary>Where the Org Connection is in its setup, which decides what the page shows and its one primary action.</summary>
-public enum OrgConnectionPhase {
-    NotStarted,
-    ReadyToApprove,
-    NeedsConsumerSecret,
-    Approved,
-    Unverified,
-    Connected,
-    Failed
-}
-
 /// <summary>
 /// The Org Connection page. The server decides the phase and what travels with it; the component only renders.
 /// </summary>
@@ -69,53 +58,4 @@ public sealed record OrgConnectionView(
         { OrgId: not null } => OrgConnectionPhase.Unverified,
         _ => OrgConnectionPhase.NeedsConsumerSecret
     };
-}
-
-/// <summary>What the user typed, shown back to them. The Consumer Secret is never part of it.</summary>
-public sealed record OrgConnectionDetailsView(string ConsumerKey, string AdministeringUsername, string RunAsUsername, bool IsSandbox);
-
-/// <summary>
-/// The org this installation is bound to. The org id outlives an edit of the details; the URL and the last
-/// success do not.
-/// </summary>
-public sealed record OrgView(string OrgId, string? OrgUrl, DateTime? LastConnectedAt);
-
-/// <summary>The Signing Certificate, for comparing against Setup and for Manual Registration.</summary>
-public sealed record CertificateView(string Fingerprint, DateTime? ExpiresAt, string DownloadHref);
-
-/// <summary>What the last Bootstrap's Self-Configuration did, and what it left to do by hand.</summary>
-public sealed record SelfConfigurationView(DateTime At, bool Configured, string Summary, IReadOnlyList<string> ManualSteps) {
-    public static SelfConfigurationView? From(SelfConfigurationDTO? outcome) => outcome is null
-        ? null
-        : new(outcome.At, outcome.Configured, outcome.Summary, outcome.ManualSteps);
-}
-
-/// <summary>Whether stored credentials can be written and read. See <see cref="SecretProtectionDTO"/>.</summary>
-public enum SecretProtectionStatus {
-    Ready,
-    NotConfigured,
-    Unreadable
-}
-
-/// <summary>
-/// When not Ready, the page replaces the form with the guidance: re-running setup would orphan the External
-/// Client App.
-/// </summary>
-public sealed record SecretProtectionView(SecretProtectionStatus Status, string ProtectingKey, string? Guidance) {
-    public static SecretProtectionView From(SecretProtectionDTO protection) => new(
-        Enum.TryParse<SecretProtectionStatus>(protection.Status, out var status) ? status : SecretProtectionStatus.Unreadable,
-        protection.ProtectingKey,
-        protection.Guidance);
-}
-
-/// <summary>
-/// A Salesforce failure, both halves: what it most likely means, and Salesforce's own words.
-/// </summary>
-/// <remarks>Guidance is null when the error is not recognised; the page says so rather than guessing.</remarks>
-public sealed record SalesforceErrorView(string Error, string ErrorDescription, string? Guidance, string RawResponse,
-    DateTime? OccurredAt) {
-
-    public static SalesforceErrorView? From(OAuthFailureDTO? failure) => failure is null
-        ? null
-        : new(failure.Error, failure.ErrorDescription, failure.Guidance, failure.RawResponse, failure.OccurredAt);
 }

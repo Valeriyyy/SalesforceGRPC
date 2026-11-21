@@ -9,7 +9,6 @@ using Database.Repositories.Interfaces;
 using Google.Protobuf;
 using GrpcClient;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using StarPush.Strategies;
@@ -178,29 +177,4 @@ internal sealed class WorkerHarness {
     }
 
     #endregion
-}
-
-/// <summary>Keeps every log entry so a test can assert that a failure was made visible.</summary>
-internal sealed class ListLogger<T> : ILogger<T> {
-    private readonly List<(LogLevel Level, string Message)> _entries = [];
-
-    public IReadOnlyList<(LogLevel Level, string Message)> Entries {
-        get { lock (_entries) { return _entries.ToList(); } }
-    }
-
-    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-    public bool IsEnabled(LogLevel logLevel) => true;
-
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-        lock (_entries) {
-            _entries.Add((logLevel, formatter(state, exception)));
-        }
-    }
-}
-
-/// <summary>A driver failure that never reached a server — the Target Database is down, not the data bad.</summary>
-internal sealed class UnreachableDatabaseException : System.Data.Common.DbException {
-    public UnreachableDatabaseException() : base("connection refused") { }
 }

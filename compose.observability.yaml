@@ -1,0 +1,22 @@
+# A local dashboard for StarPush's logs, traces and metrics. See docs/observability.md.
+#
+#   docker compose -f compose.observability.yaml up -d
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 dotnet run --project StarPush/StarPush.csproj
+#   open http://localhost:18888
+#
+# Telemetry is held in memory and gone when the container stops; for retention, point
+# OTEL_EXPORTER_OTLP_ENDPOINT at a collector or a backend that stores it instead.
+services:
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.6
+    container_name: starpush-dashboard
+    environment:
+      # Ports are bound to localhost only, so no login is asked for. Remove this before exposing the UI anywhere
+      # else: the dashboard then prints a login link to its own container log.
+      DASHBOARD__FRONTEND__AUTHMODE: Unsecured
+      DASHBOARD__OTLP__AUTHMODE: Unsecured
+    ports:
+      - "127.0.0.1:18888:18888" # dashboard UI
+      - "127.0.0.1:4317:18889"  # OTLP over gRPC (what StarPush uses by default)
+      - "127.0.0.1:4318:18890"  # OTLP over HTTP
+    restart: unless-stopped

@@ -4,29 +4,6 @@ using System.Collections.Concurrent;
 namespace Salesforce.Auth;
 
 /// <summary>
-/// Thrown when a token is requested but no Org Connection has been set up.
-/// </summary>
-/// <remarks>
-/// Distinct from a rejected token: nothing has been tried, and the remedy is setup rather than diagnosis.
-/// </remarks>
-public sealed class NoOrgConnectionException : InvalidOperationException {
-    public NoOrgConnectionException()
-        : base("No Salesforce Org Connection has been set up, so no access token can be obtained. " +
-               "Configure one through the API.") { }
-}
-
-public interface ISalesforceTokenProvider {
-    /// <summary>An access token for one identity, from cache when it is still good.</summary>
-    Task<AuthToken> GetAuthToken(SalesforceIdentity identity, CancellationToken cancellationToken = default);
-
-    /// <summary>Discards the cached token for one identity and signs a fresh assertion.</summary>
-    Task ForceRefreshAsync(SalesforceIdentity identity, CancellationToken cancellationToken = default);
-
-    /// <summary>Drops every cached token, so the next request uses whatever credentials are now stored.</summary>
-    void ClearCache();
-}
-
-/// <summary>
 /// Obtains Salesforce access tokens through the OAuth 2.0 JWT Bearer flow.
 /// </summary>
 /// <remarks>

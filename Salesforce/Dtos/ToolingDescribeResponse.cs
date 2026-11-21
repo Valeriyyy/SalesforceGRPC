@@ -14,28 +14,3 @@ public class ToolingDescribeResponse {
     [JsonProperty("fields")]
     public List<ToolingDescribeField>? Fields { get; set; }
 }
-
-public class ToolingDescribeField {
-    [JsonProperty("name")]
-    public string? Name { get; set; }
-
-    [JsonProperty("label")]
-    public string? Label { get; set; }
-
-    [JsonProperty("type")]
-    public string? Type { get; set; }
-
-    [JsonProperty("picklistValues")]
-    public List<ToolingPicklistValue>? PicklistValues { get; set; }
-}
-
-public class ToolingPicklistValue {
-    [JsonProperty("value")]
-    public string? Value { get; set; }
-
-    [JsonProperty("label")]
-    public string? Label { get; set; }
-
-    [JsonProperty("active")]
-    public bool Active { get; set; }
-}

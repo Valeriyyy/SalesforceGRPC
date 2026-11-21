@@ -3,53 +3,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Application.Connections;
 
-/// <summary>
-/// Thrown when something asks to encrypt a secret but no protecting key is available.
-/// </summary>
-/// <remarks>
-/// A distinct type because the answer is always the same and always the operator's: supply a protecting
-/// certificate. Letting this surface as a generic failure would send a user looking at their Salesforce
-/// setup, which is fine.
-/// </remarks>
-public sealed class SecretProtectionUnavailableException : InvalidOperationException {
-    public SecretProtectionUnavailableException(string message) : base(message) { }
-}
-
-/// <summary>
-/// Thrown when stored ciphertext will not decrypt with the protecting key that is present.
-/// </summary>
-/// <remarks>
-/// Never conflate this with "not configured yet". A fresh install and a lost protecting key look identical
-/// from the outside — no usable credentials — and the remedies are opposites. Told it is not configured, a
-/// user re-runs setup, generates a new Signing Keypair, orphans the External Client App in Salesforce, and
-/// buries the fact that a key ring went missing.
-/// </remarks>
-public sealed class SecretsUnreadableException : InvalidOperationException {
-    public SecretsUnreadableException(string message, Exception? inner = null) : base(message, inner) { }
-}
-
-/// <summary>
-/// Encrypts and decrypts the secrets the Org Connection stores.
-/// </summary>
-public interface ISecretProtector {
-    /// <summary>True when a protecting key resolved and secrets can be stored.</summary>
-    bool IsAvailable { get; }
-
-    /// <summary>Where the protecting key came from, or where it was looked for. Never key material.</summary>
-    string ProtectingKeyDescription { get; }
-
-    /// <summary>Encrypts a secret for storage.</summary>
-    /// <exception cref="SecretProtectionUnavailableException">No protecting key is available.</exception>
-    string Protect(string plaintext);
-
-    /// <summary>Decrypts stored ciphertext.</summary>
-    /// <exception cref="SecretsUnreadableException">The ciphertext will not decrypt.</exception>
-    string Unprotect(string ciphertext);
-
-    /// <summary>Decrypts stored ciphertext, reporting failure rather than throwing.</summary>
-    bool TryUnprotect(string ciphertext, out string plaintext);
-}
-
 /// <inheritdoc />
 public sealed class SecretProtector : ISecretProtector {
     /// <summary>

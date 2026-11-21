@@ -3,20 +3,6 @@ using DTO;
 namespace StarPush.ViewModels;
 
 /// <summary>
-/// Where the Target Connection is. NotStarted shows the setup form; every other phase shows the summary.
-/// </summary>
-public enum TargetConnectionPhase {
-    NotStarted,
-    Connected,
-
-    /// <summary>Stored, never proved: what was typed has not worked yet.</summary>
-    Incomplete,
-
-    /// <summary>Worked once and has since stopped.</summary>
-    Failed
-}
-
-/// <summary>
 /// The Target Connection page. The server decides the phase and whether the identity is locked; the component
 /// only renders, and holds the client-side mode (viewing, editing, repointing) on top.
 /// </summary>
@@ -53,84 +39,4 @@ public sealed record TargetConnectionView(
         { ConnectionState: "Failed" } => TargetConnectionPhase.Failed,
         _ => TargetConnectionPhase.Incomplete
     };
-}
-
-/// <summary>Every stored detail, shown back for review and edit. The password never is; only whether one is stored.</summary>
-/// <param name="Engine">The API's engine name ("Postgres", "SqlServer", ...), sent back unchanged on save.</param>
-public sealed record TargetConnectionDetailsView(
-    string Engine,
-    string? Host,
-    int? Port,
-    string? DatabaseName,
-    string? Username,
-    string? FilePath,
-    IReadOnlyDictionary<string, string> Options,
-    bool HasPassword,
-    DateTime? LastConnectedAt,
-    TargetDatabaseErrorView? LastError,
-    ReplicationCredentialView? Replication,
-    bool WritebackArmed) {
-
-    public static TargetConnectionDetailsView From(TargetConnectionDTO connection) => new(
-        connection.Engine,
-        connection.Host,
-        connection.Port,
-        connection.DatabaseName,
-        connection.Username,
-        connection.FilePath,
-        connection.Options,
-        connection.HasPassword,
-        connection.LastConnectedAt,
-        TargetDatabaseErrorView.From(connection.LastError),
-        connection.Replication is { } replication
-            ? new ReplicationCredentialView(replication.Username, replication.State, replication.LastProvedAt,
-                replication.LastError, replication.LastErrorAt)
-            : null,
-        connection.WritebackArmed);
-}
-
-/// <summary>
-/// The Replication Credential: a second login on the same database that only reads its changes, for Writeback.
-/// Its password is never shown.
-/// </summary>
-public sealed record ReplicationCredentialView(string Username, string State, DateTime? LastProvedAt, string? LastError,
-    DateTime? LastErrorAt);
-
-/// <summary>A Target Database failure: the summary, and the driver's own words.</summary>
-public sealed record TargetDatabaseErrorView(string Message, string RawResponse, DateTime? OccurredAt) {
-    public static TargetDatabaseErrorView? From(TargetConnectionFailureDTO? failure) => failure is null
-        ? null
-        : new(failure.Message, failure.RawResponse, failure.OccurredAt);
-}
-
-/// <summary>One engine card and the form it renders. Unavailable engines are listed with their reason.</summary>
-public sealed record EngineView(string Engine, bool IsAvailable, string? UnavailableReason, bool SupportsWriteback,
-    IReadOnlyList<FieldView> Fields) {
-    public static EngineView From(EngineDefinitionDTO engine) => new(
-        engine.Engine,
-        engine.IsAvailable,
-        engine.UnavailableReason,
-        engine.SupportsWriteback,
-        engine.Fields.Select(FieldView.From).ToList());
-}
-
-public enum FieldKindView {
-    String,
-    Int,
-    Bool,
-    Secret,
-    Choice
-}
-
-/// <summary>One detail an engine asks for. Typed fields and options alike; the name says which.</summary>
-public sealed record FieldView(string Name, string Label, FieldKindView Kind, bool Required, string? Default,
-    IReadOnlyList<string>? Choices) {
-
-    public static FieldView From(FieldDefinitionDTO field) => new(
-        field.Name,
-        field.Label,
-        Enum.Parse<FieldKindView>(field.Kind),
-        field.Required,
-        field.Default,
-        field.Choices);
 }

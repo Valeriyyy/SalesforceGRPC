@@ -1,5 +1,4 @@
 using Dapper;
-using Database.Repositories;
 using Database.Writeback;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -196,13 +195,3 @@ public class PostgresWritebackTests {
         Assert.Empty(await scratch.Writeback.CheckPrerequisitesAsync(scratch.Endpoints, [scratch.Table], Ct));
     }
 }
-
-/// <summary>
-/// Tests that create, drop or list tables in the Postgres test database run one class at a time, so one never
-/// lists a table another is about to drop.
-/// </summary>
-[CollectionDefinition(Name)]
-public sealed class PostgresTargetDatabase {
-    public const string Name = "Postgres target database";
-}
-
