@@ -146,11 +146,13 @@ public sealed class WritebackProcessor {
                 }
             } else if (salesforceId is not null) {
                 // Inserted already holding a Salesforce ID — copied or restored — so it updates that record with
-                // every field the row has, empty ones included, leaving the record as the row says.
+                // the fields the row has values for. Empty columns are left out: a null for each would wipe those
+                // fields, and Salesforce refuses some fields on some records even as null (Person Account fields
+                // such as FirstName on a business Account).
                 return new PendingWrite {
                     Binding = binding, Operation = Operation.UpdateById, RowKey = rowKey,
                     SalesforceId = salesforceId, KeyValue = keyValue, KeyText = keyText,
-                    Fields = WithWritebackKey(binding, keyValue, Convert(binding.Fields, values, includeNulls: true))
+                    Fields = WithWritebackKey(binding, keyValue, Convert(binding.Fields, values, includeNulls: false))
                 };
             }
 

@@ -87,9 +87,9 @@ public class WritebackWorkerTests {
         var record = Assert.Single(SentRecords(harness, "UpdateAsync"));
         Assert.Equal("001000000000001AAA", record["Id"]);
         Assert.Equal("222", record["Phone"]);
-        // Every Writeback-capable field the row has, so the record ends up as the row says, empty fields included.
-        Assert.True(record.ContainsKey("Industry"));
-        Assert.Null(record["Industry"]);
+        // Empty columns are left out: sending a null for each would wipe those fields, and Salesforce refuses some
+        // fields on some records even as null (Person Account fields such as FirstName on a business Account).
+        Assert.False(record.ContainsKey("Industry"));
         Assert.Empty(SentRecords(harness, "UpsertAsync"));
         await harness.TaggedTarget.DidNotReceiveWithAnyArgs().UpdateByKey(default!, default!, default!, default!, default);
     }
