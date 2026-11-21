@@ -26,6 +26,12 @@ public class InboundFailureExplanationTests {
         new() { ColumnName = "title", DataType = "character varying", MaxLength = 100, MappedSalesforceFieldName = "Title" }
     ];
 
+    private static readonly BindableFieldDTO[] Fields = [
+        new() { Name = "NameLastName", ParentName = "Name", MappedColumnName = "last_name" },
+        new() { Name = "NameFirstName", ParentName = "Name", MappedColumnName = "first_name" },
+        new() { Name = "Title", MappedColumnName = "title" }
+    ];
+
     private static readonly string ValuesWithLongName =
         $$"""{"sf_id":"003Dp00000T0ulFIAR","last_name":"{{LongName}}","title":"Professor"}""";
 
@@ -42,6 +48,17 @@ public class InboundFailureExplanationTests {
     }
 
     [Fact]
+    public void AValueTooLong_CallsTheFieldWhatSalesforceCallsIt_AndQuotesTheStartOfTheValue() {
+        var explanation = InboundFailureExplanation.For(
+            Failure("22001: value too long for type character varying(50)", "22001", valuesSent: ValuesWithLongName),
+            Columns, Table, Fields);
+
+        Assert.Contains("LastName (part of Name)", explanation.Problem);
+        Assert.DoesNotContain("NameLastName", explanation.Problem);
+        Assert.Contains("\"Xavier-Lehnsherr-Summers", explanation.Problem);
+    }
+
+    [Fact]
     public void AValueTooLong_WithoutTheColumnsToHand_StillFindsTheValueFromTheLimitInTheMessage() {
         var explanation = InboundFailureExplanation.For(
             Failure("22001: value too long for type character varying(50)", "22001", valuesSent: ValuesWithLongName), null);
@@ -51,12 +68,18 @@ public class InboundFailureExplanationTests {
     }
 
     [Fact]
-    public void AValueTooLong_RecordedBeforeValuesWereKept_SaysWhatItCan_FromTheMessageAlone() {
+    public void AValueTooLong_RecordedBeforeValuesWereKept_SaysWhyItCannotTellWhichField_AndHowToFindOut() {
+        var withFiftyCharacterFirstName = Columns.Append(new TargetColumnDTO {
+            ColumnName = "first_name", DataType = "character varying", MaxLength = 50, MappedSalesforceFieldName = "NameFirstName"
+        }).ToArray();
+
         var explanation = InboundFailureExplanation.For(
-            Failure("22001: value too long for type character varying(50)"), Columns);
+            Failure("22001: value too long for type character varying(50)"), withFiftyCharacterFirstName, Table, Fields);
 
         Assert.Contains("50 characters", explanation.Problem);
-        Assert.Contains(explanation.Steps, s => s.Contains("last_name"));
+        Assert.Contains("recorded before", explanation.Problem);
+        Assert.Contains(explanation.Steps, s => s.Contains("LastName (part of Name)") && s.Contains("FirstName (part of Name)")
+            && s.Contains("003Dp00000T0ulFIAR"));
     }
 
     [Fact]

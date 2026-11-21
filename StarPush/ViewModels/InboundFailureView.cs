@@ -25,8 +25,8 @@ public sealed record InboundFailureView(
     /// <param name="columns">The Target Table's columns, when the Target Database could be read for the page.</param>
     /// <param name="bindingTable">The Binding's Target Table, for failures recorded before their table was kept.</param>
     public static InboundFailureView For(InboundFailure failure, IReadOnlyList<TargetColumnDTO>? columns = null,
-        string? bindingTable = null) {
-        var explanation = InboundFailureExplanation.For(failure, columns, bindingTable);
+        string? bindingTable = null, IReadOnlyList<BindableFieldDTO>? fields = null) {
+        var explanation = InboundFailureExplanation.For(failure, columns, bindingTable, fields);
         return new(
             failure.Id,
             failure.ChangeType,

@@ -48,5 +48,5 @@ public sealed record BindingEditorView(
         writeback,
         writebackError,
         writebackFailures ?? [],
-        (inboundFailures ?? []).Select(f => InboundFailureView.For(f, target?.Columns, binding.TargetTable)).ToList());
+        (inboundFailures ?? []).Select(f => InboundFailureView.For(f, target?.Columns, binding.TargetTable, target?.Fields)).ToList());
 }

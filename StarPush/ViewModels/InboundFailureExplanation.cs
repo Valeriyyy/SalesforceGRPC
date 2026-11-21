@@ -20,9 +20,11 @@ namespace StarPush.ViewModels;
 public sealed partial record InboundFailureExplanation(string Problem, IReadOnlyList<string> Steps) {
 
     /// <param name="bindingTable">The Binding's Target Table, for failures recorded before their table was kept.</param>
+    /// <param name="fields">The Entity's fields, to name a compound's part the way Salesforce shows it.</param>
     public static InboundFailureExplanation For(InboundFailure failure, IReadOnlyList<TargetColumnDTO>? columns,
-        string? bindingTable = null) {
+        string? bindingTable = null, IReadOnlyList<BindableFieldDTO>? fields = null) {
         var table = failure.TargetTable ?? bindingTable ?? "the Target Table";
+        var names = new FieldNames(columns, fields);
         var values = ReadValues(failure.ValuesSent);
         var sqlState = failure.SqlState ?? SqlStateIn(failure.Message);
         var finalStep = CorrectTheRecord(failure, table);
@@ -39,7 +41,7 @@ public sealed partial record InboundFailureExplanation(string Problem, IReadOnly
         }
 
         var (problem, steps) = sqlState switch {
-            "22001" => ValueTooLong(failure, table, values, columns),
+            "22001" => ValueTooLong(failure, table, values, columns, names),
             "22003" => (
                 $"A number in this change is too large for its column{In(failure.TargetColumn)} in {table}, so the " +
                 "Target Database refused the whole change.",
@@ -51,7 +53,7 @@ public sealed partial record InboundFailureExplanation(string Problem, IReadOnly
                     "Check the Field Mappings on this page: the Salesforce field's type may not suit the column. " +
                     "Change the column's type, or map a different field to it."
                 }),
-            "23502" => MissingValue(failure, table, columns),
+            "23502" => MissingValue(failure, table, names),
             "23505" => (
                 $"Another row in {table} already has the same value{Under(failure.ConstraintName)}, and the column " +
                 "only allows one row per value.",
@@ -89,44 +91,48 @@ public sealed partial record InboundFailureExplanation(string Problem, IReadOnly
     }
 
     private static (string, List<string>) ValueTooLong(InboundFailure failure, string table,
-        IReadOnlyDictionary<string, string> values, IReadOnlyList<TargetColumnDTO>? columns) {
+        IReadOnlyDictionary<string, string> values, IReadOnlyList<TargetColumnDTO>? columns, FieldNames names) {
         var limitInMessage = LimitIn(failure.Message);
 
         // The database does not say which column; the values that do not fit do.
         var offenders = values
-            .Select(v => (Column: v.Key, Length: v.Value.Length,
+            .Select(v => (Column: v.Key, Value: v.Value,
                 Max: columns?.FirstOrDefault(c => c.ColumnName == v.Key)?.MaxLength ?? limitInMessage))
-            .Where(v => v.Max is { } max && v.Length > max)
+            .Where(v => v.Max is { } max && v.Value.Length > max)
             .ToList();
 
         if (offenders.Count > 0) {
             var problem = string.Join(" ", offenders.Select(o =>
-                $"Salesforce sent a {o.Length}-character value for {FieldFor(o.Column, columns)}, but {o.Column} " +
-                $"allows at most {o.Max} characters."));
+                $"Salesforce sent {Quote(o.Value)} ({o.Value.Length} characters) for {names.Describe(o.Column)}, " +
+                $"but the column only holds {o.Max}."));
             var steps = offenders
-                .Select(o => $"Widen the column so values like this fit: ALTER TABLE {table} ALTER COLUMN {o.Column} TYPE varchar({o.Length}); " +
-                             "or use a larger size if the field can hold more in Salesforce.")
+                .Select(o => $"Widen {o.Column} so values like this fit — for example ALTER TABLE {table} ALTER COLUMN " +
+                             $"{o.Column} TYPE varchar({o.Value.Length}); — or use the field's full length in Salesforce " +
+                             "so no future value can overflow it.")
                 .ToList();
-            return ($"{problem} The Target Database refused the whole change.", steps);
+            return ($"{problem} The Target Database refused the whole change, so none of it was written.", steps);
         }
 
-        var candidates = columns?
-            .Where(c => limitInMessage is not null && c.MaxLength == limitInMessage)
-            .Select(c => c.ColumnName)
-            .ToList() ?? [];
+        // Recorded before failures kept the values written: the message gives the limit, not the column.
         var limit = limitInMessage is { } l ? $"{l} characters" : "its column's size";
+        var candidates = columns?
+            .Where(c => limitInMessage is not null && c.MaxLength == limitInMessage && c.MappedSalesforceFieldName is not null)
+            .Select(c => names.Describe(c.ColumnName))
+            .ToList() ?? [];
+        var record = failure.RecordIds.Length == 1 ? $"record {failure.RecordIds[0]}" : "the record";
         return (
-            $"A text value in this change is longer than its column allows (at most {limit}), so the Target Database " +
-            "refused the whole change.",
+            $"A text value in this change was longer than its column allows (at most {limit}), so the Target Database " +
+            "refused the whole change. This failure was recorded before StarPush kept the values it tried to write, " +
+            "so it can't tell which field it was.",
             [
                 candidates.Count > 0
-                    ? $"Widen the column it was meant for in {table}. Columns of that size: {string.Join(", ", candidates)}."
-                    : $"Find the column of that size in {table} and widen it, so values like this fit."
+                    ? $"Open {record} in Salesforce and check which of these is longer than {limit}: " +
+                      $"{string.Join("; ", candidates)}. Then widen that column in {table}."
+                    : $"Open {record} in Salesforce, find the value longer than {limit}, and widen its column in {table}."
             ]);
     }
 
-    private static (string, List<string>) MissingValue(InboundFailure failure, string table,
-        IReadOnlyList<TargetColumnDTO>? columns) {
+    private static (string, List<string>) MissingValue(InboundFailure failure, string table, FieldNames names) {
         var column = failure.TargetColumn ?? ColumnIn(failure.Message);
         if (column is null) {
             return ($"A column in {table} requires a value, but this change left it empty.",
@@ -134,7 +140,7 @@ public sealed partial record InboundFailureExplanation(string Problem, IReadOnly
         }
 
         return (
-            $"{column} in {table} requires a value, but this change left {FieldFor(column, columns)} empty.",
+            $"{column} in {table} requires a value, but this change left {names.Describe(column)} empty.",
             [
                 $"Allow empty values (ALTER TABLE {table} ALTER COLUMN {column} DROP NOT NULL), give the column a " +
                 "default, or map a Salesforce field that is always filled."
@@ -151,11 +157,30 @@ public sealed partial record InboundFailureExplanation(string Problem, IReadOnly
                $"{records} in {table} yourself, then Dismiss this failure.";
     }
 
-    /// <summary>"the Salesforce field Title (column title)", or just the column when no field maps to it.</summary>
-    private static string FieldFor(string column, IReadOnlyList<TargetColumnDTO>? columns) =>
-        columns?.FirstOrDefault(c => c.ColumnName == column)?.MappedSalesforceFieldName is { } field
-            ? $"{field} (column {column})"
-            : $"column {column}";
+    /// <summary>The start of a value, quoted, so a long one stays readable.</summary>
+    private static string Quote(string value) => value.Length <= 30 ? $"\"{value}\"" : $"\"{value[..30]}…\"";
+
+    /// <summary>
+    /// Names a Target Column by the Salesforce field mapped to it, the way Salesforce shows that field: a compound's
+    /// part as "LastName (part of Name)" rather than the flattened "NameLastName" it is stored under.
+    /// </summary>
+    private sealed class FieldNames(IReadOnlyList<TargetColumnDTO>? columns, IReadOnlyList<BindableFieldDTO>? fields) {
+        public string Describe(string column) => Field(column) is { } field ? $"{field}, stored in {column}" : $"column {column}";
+
+        private string? Field(string column) {
+            if (fields?.FirstOrDefault(f => f.MappedColumnName == column) is { } field) {
+                return Readable(field.Name, field.ParentName);
+            }
+            return columns?.FirstOrDefault(c => c.ColumnName == column)?.MappedSalesforceFieldName is { } mapped
+                ? Readable(mapped, fields?.FirstOrDefault(f => f.Name == mapped)?.ParentName)
+                : null;
+        }
+
+        private static string Readable(string name, string? parent) =>
+            parent is not null && name.StartsWith(parent, StringComparison.Ordinal) && name.Length > parent.Length
+                ? $"{name[parent.Length..]} (part of {parent})"
+                : name;
+    }
 
     private static string In(string? column) => column is null ? "" : $" ({column})";
     private static string Under(string? constraint) => constraint is null ? "" : $" (constraint {constraint})";
