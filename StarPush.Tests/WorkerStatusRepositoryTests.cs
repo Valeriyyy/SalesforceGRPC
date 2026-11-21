@@ -13,7 +13,7 @@ namespace StarPush.Tests;
 /// <remarks>
 /// The connection string comes from <c>STARPUSH_TEST_APP_DATABASE</c>, and every test skips when it is unset.
 /// <b>These tests delete rows</b>: every Inbound Failure and Incident, and the Bindings they create. Point the
-/// variable at a throwaway App Database with migrations 001–008 applied, never at a real one.
+/// variable at a throwaway App Database with migrations 001–009 applied, never at a real one.
 /// </remarks>
 [Collection(AppDatabaseCollection.Name)]
 public class WorkerStatusRepositoryTests {
@@ -78,6 +78,27 @@ public class WorkerStatusRepositoryTests {
         Assert.Empty(unreadable.RecordIds);
         Assert.Equal(2, await failures.CountAsync(Ct));
         Assert.Equal(new Dictionary<int, int> { [bindingId] = 2 }, await failures.CountByBindingAsync(Ct));
+    }
+
+    [Fact]
+    public async Task AnInboundFailure_KeepsWhatTheDatabaseSaidAndTheValuesThatWereRefused() {
+        var connectionString = ConnectionString();
+        var bindingId = await ResetWithBinding(connectionString);
+        var failures = new InboundFailureRepository(Configuration(connectionString));
+        var failure = Failure(bindingId, 3, new DateTime(2026, 11, 21, 9, 0, 0, DateTimeKind.Utc),
+            "22001: value too long for type character varying(50)");
+        failure.TargetTable = "salesforce.contacts";
+        failure.SqlState = "22001";
+        failure.TargetColumn = "last_name";
+        failure.ConstraintName = "contacts_last_name_check";
+        failure.ValuesSent = """{"sf_id": "003A", "last_name": "Xavier"}""";
+
+        await failures.RecordAsync(failure, Ct);
+
+        var stored = Assert.Single(await failures.ListAsync(bindingId, Ct));
+        Assert.Equal(("salesforce.contacts", "22001", "last_name", "contacts_last_name_check"),
+            (stored.TargetTable, stored.SqlState, stored.TargetColumn, stored.ConstraintName));
+        Assert.Contains("\"last_name\": \"Xavier\"", stored.ValuesSent);
     }
 
     [Fact]

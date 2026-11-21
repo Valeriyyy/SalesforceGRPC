@@ -64,6 +64,9 @@ public class UndeleteStrategy : IEventStrategy {
             _logger.LogInformation("Restored {RestoredCount} records in {ObjectType}", restoredCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
+        } catch (System.Data.Common.DbException e) {
+            // Up, but refusing this row: the event's own fault, recorded as an Inbound Failure by the worker.
+            throw new TargetRowRefusedException(dbSchema.DbSchemaFullName, new Dictionary<string, object?> { [sfKeyFieldName] = string.Join(", ", recordIdStrings) }, e);
         }
     }
 }

@@ -18,6 +18,11 @@ public class InboundFailureRepository : IInboundFailureRepository {
                 change_type AS ChangeType,
                 record_ids AS RecordIds,
                 message AS Message,
+                target_table AS TargetTable,
+                sql_state AS SqlState,
+                target_column AS TargetColumn,
+                constraint_name AS ConstraintName,
+                values_sent::text AS ValuesSent,
                 first_failed_at AS FirstFailedAt,
                 last_failed_at AS LastFailedAt,
                 attempts AS Attempts";
@@ -31,15 +36,22 @@ public class InboundFailureRepository : IInboundFailureRepository {
         const string sql = @"
             INSERT INTO salesforce.inbound_failures (
                 binding_id, channel_full_name, replay_id, entity_name, change_type, record_ids, message,
+                target_table, sql_state, target_column, constraint_name, values_sent,
                 first_failed_at, last_failed_at, attempts)
             VALUES (
                 @BindingId, @ChannelFullName, @ReplayId, @EntityName, @ChangeType, @RecordIds, @Message,
+                @TargetTable, @SqlState, @TargetColumn, @ConstraintName, @ValuesSent::jsonb,
                 @FirstFailedAt, @LastFailedAt, 1)
             ON CONFLICT (channel_full_name, replay_id) DO UPDATE SET
                 change_type = COALESCE(EXCLUDED.change_type, salesforce.inbound_failures.change_type),
                 record_ids = CASE WHEN cardinality(EXCLUDED.record_ids) > 0 THEN EXCLUDED.record_ids
                                   ELSE salesforce.inbound_failures.record_ids END,
                 message = EXCLUDED.message,
+                target_table = EXCLUDED.target_table,
+                sql_state = EXCLUDED.sql_state,
+                target_column = EXCLUDED.target_column,
+                constraint_name = EXCLUDED.constraint_name,
+                values_sent = EXCLUDED.values_sent,
                 last_failed_at = EXCLUDED.last_failed_at,
                 attempts = salesforce.inbound_failures.attempts + 1";
 
@@ -52,6 +64,11 @@ public class InboundFailureRepository : IInboundFailureRepository {
             failure.ChangeType,
             failure.RecordIds,
             failure.Message,
+            failure.TargetTable,
+            failure.SqlState,
+            failure.TargetColumn,
+            failure.ConstraintName,
+            failure.ValuesSent,
             FirstFailedAt = DateTime.SpecifyKind(failure.FirstFailedAt, DateTimeKind.Utc),
             LastFailedAt = DateTime.SpecifyKind(failure.LastFailedAt, DateTimeKind.Utc)
         }, cancellationToken: cancellationToken)).ConfigureAwait(false);

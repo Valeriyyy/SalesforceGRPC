@@ -275,6 +275,26 @@ public class BindingsPagesTests {
     }
 
     [Fact]
+    public async Task TheEditor_ExplainsEachInboundFailure_WhatWentWrongAndHowToFixIt() {
+        ArrangeEditor();
+        var failure = InboundFailure(9, BindingId);
+        failure.Message = "23502: null value in column \"phone\" violates not-null constraint";
+        failure.SqlState = "23502";
+        failure.TargetColumn = "phone";
+        failure.TargetTable = "salesforce.accountchangeevent";
+        failure.ValuesSent = "{\"sf_id\":\"001A\",\"phone\":null}";
+        _inboundFailures.ListAsync(BindingId, Arg.Any<CancellationToken>()).Returns([failure]);
+
+        var shown = Assert.Single(Page<BindingView>(await NewController().Show(BindingId, Ct)).Binding!.InboundFailures);
+
+        Assert.Contains("phone", shown.Problem);
+        Assert.Contains(shown.Steps, s => s.Contains("DROP NOT NULL"));
+        Assert.Contains("Dismiss", shown.Steps[^1]);
+        Assert.Equal(failure.Message, shown.Message);
+        Assert.Equal(failure.ValuesSent, shown.ValuesSent);
+    }
+
+    [Fact]
     public async Task TheEditor_WhenTheTargetDatabaseIsDown_StillShowsTheBinding_WithoutItsMappings() {
         ArrangeEditor();
         _bindings.GetBindingColumnsAsync(BindingId, Arg.Any<CancellationToken>())

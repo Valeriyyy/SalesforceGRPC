@@ -163,4 +163,36 @@ public class WorkerInboundFailureTests {
         await harness.Failures.Received(1).RecordAsync(IsFailure(f => f.Message.Contains("no Avro Schema")),
             Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task ARefusedRow_RecordsWhatTheUserNeedsToFixIt_TheTableTheErrorAndTheValuesSent() {
+        var harness = new WorkerHarness();
+        harness.Target.Upsert(Table, KeyColumn, Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>())
+            .Returns<int>(_ => throw new RefusedRowException());
+        var subscription = harness.PubSub.Script(Response(5, Create("001A", "555-0100")));
+
+        await harness.RunUntil(subscription);
+
+        await harness.Failures.Received(1).RecordAsync(IsFailure(f =>
+            f.TargetTable == Table
+            && f.SqlState == "22001"
+            && f.ValuesSent.Contains("\"phone\":\"555-0100\"")
+            && f.ValuesSent.Contains("\"sf_id\":\"001A\"")), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ARefusedRow_KeepsTheColumnAndConstraintTheDatabaseNamed() {
+        var harness = new WorkerHarness();
+        harness.Target.Upsert(Table, KeyColumn, Arg.Any<Dictionary<string, object>>(), Arg.Any<CancellationToken>())
+            .Returns<int>(_ => throw new Npgsql.PostgresException(
+                "null value in column \"phone\" violates not-null constraint", "ERROR", "ERROR", "23502",
+                columnName: "phone", constraintName: "account_phone_not_null"));
+        var subscription = harness.PubSub.Script(Response(5, Create("001A", "1")));
+
+        await harness.RunUntil(subscription);
+
+        await harness.Failures.Received(1).RecordAsync(IsFailure(f =>
+            f.SqlState == "23502" && f.TargetColumn == "phone" && f.ConstraintName == "account_phone_not_null"),
+            Arg.Any<CancellationToken>());
+    }
 }

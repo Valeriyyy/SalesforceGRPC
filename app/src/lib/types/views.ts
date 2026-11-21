@@ -430,7 +430,14 @@ export interface InboundFailure {
     changeType: string | null;
     /** Empty when the event could not be decoded far enough to say. */
     recordIds: string[];
+    /** What went wrong, in the Binding's terms. */
+    problem: string;
+    /** What to do, in order; the last is always correcting the skipped record. */
+    steps: string[];
+    /** The error exactly as it was raised. */
     message: string;
+    /** The column values that were being written, as JSON; "{}" when none reached the database. */
+    valuesSent: string;
     firstFailedAt: string;
     lastFailedAt: string;
     attempts: number;

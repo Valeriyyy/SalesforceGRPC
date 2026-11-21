@@ -78,6 +78,9 @@ public class UpdateStrategy : IEventStrategy {
             _logger.LogInformation("Updated {UpdatedCount} records from {ObjectType}", updatedCount, dbSchema.EntityName);
         } catch (System.Data.Common.DbException e) when (TargetDatabaseWriteException.IsDatabaseUnavailable(e)) {
             throw new TargetDatabaseWriteException(dbSchema.DbSchemaFullName, e);
+        } catch (System.Data.Common.DbException e) {
+            // Up, but refusing this row: the event's own fault, recorded as an Inbound Failure by the worker.
+            throw new TargetRowRefusedException(dbSchema.DbSchemaFullName, data.ToDictionary(kv => kv.Key, kv => (object?)kv.Value), e);
         }
     }
 

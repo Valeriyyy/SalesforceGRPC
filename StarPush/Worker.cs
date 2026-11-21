@@ -626,6 +626,7 @@ public class Worker : BackgroundService {
         string? changeType, IReadOnlyList<string> recordIds, Exception error) {
         _health.Failed();
         var now = _time.GetUtcNow().UtcDateTime;
+        var refused = error as TargetRowRefusedException;
         try {
             // Without the batch's token: a skipped event must be recorded even if the batch is being cancelled.
             await _failures.RecordAsync(new InboundFailure {
@@ -636,6 +637,11 @@ public class Worker : BackgroundService {
                 ChangeType = changeType,
                 RecordIds = recordIds.ToArray(),
                 Message = error.Message,
+                TargetTable = refused?.Table,
+                SqlState = refused?.SqlState,
+                TargetColumn = refused?.Column,
+                ConstraintName = refused?.Constraint,
+                ValuesSent = refused is null ? "{}" : ValuesAsJson(refused.Values),
                 FirstFailedAt = now,
                 LastFailedAt = now
             }).ConfigureAwait(false);
@@ -643,6 +649,15 @@ public class Worker : BackgroundService {
             _logger.LogError(ex,
                 "Could not record the Inbound Failure for {Entity} (records {RecordIds}); the event is skipped and only this log says so",
                 binding.EntityName, string.Join(", ", recordIds));
+        }
+    }
+
+    /// <summary>The values a refused write carried, as JSON; any value that will not serialise is shown as text.</summary>
+    private static string ValuesAsJson(IReadOnlyDictionary<string, object?> values) {
+        try {
+            return System.Text.Json.JsonSerializer.Serialize(values);
+        } catch (Exception) {
+            return System.Text.Json.JsonSerializer.Serialize(values.ToDictionary(v => v.Key, v => v.Value?.ToString()));
         }
     }
 

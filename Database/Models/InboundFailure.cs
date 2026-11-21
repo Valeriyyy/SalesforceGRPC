@@ -27,6 +27,21 @@ public class InboundFailure {
     public string[] RecordIds { get; set; } = [];
 
     public required string Message { get; set; }
+
+    /// <summary>The table the refused write was for; null when the event never reached the Target Database.</summary>
+    public string? TargetTable { get; set; }
+
+    /// <summary>The SQLSTATE the Target Database refused the write with (22001 value too long, 23502 null, ...).</summary>
+    public string? SqlState { get; set; }
+
+    /// <summary>The column the database named, when it named one (a not-null violation does, a value too long does not).</summary>
+    public string? TargetColumn { get; set; }
+
+    /// <summary>The constraint the database named, for a unique, foreign key or check violation.</summary>
+    public string? ConstraintName { get; set; }
+
+    /// <summary>The column values that were being written, as a JSON object, so the user can see what was refused.</summary>
+    public string ValuesSent { get; set; } = "{}";
     public DateTime FirstFailedAt { get; set; }
     public DateTime LastFailedAt { get; set; }
     public int Attempts { get; set; } = 1;

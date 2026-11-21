@@ -324,8 +324,8 @@
                 <section class="card space-y-3 border border-error-500 p-6">
                     <h2 class="h5">{plural(binding.inboundFailures.length, "change")} couldn't be applied</h2>
                     <p class="text-sm text-surface-600-400">
-                        These changes from Salesforce were skipped, so they are missing from {binding.targetTable}. StarPush
-                        won't retry them. Correct the records yourself, then Dismiss each one.
+                        These changes from Salesforce were skipped, so they are missing from {binding.targetTable}. Each one
+                        says what went wrong and how to fix it.
                     </p>
                     <InboundFailures failures={binding.inboundFailures} />
                 </section>
