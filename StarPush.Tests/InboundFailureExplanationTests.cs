@@ -104,4 +104,13 @@ public class InboundFailureExplanationTests {
         Assert.Contains("003Dp00000T0ulFIAR", explanation.Steps[^1]);
         Assert.Contains("Dismiss", explanation.Steps[^1]);
     }
+
+    [Fact]
+    public void AFailureRecordedBeforeItsTableWasKept_UsesTheBindingsTable() {
+        var explanation = InboundFailureExplanation.For(
+            Failure("22001: value too long for type character varying(50)", targetTable: null), Columns, Table);
+
+        Assert.Contains(explanation.Steps, s => s.Contains("salesforce.contacts"));
+        Assert.DoesNotContain("the Target Table", explanation.Steps[^1]);
+    }
 }

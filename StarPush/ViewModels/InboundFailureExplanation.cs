@@ -19,8 +19,10 @@ namespace StarPush.ViewModels;
 /// <param name="Steps">What to do, in order. The last step is always correcting the skipped record.</param>
 public sealed partial record InboundFailureExplanation(string Problem, IReadOnlyList<string> Steps) {
 
-    public static InboundFailureExplanation For(InboundFailure failure, IReadOnlyList<TargetColumnDTO>? columns) {
-        var table = failure.TargetTable ?? "the Target Table";
+    /// <param name="bindingTable">The Binding's Target Table, for failures recorded before their table was kept.</param>
+    public static InboundFailureExplanation For(InboundFailure failure, IReadOnlyList<TargetColumnDTO>? columns,
+        string? bindingTable = null) {
+        var table = failure.TargetTable ?? bindingTable ?? "the Target Table";
         var values = ReadValues(failure.ValuesSent);
         var sqlState = failure.SqlState ?? SqlStateIn(failure.Message);
         var finalStep = CorrectTheRecord(failure, table);

@@ -23,8 +23,10 @@ public sealed record InboundFailureView(
     int Attempts) {
 
     /// <param name="columns">The Target Table's columns, when the Target Database could be read for the page.</param>
-    public static InboundFailureView For(InboundFailure failure, IReadOnlyList<TargetColumnDTO>? columns = null) {
-        var explanation = InboundFailureExplanation.For(failure, columns);
+    /// <param name="bindingTable">The Binding's Target Table, for failures recorded before their table was kept.</param>
+    public static InboundFailureView For(InboundFailure failure, IReadOnlyList<TargetColumnDTO>? columns = null,
+        string? bindingTable = null) {
+        var explanation = InboundFailureExplanation.For(failure, columns, bindingTable);
         return new(
             failure.Id,
             failure.ChangeType,
